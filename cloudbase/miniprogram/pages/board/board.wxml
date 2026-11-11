@@ -1,0 +1,59 @@
+<view class="page board">
+  <view class="bd-hero">
+    <view class="bd-tt">商机榜单</view>
+    <view class="bd-ds">按平台实时在售与求购聚合，只展示榜单数据，不含发布者联系方式 · {{day || '今日'}}</view>
+  </view>
+
+  <view class="bd-tabs">
+    <view wx:for="{{tabs}}" wx:key="key"
+          class="bd-tab {{tab === item.key ? 'on' : ''}}"
+          data-tab="{{item.key}}" bindtap="switchTab">{{item.title}}</view>
+  </view>
+
+  <view wx:if="{{loading}}" class="bd-tip">榜单加载中…</view>
+
+  <view wx:elif="{{locked}}" class="bd-lock">
+    <view class="bd-lock-tt">榜单仅商机会员可见</view>
+    <view class="bd-lock-ds">{{hint || '开通商机会员后可查看需求榜、火热榜、供给榜与品类榜'}}</view>
+    <button class="btn primary block" bindtap="goBiz">去商机页开通</button>
+  </view>
+
+  <block wx:else>
+    <view class="bd-sum">{{desc}}</view>
+
+    <view wx:if="{{tab !== 'boards'}}" class="bd-list">
+      <view wx:for="{{rankItems}}" wx:key="key" class="bd-row">
+        <text class="bd-rank {{item.top ? 'top' : ''}}">{{item.rank}}</text>
+        <view class="bd-r-l">
+          <text class="bd-name">{{item.name}}</text>
+          <text wx:if="{{item.cat}}" class="bd-cat">{{item.cat}}</text>
+        </view>
+        <view class="bd-r-r">
+          <text class="bd-main">{{item.main}}</text>
+          <text class="bd-meta">{{item.sub}}</text>
+        </view>
+      </view>
+      <view wx:if="{{!rankItems.length}}" class="bd-none">该榜单暂无聚合数据</view>
+    </view>
+
+    <block wx:else>
+      <view wx:for="{{boards}}" wx:key="scope" class="bd-sec">
+        <view class="bd-sec-hd">
+          <text class="bd-scope">{{item.scope}}</text>
+          <text class="bd-sec-meta">{{item.meta}}</text>
+        </view>
+        <view wx:for="{{item.items}}" wx:for-item="row" wx:key="key" class="bd-item">
+          <text class="bd-kind {{row.kind === '求购' ? 'buy' : ''}}">{{row.kind}}</text>
+          <view class="bd-item-l">
+            <text class="bd-name">{{row.title}}</text>
+            <text wx:if="{{row.meta}}" class="bd-meta">{{row.meta}}</text>
+          </view>
+          <text class="bd-main">{{row.price}}</text>
+        </view>
+      </view>
+      <view wx:if="{{!boards.length}}" class="bd-tip">当前暂无品类榜数据</view>
+    </block>
+
+    <view class="bd-foot">榜单按近实时数据聚合，仅用于判断行情与备货方向，不构成成交报价。</view>
+  </block>
+</view>

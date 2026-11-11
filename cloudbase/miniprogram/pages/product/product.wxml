@@ -1,0 +1,321 @@
+<view class="detail" wx:if="{{product}}">
+
+  <!-- 分享落地提示：内容与平台内一致，只是再强调一次联系方式不对外 -->
+  <view wx:if="{{fromShare}}" class="share-tip">来自好友分享 · 满足必须条件后可与货主直接对话</view>
+  <!-- 私密发布＝匿名公开：内容照常展示，发布人完全匿名 -->
+  <view wx:if="{{privateShare}}" class="callout warn private-tip">匿名发布 · 内容公开展示，但不显示发布人，也无法从这里进入对方主页</view>
+  <!-- 发布人置顶：平台代采 / 代售只显示「平台」，由平台统一对接 -->
+  <block wx:else>
+    <view wx:if="{{product.platformOnly}}" class="publisher platform">
+      <view class="pub-l">
+        <view class="pub-av">平</view>
+        <view class="pub-info">
+          <view class="pub-nm">平台</view>
+          <view class="pub-sb">平台代采 / 代售 · 由平台统一对接委托方</view>
+        </view>
+      </view>
+      <view class="pub-act" bindtap="contactPlatform">联系平台</view>
+    </view>
+    <view wx:elif="{{!contactHidden}}" class="publisher">
+      <view class="pub-l" bindtap="openSeller">
+        <view class="pub-av">{{product.owner.short}}</view>
+        <view class="pub-info">
+          <view class="pub-nm">{{product.owner.nick}}<text class="owner-go">›</text></view>
+          <view class="pub-sb">{{product.ownerSubject || '未公开主体'}} · {{product.city || '城市未填写'}}</view>
+          <view wx:if="{{ownerPhone}}" class="pub-phone" catchtap="copyOwnerPhone">
+            <text>{{ownerPhone}}</text><text class="pub-phone-act">复制</text>
+          </view>
+          <view wx:elif="{{memberOnlyContact}}" class="pub-phone" catchtap="goBiz">
+            <text>联系电话仅商机会员可见</text><text class="pub-phone-act">开通 ›</text>
+          </view>
+        </view>
+      </view>
+      <view class="pub-act {{pubFollowing ? 'on' : ''}}" catchtap="togglePubFollow">{{pubFollowing ? '已关注' : '＋ 关注'}}</view>
+    </view>
+    <view wx:else class="publisher">
+      <view class="pub-l">
+        <view class="pub-av">匿</view>
+        <view class="pub-info">
+          <view class="pub-nm">匿名发布</view>
+          <view class="pub-sb">内容公开展示，发布人身份与主页入口已隐藏</view>
+        </view>
+      </view>
+    </view>
+  </block>
+
+  <!-- 图片与视频：左右滑动切换，可全屏查看；水印铺满整个画面 -->
+  <view class="block media-sec">
+    <view class="block-hd">
+      <text class="bt">商品图片与视频</text>
+      <text class="r">{{imgCount}} 张图片 · {{videoCount}} 段视频</text>
+    </view>
+    <view wx:if="{{mediaSlides.length}}" class="media-stage">
+      <view class="hbadge stage-badge">
+        <text class="pill-tag {{product.isRent ? 'rent' : ''}}">{{product.tradeMode}}</text>
+        <text wx:if="{{!product.isRent}}" class="chip cond-chip">{{product.cond}}</text>
+        <text class="chip supply-chip">{{product.supply}}</text>
+      </view>
+      <view class="hero-fav" bindtap="toggleFav">{{fav ? '★' : '☆'}}</view>
+      <swiper class="media-swiper" current="{{mediaIndex}}" bindchange="onMediaSwipe" circular="{{mediaSlides.length > 1}}">
+        <swiper-item class="ms-cell" wx:for="{{mediaSlides}}" wx:for-index="index" wx:key="k">
+          <image wx:if="{{item.kind === 'image'}}" class="ms-media" src="{{item.url}}" mode="aspectFill" lazy-load data-index="{{index}}" bindtap="openMedia" />
+          <!-- 视频不用内联 video：原生组件会拦截点击与横滑，导致点不开、滑不动；封面统一走全屏查看 -->
+          <view wx:else class="ms-media ms-video" data-index="{{index}}" bindtap="openMedia">
+            <image wx:if="{{item.poster}}" class="ms-video-poster" src="{{item.poster}}" mode="aspectFill" />
+            <view class="ms-video-play">▶</view>
+            <text class="ms-video-tip">点击全屏播放</text>
+          </view>
+        </swiper-item>
+      </swiper>
+      <view wx:if="{{wmOn}}" class="ms-wm-wall">
+        <view wx:for="{{wmTiles}}" wx:key="k" class="ms-wm-t">{{item.t}}</view>
+      </view>
+      <view wx:if="{{mediaSlides.length > 1}}" class="ms-hint">左右滑动切换</view>
+      <view wx:if="{{mediaSlides.length > 1}}" class="ms-count">{{mediaIndex + 1}} / {{mediaSlides.length}}</view>
+    </view>
+    <view wx:else class="media-stage">
+      <view class="ms-empty" bindtap="openMedia">
+        <text class="ms-empty-t">{{product.model}}</text>
+        <image class="ms-empty-lock" src="/assets/icons/ic-lock.png" mode="aspectFit" />
+        <text class="ms-empty-d">暂无实拍图片或视频</text>
+      </view>
+      <view wx:if="{{wmOn}}" class="ms-wm-wall">
+        <view wx:for="{{wmTiles}}" wx:key="k" class="ms-wm-t">{{item.t}}</view>
+      </view>
+    </view>
+    <view class="media-guard">
+      <image class="mg-i" src="/assets/icons/tip-lock.png" mode="aspectFit" />
+      <view class="mg-b">
+        <text class="mg-bt">媒体已加密保护</text>
+        <text class="mg-bd">{{wmOn ? '图片与视频仅平台内在线查看，画面全程铺满你的账号与昵称水印，泄漏可定向追责。' : '图片与视频仅平台内在线查看，可在设置中重新开启水印保护。'}}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 商品信息 -->
+  <view class="block">
+    <view class="block-hd">
+      <text class="bt">① {{product.isRent ? '租赁信息' : '商品信息'}}</text>
+      <text class="r">{{product.published}}发布</text>
+    </view>
+    <view class="d-title">{{product.title}}</view>
+    <view class="price-row">
+      <view class="p">{{product.priceText}}<text class="p-unit">{{product.priceUnit}}</text></view>
+      <view class="pn">
+        <block wx:if="{{product.isRent}}">
+          <text class="br-line">出租按「元 / 台 / 月 × 数量 × 租期」比较</text>
+          <text class="br-line">可租数量与起租数量见下方</text>
+        </block>
+        <block wx:else>
+          <text class="br-line">出售按「元 / 台 × 数量」比较</text>
+          <text class="br-line">可售数量与起订量见下方</text>
+        </block>
+      </view>
+    </view>
+    <view class="chips">
+      <text wx:if="{{!product.isRent}}" class="chip">{{product.cond}}</text>
+      <text class="chip">{{product.taxShort}}</text>
+      <text class="chip">{{product.supply}}</text>
+      <text wx:for="{{product.tags}}" wx:key="*this" class="chip brand">{{item}}</text>
+    </view>
+    <view class="callout" style="margin-top: 20rpx">
+      货主标签与材料状态仅作登记，平台不核验真伪。
+    </view>
+
+    <!-- 规格网格 -->
+    <view class="spec-grid">
+      <view class="cell"><view class="k">设备类型</view><view class="v">{{product.cat}}</view></view>
+      <view class="cell"><view class="k">品牌</view><view class="v">{{product.brand}}</view></view>
+      <view class="cell"><view class="k">型号</view><view class="v">{{product.model}}</view></view>
+      <view class="cell"><view class="k">{{product.isRent ? '可租数量' : '可售数量'}}</view><view class="v">{{product.qty}} 台</view></view>
+      <view class="cell"><view class="k">{{product.isRent ? '起租数量' : '起订量'}}</view><view class="v">{{product.minQty}} 台</view></view>
+      <view class="cell"><view class="k">供给类型</view><view class="v">{{product.supply}}</view></view>
+      <view wx:if="{{!product.isRent}}" class="cell"><view class="k">成色</view><view class="v">{{product.cond}}{{product.cond !== '全新' && product.condLevel ? ' · ' + product.condLevel : ''}}</view></view>
+      <view class="cell"><view class="k">税费</view><view class="v">{{product.tax}}</view></view>
+      <view class="cell"><view class="k">{{product.isRent ? '设备所在城市' : '交易地/发货地'}}</view><view class="v">{{product.city}}</view></view>
+      <view class="cell"><view class="k">{{product.isRent ? '可起租时间' : '可交付时间'}}</view><view class="v">{{product.deliver}}</view></view>
+      <view class="cell"><view class="k">图片数</view><view class="v">{{product.images}} 张</view></view>
+    </view>
+
+    <!-- 租赁信息 -->
+    <view wx:if="{{product.isRent}}" class="spec-grid rent-spec">
+      <view class="cell"><view class="k">租期</view><view class="v">{{product.term}}</view></view>
+      <view class="cell"><view class="k">是否闭口</view><view class="v">{{product.closed}}</view></view>
+      <view class="cell"><view class="k">押金</view><view class="v">{{product.deposit}}</view></view>
+      <view class="cell"><view class="k">租金支付</view><view class="v">{{product.pay}}</view></view>
+    </view>
+
+    <!-- 关键信息列表 -->
+    <view class="klist">
+      <view wx:if="{{product.note}}" class="ki"><text class="kn">{{product.isRent ? '租赁说明' : '交易说明'}}</text><text class="kv">{{product.note}}</text></view>
+      <view wx:if="{{product.accept}}" class="ki"><text class="kn">验收标准</text><text class="kv">{{product.accept}}</text></view>
+      <view wx:if="{{product.limit}}" class="ki"><text class="kn">可承接数量</text><text class="kv">{{product.limit}}</text></view>
+      <view wx:if="{{product.requirements}}" class="ki"><text class="kn">{{product.isRent ? '承租方要求' : '接单要求'}}</text><text class="kv">{{product.requirements}}</text></view>
+    </view>
+
+    <!-- 发布人已置顶展示；这里只保留浏览 / 收藏数据 -->
+    <view class="owner">
+      <view class="owner-r">浏览 {{product.views}}<text wx:if="{{product.favCount}}" class="muted">收藏 {{product.favCount}}</text></view>
+    </view>
+  </view>
+
+  <!-- 关键信息上传状态 -->
+  <view class="block">
+    <view class="block-hd">
+      <text class="bt">② 关键信息是否已上传</text>
+      <text class="r">已上传 {{checklistDone}} / {{checklistTotal}} 项</text>
+    </view>
+    <view class="progress-line">
+      <text class="bar"><text style="width:{{checklistPercent}}%"></text></text>
+      <text class="mono">{{checklistPercent}}%</text>
+    </view>
+    <view class="ck-chips">
+      <view wx:for="{{product.checklist}}" wx:key="n" class="ck-chip {{item.ok ? 'ok' : ''}}">
+        <text class="ck-nm">{{item.n}}</text>
+        <text class="ck-st">{{item.statusText}}</text>
+      </view>
+    </view>
+    <text class="ck-note">仅登记提交状态，平台不核验真伪</text>
+  </view>
+
+  <!-- 购买流程 -->
+  <view class="block">
+    <view class="block-hd">
+      <text class="bt">③ {{product.isRent ? '租赁流程' : '购买流程'}}</text>
+      <text class="r">货主设定，平台按流程推进</text>
+    </view>
+    <view class="flow-list">
+      <view wx:for="{{product.flow}}" wx:key="n" class="flow-item {{index < 2 ? 'hi' : ''}}">
+        <view class="fi-idx">{{index + 1}}</view>
+        <view class="fi-content">
+          <view class="fi-name">{{item.n}}</view>
+          <view wx:if="{{item.d}}" class="fi-desc">{{item.d}}</view>
+        </view>
+      </view>
+    </view>
+    <view class="callout" style="margin-top: 24rpx">
+      平台仅提供信息发布与居间对接，不参与交易、不担保履约、不核验材料真伪；双方信息只在平台内流转。
+    </view>
+  </view>
+
+  <!-- 购买条件 -->
+  <view class="block">
+    <view class="block-hd">
+      <text class="bt">④ {{product.isRent ? '承租条件' : '购买条件'}}</text>
+      <text class="r">必须条件 {{product.must.length}} 项全部满足才能联系货主</text>
+    </view>
+
+    <view wx:if="{{product.nego.length}}" class="cond-group">
+      <view class="cond-sub">可协商条件<text class="cs-note">不拦截对话，在会话中沟通</text></view>
+      <view class="chip-group cond-chips">
+        <text wx:for="{{product.nego}}" wx:key="*this" class="chip">{{item}}</text>
+      </view>
+    </view>
+
+    <view class="cond-group">
+      <view class="cond-sub">必须条件<text class="cs-note">逐项满足才能开始对话</text></view>
+      <view class="cond-list">
+        <view wx:for="{{product.must}}" wx:key="*this" class="ci">
+          <text class="ci-ico ok">✓</text>
+          <view class="ci-body">
+            <view class="ci-name">{{item}}</view>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 联系入口 -->
+  <view class="block consult-entry">
+    <view class="block-hd">
+      <text class="bt">⑤ 联系货主</text>
+    </view>
+    <view wx:if="{{isMine}}" class="callout warn">
+      这是你自己的发布，详情页不提供联系入口，也不会出现在首页信息流中。
+    </view>
+    <view wx:else class="callout brand">
+      先逐项确认货主的必须条件，全部满足后即可直接与货主对话；可协商条件在会话中确认。
+      <view wx:if="{{ownerPhone}}" class="callout-extra">货主已公开联系电话 {{ownerPhone}}，也可以直接拨打。</view>
+      <view wx:elif="{{memberOnlyContact}}" class="callout-extra">货主公开了联系电话，商机会员可直接查看拨打；也可以先站内对话。<text class="pub-phone-act" bindtap="goBiz">开通商机会员 ›</text></view>
+    </view>
+  </view>
+
+  <!-- 底部占位 -->
+  <view style="height: 200rpx"></view>
+
+  <!-- 底部咨询栏 -->
+  <view class="sticky-consult safe-bottom">
+    <view wx:if="{{isMine}}" class="row">
+      <view class="cnt">我的发布 · {{product.status || '在售'}}</view>
+      <button class="btn ghost share-btn" open-type="share">分享</button>
+      <button class="btn ghost lg" bindtap="back">返回</button>
+    </view>
+    <view wx:else class="row">
+      <view class="cnt"><text class="b">{{product.views}}</text> 次浏览<text wx:if="{{product.favCount}}"> · 收藏 {{product.favCount}}</text></view>
+      <button class="btn ghost share-btn" open-type="share">分享</button>
+      <button class="btn primary lg" bindtap="consult">联系货主</button>
+    </view>
+    <view class="hint">满足必须条件即可直接对话；可直接发送联系方式<text wx:if="{{!isMine}}" class="hint-report" catchtap="report">举报该商品</text></view>
+  </view>
+
+  <!-- 必须条件确认弹层：确认完成后直接进入与货主的会话 -->
+  <view wx:if="{{condSheet}}" class="cond-mask" catchtouchmove="noop" bindtap="closeCondSheet"></view>
+  <view wx:if="{{condSheet}}" class="cond-sheet">
+    <view class="cs-hd">
+      <view class="cs-tt">确认必须条件</view>
+      <view class="cs-sub">已确认满足 {{condMet}} / {{condTotal}} 项</view>
+      <view class="cs-x" bindtap="closeCondSheet">✕</view>
+    </view>
+    <view class="cs-tip">逐项对照自己的实际情况选择「满足 / 不满足」。全部满足后可直接与货主对话。</view>
+    <scroll-view scroll-y class="cs-list">
+      <view wx:for="{{condList}}" wx:key="t" class="cs-item">
+        <view class="cs-name">{{item.t}}</view>
+        <view class="cs-confirm">
+          <view class="cc-btn {{item.state === 'yes' ? 'on' : ''}}" data-i="{{index}}" data-val="yes" bindtap="setCond">满足</view>
+          <view class="cc-btn {{item.state === 'no' ? 'on bad' : ''}}" data-i="{{index}}" data-val="no" bindtap="setCond">不满足</view>
+        </view>
+      </view>
+    </scroll-view>
+    <view class="cs-ft">
+      <button class="btn ghost" bindtap="fullConsult">填完整需求</button>
+      <button class="btn primary" bindtap="confirmCond" disabled="{{!condPass || openingChat}}">
+        {{openingChat ? '正在打开…' : (condPass ? '确认并开始对话' : '还有 ' + condUnmet + ' 项未确认')}}
+      </button>
+    </view>
+  </view>
+
+  <!-- 材料查看层：全程叠加个人水印，不提供保存 / 下载 / 转发入口 -->
+  <view wx:if="{{viewerOpen}}" class="viewer">
+    <view class="vw-hd">
+      <text class="vw-t">{{viewerType === 'video' ? '设备实拍视频' : product.model + ' · 实拍图片'}}</text>
+      <text class="vw-x" bindtap="closeViewer">✕</text>
+    </view>
+    <view class="vw-stage">
+      <cover-view wx:if="{{wmOn}}" class="vw-badge">仅平台内查看 · 账号水印</cover-view>
+      <swiper wx:if="{{mediaSlides.length}}" class="vw-swiper" current="{{viewerIndex}}" bindchange="onViewerSwipe" circular="{{mediaSlides.length > 1}}">
+        <swiper-item wx:for="{{mediaSlides}}" wx:key="k">
+          <image wx:if="{{item.kind === 'image'}}" class="vw-media" src="{{item.url}}" mode="aspectFit" show-menu-by-longpress="{{false}}"/>
+          <video wx:else class="vw-media" src="{{item.url}}" autoplay="{{viewerIndex === index}}" controls="{{true}}" show-center-play-btn object-fit="contain"></video>
+        </swiper-item>
+      </swiper>
+      <view wx:if="{{wmOn}}" class="vw-wm">
+        <view wx:for="{{wmTiles}}" wx:key="k" class="vw-wm-t">{{item.t}}</view>
+      </view>
+      <view wx:if="{{wmOn}}" class="vw-id">{{watermark}}</view>
+      <cover-view wx:if="{{mediaSlides.length > 1}}" class="vw-count">{{viewerIndex + 1}} / {{mediaSlides.length}}</cover-view>
+    </view>
+    <view class="vw-tip">{{wmOn ? '画面已叠加你的账号与昵称水印，请勿对外传播。' : '仅平台内查看，请勿对外传播。'}}</view>
+  </view>
+</view>
+
+<!-- 失效态：本地与云端都没有这条商品，绝不拿演示数据顶替 -->
+<view wx:if="{{!product && missing}}" class="empty">
+  <view class="big">404</view>
+  <view class="ttl">商品已下架或不存在</view>
+  <view class="ds">链接可能已失效，或货主已将该商品下架。</view>
+  <view class="acts">
+    <button class="btn ghost" bindtap="back">返回</button>
+    <button class="btn primary" bindtap="goHome">去首页看看</button>
+  </view>
+</view>
+<view wx:if="{{!product && !missing}}" class="loading">加载中…</view>

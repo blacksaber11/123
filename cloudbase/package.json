@@ -1,0 +1,14 @@
+{
+  "name": "suanli-cloudbase",
+  "version": "1.0.0",
+  "private": true,
+  "description": "算力聚合 · 微信小程序 + 微信云开发后端（CommonJS 共享领域层）",
+  "scripts": {
+    "verify": "node scripts/verify.mjs",
+    "load": "node scripts/load-test.mjs",
+    "sync": "node scripts/sync-shared.mjs",
+    "check:miniprogram": "node scripts/check-miniprogram.mjs miniprogram",
+    "check:wxml": "node scripts/check-wxml-syntax.mjs miniprogram",
+    "check": "npm run check:wxml && npm run check:miniprogram"
+  }
+}

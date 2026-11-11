@@ -1,0 +1,341 @@
+<view class="page biz">
+  <!-- 概览：匹配商机 / 在售库存 / 已领取 -->
+  <view class="bz-hero">
+    <view class="bz-hd">
+      <view class="bz-tt">{{mineMode ? '我的商机' : '商机'}}</view>
+      <view wx:if="{{!mineMode}}" class="bz-badge">{{plan}}</view>
+    </view>
+    <view class="bz-ds">{{mineMode ? '只显示你已领取的商机，可随时回看联系方式并直接发起站内对话' : '已发布需求 + 平台核验后的代采 / 代售委托，按你的库存自动匹配；委托类由平台代为对接'}}</view>
+    <view wx:if="{{!mineMode}}" class="bz-stats">
+      <view class="bz-s">
+        <text class="n">{{stats.matched}}</text>
+        <text class="l">匹配商机</text>
+      </view>
+      <view class="bz-s link" bindtap="goStock">
+        <text class="n">{{stats.stock.sku}}</text>
+        <text class="l">在售库存 ›</text>
+      </view>
+      <view class="bz-s">
+        <text class="n">{{stats.claimed}}</text>
+        <text class="l">已领取</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 从分享卡片进入：只展示被分享的那一条，可一键回到完整列表 -->
+  <view wx:if="{{focusId}}" class="bz-focus">
+    <text class="bf-t">来自分享的商机</text>
+    <text class="bf-b" bindtap="clearFocus">查看全部商机 ›</text>
+  </view>
+
+  <!-- 已登录但商机接口失败：明确提示并重试，不展示演示数据 -->
+  <view wx:if="{{loadFailed}}" class="bz-fail" bindtap="refresh">
+    <text class="bf-t">商机加载失败</text>
+    <text class="bf-b">点此重试 ›</text>
+  </view>
+
+  <!-- 未开通商机会员：只能看到角标数字，热度榜单与供求关系需开通后查看 -->
+  <view wx:if="{{!unlocked && !loadFailed && !mineMode}}" class="bz-board" bindtap="openSheet">
+    <view class="bb-hd">
+      <view class="bb-l">
+        <text class="bb-tt">商机榜单 · 供求关系</text>
+        <text class="bb-ds">商机会员可查看需求榜、火热榜、供给榜</text>
+      </view>
+      <text class="bb-x">开通查看 ›</text>
+    </view>
+  </view>
+
+  <!-- 商机榜单入口：点击进入独立页面查看需求榜 / 火热榜 / 供给榜 / 品类榜 -->
+  <view wx:if="{{unlocked && !mineMode}}" class="bz-board">
+    <view class="bb-hd" bindtap="goBoard">
+      <view class="bb-l">
+        <text class="bb-tt">商机榜单</text>
+        <text class="bb-ds">需求榜 · 火热榜 · 供给榜 · 品类榜</text>
+      </view>
+      <text class="bb-x">查看 ›</text>
+    </view>
+  </view>
+
+  <!-- 「我的商机」只展示已领取：权限到期时给出续费入口，不再展示商机池概览 -->
+  <view wx:if="{{mineMode && !unlocked && !loadFailed}}" class="bz-renew" bindtap="openSheet">
+    <text class="br-t">商机联系方式需开通会员后查看</text>
+    <text class="br-b">开通 / 续费后可查看已领取商机的联系方式 ›</text>
+  </view>
+
+  <!-- 未开通：展示商机原理 + 开通入口 -->
+  <block wx:if="{{!unlocked && !loadFailed && !mineMode}}">
+    <view class="bz-gate">
+      <view class="gate-hd">
+        <view class="gate-tt">商机会员</view>
+        <text class="gate-ribbon">{{plan}}</text>
+      </view>
+      <view class="gate-ds">真实买家与卖家发布的供需，按你的库存自动匹配；发布商机免费，发布者必须公开主体身份。</view>
+
+      <!-- 匹配概览：开通前就能看到有多少条在等 -->
+      <view class="gate-kpi">
+        <view class="gk">
+          <text class="gk-n">{{stats.matched}}</text>
+          <text class="gk-l">条匹配商机</text>
+        </view>
+        <view class="gk">
+          <text class="gk-n">{{stats.agency}}</text>
+          <text class="gk-l">条平台委托</text>
+        </view>
+        <view class="gk">
+          <text class="gk-n">{{stats.demands}}</text>
+          <text class="gk-l">条求购需求</text>
+        </view>
+      </view>
+
+      <view class="gate-sec">
+        <text class="gs-t">会员权益</text>
+      </view>
+      <view class="gate-benefits">
+        <view class="gb">
+          <text class="gb-no">1</text>
+          <view class="gb-c">
+            <view class="gb-t">真实商机，主体公开</view>
+            <view class="gb-d">发布者必须公开主体身份；代采 / 代售核验资质与金额后才进商机池。</view>
+          </view>
+        </view>
+        <view class="gb">
+          <text class="gb-no">2</text>
+          <view class="gb-c">
+            <view class="gb-t">平台筛选，只推对得上的</view>
+            <view class="gb-d">按型号、成色、起订量逐条比对，满足库存条件才出现，对不上的不推送。</view>
+          </view>
+        </view>
+        <view class="gb">
+          <text class="gb-no">3</text>
+          <view class="gb-c">
+            <view class="gb-t">开通后看完整商机</view>
+            <view class="gb-d">未开通只看条数与打码卡片；开通后可见型号、数量、预算与匹配库存。</view>
+          </view>
+        </view>
+        <view class="gb">
+          <text class="gb-no">4</text>
+          <view class="gb-c">
+            <view class="gb-t">领取后给联系人</view>
+            <view class="gb-d">领取后给主体与联系人；公开手机号可直接拨打，未公开走站内对话。</view>
+          </view>
+        </view>
+        <view class="gb">
+          <text class="gb-no">5</text>
+          <view class="gb-c">
+            <view class="gb-t">代采 / 代售由平台代为对接</view>
+            <view class="gb-d">平台核验上架的委托只进商机池，提交申请后由平台核实推进。</view>
+          </view>
+        </view>
+        <view class="gb">
+          <text class="gb-no">6</text>
+          <view class="gb-c">
+            <view class="gb-t">四类榜单看行情</view>
+            <view class="gb-d">需求榜、火热榜、供给榜、品类榜，掌握热门机型与价格区间。</view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 四档套餐：引导页直接展示并可选择，选中后按该档下单 -->
+      <view wx:if="{{plans.length}}" class="gate-sec">
+        <text class="gs-t">选择套餐</text>
+        <text class="gs-d">到期续费按档位累加</text>
+      </view>
+      <view wx:if="{{plans.length}}" class="ms-plans gate-plans">
+        <view
+          wx:for="{{plans}}"
+          wx:key="key"
+          class="ms-plan {{planKey === item.key ? 'on' : ''}}"
+          data-key="{{item.key}}"
+          bindtap="selectPlan"
+        >
+          <view class="pl-hd">
+            <text class="pl-label">{{item.label}}</text>
+            <text wx:if="{{item.saving}}" class="pl-save">省 {{item.saving}}</text>
+          </view>
+          <view class="pl-price"><text class="pl-y">¥</text>{{item.price}}</view>
+          <view class="pl-meta">
+            <text class="pl-days">{{item.days}} 天</text>
+            <text wx:if="{{item.original > item.price}}" class="pl-origin">原价 ¥{{item.original}}</text>
+          </view>
+        </view>
+      </view>
+
+      <button class="btn primary block gate-btn" bindtap="openSheet" loading="{{paying}}" disabled="{{paying}}">{{unlocked ? '立即续费' : '立即开通'}}{{selectedPlan ? ' · ¥' + selectedPlan.price + ' / ' + selectedPlan.days + ' 天' : ' · ' + plan}}</button>
+      <view class="gate-foot">微信支付 · 付款后自动延长会员时长</view>
+    </view>
+
+    <!-- 信任说明独立成卡，避免和权益、套餐堆在一起 -->
+    <view class="bz-quality">
+      <view class="gate-sub">平台如何把控商机质量</view>
+      <view class="gate-list">
+        <view class="gl">
+          <text class="gi">1</text>
+          <view class="gc">
+            <view class="gt">发布门槛</view>
+            <view class="gd">只有公开主体的供需进商机池，私密 / 匿名不参与；代采 / 代售核验后上架。</view>
+          </view>
+        </view>
+        <view class="gl">
+          <text class="gi">2</text>
+          <view class="gc">
+            <view class="gt">匹配规则</view>
+            <view class="gd">按型号、成色、起订量匹配，库存不足或起订量接不下的不推送。</view>
+          </view>
+        </view>
+        <view class="gl">
+          <text class="gi">3</text>
+          <view class="gc">
+            <view class="gt">联系人与隐私</view>
+            <view class="gd">商机内主体脱敏，领取后才给联系人，未公开电话走站内对话。</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view class="bz-teaser">
+      <view class="teaser-hd">匹配到的商机（开通后可见价格与匹配详情）</view>
+      <view wx:for="{{items}}" wx:key="id" class="teaser-row">
+        <view class="tr-l">
+          <text class="tr-kind {{item.kind === '代采' ? 'buy' : 'sell'}}">{{item.kind}}</text>
+          <text class="tr-model">{{item.model}}</text>
+        </view>
+        <text class="tr-price">¥ ****</text>
+      </view>
+      <view wx:if="{{!items.length}}" class="teaser-none">暂时没有和你条件匹配的商机：完善库存型号 / 成色 / 起订量，或发布求购需求后再看</view>
+    </view>
+  </block>
+
+  <!-- 已开通：商机列表 -->
+  <block wx:elif="{{!loadFailed}}">
+    <view wx:if="{{!mineMode}}" class="bz-status">
+      <view class="bs-l">
+        <text class="bs-dot"></text>
+        <text>已开通 · 到期 {{expireText}}</text>
+      </view>
+      <view class="bs-r" bindtap="openSheet">续费</view>
+    </view>
+
+    <!-- 领取状态：可领取 / 已领取 / 不满足；不满足仍保留在列表里，只是不再提醒 -->
+    <view wx:if="{{!mineMode}}" class="bz-tabs state-tabs">
+      <view wx:for="{{states}}" wx:key="key"
+            class="bz-tab {{state === item.key ? 'on' : ''}}"
+            data-key="{{item.key}}" bindtap="switchState">{{item.label}}<text wx:if="{{item.count}}">{{item.count}}</text></view>
+    </view>
+
+    <view class="bz-tabs cat-tabs">
+      <view wx:for="{{filters}}" wx:key="key"
+            class="bz-tab {{filter === item.key ? 'on' : ''}}"
+            data-key="{{item.key}}" bindtap="switchFilter">{{item.label}}</view>
+    </view>
+
+    <view class="opp-list">
+      <view wx:for="{{items}}" wx:key="id" class="opp-card"
+            data-id="{{item.id}}" data-type="{{item.type}}" bindtap="openDetail">
+        <view class="op-top">
+          <view class="op-top-l">
+            <text class="op-kind {{item.type === 'supply' ? 'sell' : (item.kind === '代采' ? 'buy' : (item.kind === '代售' ? 'sell' : 'demand'))}}">{{item.kind}}</text>
+            <text wx:if="{{item.closed}}" class="op-mode">{{item.statusText || '已结束'}}</text>
+            <text wx:elif="{{item.claimed}}" class="op-mode">已领取</text>
+            <text wx:if="{{item.platformOnly}}" class="op-mode">平台对接</text>
+          </view>
+          <view class="op-top-r" catchtap="noop">
+            <text class="op-fee">{{item.feeText}}</text>
+            <button class="op-share" open-type="share" data-id="{{item.id}}" data-type="{{item.type}}">分享</button>
+          </view>
+        </view>
+        <view class="op-model">{{item.model}}</view>
+        <view class="op-price">
+          <text class="op-p">{{item.priceText}}</text>
+          <text class="op-unit">/ {{item.unit}} × {{item.qty}}{{item.unit}}</text>
+        </view>
+        <view wx:if="{{!item.closed}}" class="op-chips">
+          <text class="chip">{{item.cat}}</text>
+          <text class="chip">{{item.city}}</text>
+          <text class="chip brand">{{item.type === 'supply' ? '需求匹配' : '库存匹配'}} ×{{item.stockQty}}</text>
+        </view>
+        <view wx:if="{{item.stockText}}" class="op-stock">{{item.type === 'supply' ? '货源' : '我的库存'}}：{{item.stockText}}</view>
+        <view wx:if="{{item.demandText && !item.closed}}" class="op-stock">{{item.demandText}}</view>
+        <view class="op-meta">{{item.org}} · {{item.published}} · {{item.closed ? '已结束，仅供回看' : item.expireText}}<text wx:if="{{item.type !== 'agency'}}" class="op-more">详情 ›</text></view>
+        <view wx:if="{{item.claimText}}" class="op-claim">{{item.claimText}}</view>
+
+        <!-- 平台单：对接说明与按钮分开，不挤在一起 -->
+        <view wx:if="{{item.platformOnly}}" class="op-platform">{{item.consulted ? '已提交，平台将联系你核实' : '平台居中联系，不展示对方联系方式；核实后推送采购方'}}</view>
+
+        <view wx:if="{{item.contactVisible || item.canChat}}" class="op-contact" catchtap="noop">
+          <view class="oc-l">
+            <text class="oc-name">{{item.contact || item.org || (item.claimed ? '已领取商机' : '')}}</text>
+            <text wx:if="{{item.phone}}" class="oc-phone">{{item.phone}}</text>
+            <text wx:else class="oc-phone empty">对方未留电话，请用站内对话</text>
+          </view>
+          <button wx:if="{{item.phone}}" class="btn sm" data-phone="{{item.phone}}" bindtap="copyPhone">复制电话</button>
+          <button wx:if="{{!item.closed && (item.type === 'demand' || item.type === 'supply')}}" class="btn sm primary" data-id="{{item.id}}" data-type="{{item.type}}" bindtap="chatOpp">站内对话</button>
+        </view>
+        <view wx:else class="op-foot {{item.platformOnly ? 'platform' : ''}} {{item.unsatisfied ? 'unsatisfied' : ''}}" catchtap="noop">
+          <text class="op-tip">{{item.platformOnly ? '代采 / 代售委托由平台代为对接，客服核实后推送采购方，平台会联系你确认交易细节' : (item.unsatisfied ? '已标记不满足 · 商机仍保留在这里，不再角标提醒；可重新查看条件' : '进入商机页逐项确认必须条件，全部满足后可领取')}}</text>
+          <button wx:if="{{item.platformOnly}}"
+                  class="btn sm primary op-btn"
+                  loading="{{consultingId === item.id}}"
+                  disabled="{{item.consulted || consultingId === item.id}}"
+                  data-id="{{item.id}}"
+                  bindtap="consultOpp">{{item.consulted ? '已提交 · 待平台核实' : '联系平台'}}</button>
+          <button wx:elif="{{item.type === 'demand' || item.type === 'supply'}}"
+                  class="btn sm primary op-btn" data-id="{{item.id}}" data-type="{{item.type}}" bindtap="viewOpp">{{item.unsatisfied ? '重新查看' : '查看商机'}}</button>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{!items.length}}" class="empty">
+      <image class="big-img" src="/assets/icons/empty-target.png" mode="aspectFit" />
+      <view class="ttl">{{state === 'claimed' ? '还没有领取过商机' : (state === 'unsatisfied' ? '没有标记不满足的商机' : '暂无匹配商机')}}</view>
+      <view class="ds">{{state === 'claimed' ? '领取后的商机会保存在这里，可随时复制电话或发起站内对话' : (state === 'unsatisfied' ? '在商机页逐项确认后标记「不满足」的商机会保留在这里，不再角标提醒，可随时重新查看' : '只展示和你库存的型号、成色、起订量匹配的需求，以及和你求购需求匹配的货源；主体信息未公开的发布内容不会进入商机池')}}</view>
+      <view wx:if="{{mineMode}}" class="acts">
+        <button class="btn primary" bindtap="goAllBiz">去看可领取商机</button>
+      </view>
+      <view wx:elif="{{state === 'claimed' || state === 'unsatisfied'}}" class="acts">
+        <button class="btn primary" bindtap="switchState" data-key="open">去看可领取</button>
+      </view>
+      <view wx:else class="acts">
+        <button class="btn primary" bindtap="goStock">完善我的库存</button>
+      </view>
+    </view>
+  </block>
+
+  <!-- 开通弹层：套餐 + 开通按钮，付款后自动加时长 -->
+  <view wx:if="{{sheetOpen}}" class="m-mask" bindtap="closeSheet"></view>
+  <view wx:if="{{sheetOpen}}" class="m-sheet">
+    <view class="ms-hd">
+      <text>{{unlocked ? '续费商机会员' : '开通商机会员'}}</text>
+      <text class="ms-x" bindtap="closeSheet">✕</text>
+    </view>
+    <view class="ms-price">
+      <text class="ms-p">{{selectedPlan ? '¥ ' + selectedPlan.price : plan}}</text>
+      <text class="ms-d">{{selectedPlan ? selectedPlan.label + ' · ' + selectedPlan.days + ' 天' : plan}} · {{stats.matched}} 条商机待解锁</text>
+    </view>
+
+    <!-- 四档套餐：价格 / 天数由管理端设置页维护，选中后按该档下单 -->
+    <view wx:if="{{plans.length}}" class="ms-plans">
+      <view
+        wx:for="{{plans}}"
+        wx:key="key"
+        class="ms-plan {{planKey === item.key ? 'on' : ''}}"
+        data-key="{{item.key}}"
+        bindtap="selectPlan"
+      >
+        <view class="pl-hd">
+          <text class="pl-label">{{item.label}}</text>
+          <text wx:if="{{item.saving}}" class="pl-save">省 {{item.saving}}</text>
+        </view>
+        <view class="pl-price"><text class="pl-y">¥</text>{{item.price}}</view>
+        <view class="pl-meta">
+          <text class="pl-days">{{item.days}} 天</text>
+          <text wx:if="{{item.original > item.price}}" class="pl-origin">原价 ¥{{item.original}}</text>
+        </view>
+      </view>
+    </view>
+    <view wx:if="{{plans.length}}" class="ms-plans-tip">到期前续费按所选档位累加时长，不打断当前权限</view>
+
+    <view class="ms-note">微信支付，付款后自动延长会员时长；开通后本页立即显示商机价格与匹配详情，需求类可领取联系方式。</view>
+    <button wx:if="{{remote}}" class="btn primary block" bindtap="applyUnlock" loading="{{paying}}" disabled="{{paying}}">{{unlocked ? '确认续费' : '确认开通'}}{{selectedPlan ? ' · ¥' + selectedPlan.price : ''}}</button>
+    <view wx:if="{{!remote}}" class="ms-demo" bindtap="demoActivate">原型演示：模拟客服已开通</view>
+  </view>
+</view>

@@ -1,0 +1,30 @@
+<view class="rp-page">
+
+  <view class="rp-target">
+    <text class="rp-target-k">对象</text>
+    <text class="rp-target-v">{{targetTypeText}}{{targetTitle ? '：' + targetTitle : ''}}</text>
+  </view>
+
+  <view class="rp-block">
+    <view class="rp-label">反馈类型</view>
+    <view class="rp-chips">
+      <view wx:for="{{types}}" wx:key="*this" class="rp-chip {{type === item ? 'on' : ''}}" data-t="{{item}}" bindtap="pickType">{{item}}</view>
+    </view>
+  </view>
+
+  <view class="rp-block">
+    <view class="rp-label">具体说明<text class="rp-req">*</text></view>
+    <textarea class="rp-textarea" value="{{content}}" maxlength="800" placeholder="请写清发生了什么、涉及哪些信息，便于平台核实（至少 5 个字）" bindinput="onContent"></textarea>
+    <view class="rp-count">{{content.length}} / 800</view>
+  </view>
+
+  <view class="rp-block">
+    <view class="rp-label">联系方式（选填）</view>
+    <input class="rp-input" value="{{contact}}" maxlength="60" placeholder="手机号 / 微信号，便于处理结果同步" bindinput="onContact"/>
+  </view>
+
+  <view class="rp-tip">平台客服人工核实后处置，结果会在「我的 - 帮助与反馈」与站内信同步。恶意举报会被记录，请如实填写。</view>
+
+  <button class="btn primary block rp-submit" bindtap="submit" disabled="{{sending}}">{{sending ? '提交中…' : '提交'}}</button>
+
+</view>

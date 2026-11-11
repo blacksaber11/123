@@ -1,0 +1,168 @@
+<view class="calc">
+  <view class="hero">
+    <view class="hero-tt">本地部署测算</view>
+    <view class="hero-ds">选开源模型和目标并发，按显存与算力算出需要多少台</view>
+    <view class="hero-tags">语言 · 生图 · 视频 · 语音</view>
+    <view class="hero-steps">
+      <text class="hs on">1 选模型</text>
+      <text class="hs">2 定并发</text>
+      <text class="hs">3 出配置</text>
+    </view>
+  </view>
+
+  <!-- 1. 模型 -->
+  <view class="sec">
+    <view class="sec-hd">
+      <text class="sec-tt">1. 选择开源模型</text>
+      <text class="sec-aside">按热度排序</text>
+    </view>
+    <view class="k-tabs">
+      <view wx:for="{{kinds}}" wx:key="key"
+            class="k-tab {{kind === item.key ? 'on' : ''}}"
+            data-k="{{item.key}}" bindtap="pickKind">{{item.name}}</view>
+    </view>
+    <scroll-view scroll-x="true" class="hscroll" enhanced show-scrollbar="{{false}}">
+      <view class="hrow">
+        <view wx:for="{{vendors}}" wx:key="*this"
+              class="v-chip {{vendor === item ? 'on' : ''}}"
+              data-v="{{item}}" bindtap="pickVendor">{{item}}</view>
+      </view>
+    </scroll-view>
+    <view class="m-list">
+      <view wx:for="{{models}}" wx:key="id"
+            class="m-chip {{modelId === item.id ? 'on' : ''}}"
+            data-id="{{item.id}}" bindtap="pickModel">
+        <text class="mc-name">{{item.name}}</text>
+        <text class="mc-sub">{{item.meta}}</text>
+      </view>
+    </view>
+    <view class="m-info">{{modelInfo}}</view>
+  </view>
+
+  <!-- 2. 精度 / 上下文 / 并发 -->
+  <view class="sec">
+    <view class="sec-tt">2. 量化精度、{{ctxTitle}}与并发</view>
+    <view class="sub-tt">量化精度</view>
+    <view class="q-list">
+      <view wx:for="{{quantOptions}}" wx:key="key"
+            class="q-chip {{quant === item.key ? 'on' : ''}}"
+            data-v="{{item.key}}" bindtap="pickQuant">
+        <text class="qc-name">{{item.short}}</text>
+        <text class="qc-tip">{{item.tip}}</text>
+      </view>
+    </view>
+
+    <view class="sub-tt">{{ctxTitle}}</view>
+    <view class="chips">
+      <view wx:for="{{contextOptions}}" wx:key="v"
+            class="chip {{context === item.v ? 'on' : ''}}"
+            data-v="{{item.v}}" bindtap="pickContext">{{item.label}}</view>
+    </view>
+
+    <view class="sub-tt">目标并发</view>
+    <view class="conc-row">
+      <view class="conc-field">
+        <input class="conc-input" type="number" value="{{concurrency}}" bindinput="onConcInput"
+               placeholder="8" maxlength="6" />
+        <text class="conc-unit">路</text>
+      </view>
+      <view class="chips conc-chips">
+        <view wx:for="{{concPresets}}" wx:key="*this"
+              class="chip {{concurrency == item ? 'on' : ''}}"
+              data-v="{{item}}" bindtap="pickConc">{{item}}</view>
+      </view>
+    </view>
+    <view class="field-tip">{{concTip}}</view>
+  </view>
+
+  <!-- 3. 设备 -->
+  <view class="sec">
+    <view class="sec-hd">
+      <text class="sec-tt">3. 选择预设设备</text>
+      <text class="sec-link" bindtap="openDevices">全部预设设备 ›</text>
+    </view>
+    <view wx:if="{{device}}" class="dev-card" bindtap="openDevices">
+      <view class="dev-main">
+        <view class="dev-model">{{device.model}}</view>
+        <view class="dev-spec">{{device.specText}}</view>
+        <view class="dev-cat">{{device.cat}} · {{device.brand}}</view>
+      </view>
+      <text class="dev-change">更换 ›</text>
+    </view>
+    <view class="reco-tt">按当前条件推荐</view>
+    <view class="reco-list">
+      <view wx:for="{{recos}}" wx:key="key"
+            class="reco {{deviceKey === item.key ? 'on' : ''}}"
+            data-key="{{item.key}}" bindtap="pickDevice">
+        <text class="rc-model">{{item.model}}</text>
+        <text class="rc-sub">{{item.memText}} · ×{{item.units}} {{item.unitLabel}}</text>
+      </view>
+    </view>
+    <view class="field-tip">只能选平台已收录的设备；型号认不出显存的服务器不参与测算。</view>
+  </view>
+
+  <!-- 结果 -->
+  <view wx:if="{{result}}" class="res">
+    <view class="res-top">
+      <view>
+        <view class="res-k">预计需要</view>
+        <view class="res-v">{{result.unitsText}}</view>
+      </view>
+      <view class="res-tag">{{result.fitText}}</view>
+    </view>
+    <view class="res-dev">{{device.model}}</view>
+    <view class="res-grid">
+      <view class="rg"><text class="rg-k">模型权重</text><text class="rg-v">{{result.weightsText}}</text></view>
+      <view class="rg"><text class="rg-k">{{result.kvLabel}}</text><text class="rg-v">{{result.kvText}}</text></view>
+      <view class="rg"><text class="rg-k">单{{device.unitLabel}}可用</text><text class="rg-v">{{result.usableText}}</text></view>
+      <view class="rg"><text class="rg-k">合计可用</text><text class="rg-v">{{result.totalText}}</text></view>
+      <view class="rg"><text class="rg-k">显存余量</text><text class="rg-v">{{result.freeText}}</text></view>
+      <view class="rg"><text class="rg-k">最多承载</text><text class="rg-v">{{result.maxConcText}}</text></view>
+      <view wx:if="{{result.isLLM}}" class="rg"><text class="rg-k">单台解码吞吐</text><text class="rg-v">{{result.tpsText}}</text></view>
+      <view wx:if="{{result.isLLM}}" class="rg"><text class="rg-k">受限项</text><text class="rg-v">{{result.boundText}}</text></view>
+    </view>
+    <view wx:if="{{result.machineText}}" class="res-hint">{{result.machineText}}</view>
+    <view wx:if="{{result.warn}}" class="res-warn">{{result.warn}}</view>
+    <view class="res-note">{{result.note}}</view>
+  </view>
+
+  <view class="cta-space"></view>
+  <view class="cta">
+    <button class="cta-btn ghost" bindtap="reset">重置</button>
+    <button class="cta-btn primary" bindtap="goPublish">按此配置发布采购</button>
+  </view>
+
+  <!-- 设备选择面板 -->
+  <view wx:if="{{deviceSheet}}" class="mask" bindtap="closeDevices"></view>
+  <view wx:if="{{deviceSheet}}" class="sheet">
+    <view class="sheet-hd">
+      <text class="sheet-tt">选择预设设备</text>
+      <text class="sheet-x" bindtap="closeDevices">✕</text>
+    </view>
+    <view class="sheet-search">
+      <input class="ss-input" value="{{deviceSearch}}" bindinput="onDeviceSearch"
+             placeholder="搜型号 / 品牌，如 H100、Mac Studio" />
+    </view>
+    <scroll-view scroll-x="true" class="sheet-cats" enhanced show-scrollbar="{{false}}">
+      <view class="hrow">
+        <view wx:for="{{deviceCats}}" wx:key="*this"
+              class="v-chip sm {{deviceCat === item ? 'on' : ''}}"
+              data-v="{{item}}" bindtap="pickDeviceCat">{{item}}</view>
+      </view>
+    </scroll-view>
+    <scroll-view scroll-y="true" class="sheet-list">
+      <view wx:for="{{deviceList}}" wx:key="key"
+            class="d-row {{deviceKey === item.key ? 'on' : ''}}"
+            data-key="{{item.key}}" bindtap="pickDevice">
+        <view class="d-main">
+          <view class="d-model">{{item.model}}</view>
+          <view class="d-spec">{{item.specText}}</view>
+          <view class="d-cat">{{item.cat}} · {{item.brand}}</view>
+        </view>
+        <view class="d-need">{{item.needText}}</view>
+      </view>
+      <view wx:if="{{!deviceList.length}}" class="d-empty">没有匹配的预设设备</view>
+      <view class="sheet-space"></view>
+    </scroll-view>
+  </view>
+</view>

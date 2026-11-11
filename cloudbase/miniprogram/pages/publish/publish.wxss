@@ -1,0 +1,1087 @@
+/* 发布页 */
+.publish-page {
+  min-height: 100vh;
+  background: var(--paper);
+  padding-bottom: 200rpx;
+}
+
+/* 自定义导航：返回键 + 标题，右侧给胶囊让位 */
+.pub-nav {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: #fff;
+  border-bottom: 1rpx solid var(--line-2);
+}
+.pub-nav .nav-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 0 24rpx;
+}
+.pub-nav .nav-back {
+  width: 56rpx;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  font-size: 48rpx;
+  line-height: 1;
+  color: var(--ink);
+}
+.pub-nav .nav-title {
+  position: absolute;
+  left: 120rpx;
+  right: 200rpx;
+  text-align: center;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: var(--ink);
+  pointer-events: none;
+}
+
+/* 入口页 */
+.pub-header {
+  padding: 40rpx 32rpx 24rpx;
+  background: linear-gradient(180deg, #EEF2FF 0%, var(--paper) 100%);
+}
+.pub-sub {
+  font-size: 26rpx;
+  color: var(--muted);
+}
+
+/* 入口分组：两列卡片，统一圆角与间距 */
+.entry-group {
+  margin: 4rpx 24rpx 0;
+}
+.entry-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12rpx;
+  padding: 24rpx 4rpx 14rpx;
+}
+.entry-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.entry-note {
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.entry-grid {
+  display: flex;
+  gap: 20rpx;
+}
+.entry-card {
+  flex: 1;
+  min-height: 220rpx;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding: 26rpx 22rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.entry-card:active {
+  background: var(--line-2);
+}
+.ec-icon {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 18rpx;
+  background: var(--brand-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16rpx;
+}
+.ec-ico {
+  width: 40rpx;
+  height: 40rpx;
+}
+.entry-card.buy .ec-icon {
+  background: #FFF2E6;
+  color: #E85600;
+}
+.entry-card.agency .ec-icon {
+  background: #EFF6FF;
+  color: #2563EB;
+}
+.entry-card.agency.sell .ec-icon {
+  background: #F5F0FF;
+  color: #7C3AED;
+}
+.ec-tt {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.ec-ds {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.ec-go {
+  margin-top: auto;
+  padding-top: 18rpx;
+  font-size: 23rpx;
+  font-weight: 600;
+  color: var(--brand);
+}
+.ec-badge {
+  margin-top: auto;
+  align-self: flex-start;
+  padding: 5rpx 14rpx;
+  border-radius: 999rpx;
+  background: #F1F3F5;
+  color: var(--muted);
+  font-size: 19rpx;
+}
+
+/* 表单页 */
+.form-wrap {
+  padding-top: 16rpx;
+}
+
+/* 返回入口 */
+.form-back {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  padding: 20rpx 32rpx 4rpx;
+}
+.fb-ico {
+  flex: none;
+  width: 32rpx;
+  height: 32rpx;
+  display: block;
+}
+.fb-txt {
+  font-size: 24rpx;
+  color: var(--muted);
+}
+/* 编辑模式提示条：把当前状态与「保存不改状态」说清楚 */
+.edit-tip {
+  margin: 16rpx 24rpx 8rpx;
+  font-size: 22rpx;
+  line-height: 1.7;
+}
+/* 表单分区：与咨询页、首页保持同一套圆角卡片，不再做成通栏分段 */
+.form-sec {
+  background: #fff;
+  margin: 20rpx 24rpx;
+  border-radius: var(--radius);
+  border: 1rpx solid var(--line);
+  padding: 28rpx;
+  box-shadow: var(--shadow);
+}
+.form-sec .sh {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16rpx;
+}
+.form-sec .sh .st {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.form-sec .sh .sd {
+  font-size: 22rpx;
+  color: var(--muted);
+  margin-left: 12rpx;
+}
+
+.field {
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid var(--line-2);
+}
+.field:last-child {
+  border-bottom: none;
+}
+.field .f-label {
+  display: block;
+  font-size: 26rpx;
+  color: var(--ink);
+  font-weight: 500;
+  margin-bottom: 16rpx;
+}
+.field .req {
+  color: var(--danger);
+  margin-left: 6rpx;
+}
+.field input {
+  width: 100%;
+  height: 72rpx;
+  font-size: 28rpx;
+  color: var(--ink);
+}
+.field .tip {
+  margin-top: 12rpx;
+  font-size: 22rpx;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
+
+.pick-btn {
+  display: flex;
+  align-items: center;
+  height: 72rpx;
+  padding: 0 20rpx;
+  border-radius: 12rpx;
+  border: 1rpx solid var(--line);
+  background: #fff;
+  font-size: 28rpx;
+  color: var(--ink);
+}
+/* picker 宿主节点默认不是块级，显式撑满一行 */
+.pick-wrap {
+  display: block;
+  width: 100%;
+}
+/* 省 → 市 两级并排 */
+.geo-row {
+  display: flex;
+  gap: 16rpx;
+}
+.geo-row .pick-wrap {
+  flex: 1;
+  min-width: 0;
+}
+.pick-btn.placeholder {
+  color: #A1A1AA;
+}
+.pick-btn.disabled {
+  background: var(--line-2);
+  color: var(--muted);
+}
+/* 已选设备的层级路径 */
+.dev-path {
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  color: var(--brand);
+}
+.dev-path .dev-clear {
+  margin-left: 16rpx;
+  color: var(--muted);
+  text-decoration: underline;
+}
+.pick-btn .pb-t {
+  flex: 1;
+}
+.pick-btn .pb-a {
+  color: var(--muted);
+  margin-left: 12rpx;
+}
+
+/* 设备搜索：输入即匹配，结果直接点选 */
+.dev-search {
+  display: flex;
+  align-items: center;
+  height: 72rpx;
+  margin-bottom: 12rpx;
+  padding: 0 20rpx;
+  border-radius: 12rpx;
+  border: 1rpx solid var(--line);
+  background: var(--line-2);
+}
+.dev-search .dev-search-input {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  height: 72rpx;
+  font-size: 26rpx;
+  color: var(--ink);
+}
+.dev-search-clear {
+  flex: none;
+  margin-left: 12rpx;
+  font-size: 22rpx;
+  color: var(--brand);
+}
+.dev-results {
+  max-height: 520rpx;
+  overflow-y: auto;
+  margin-bottom: 12rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 12rpx;
+  background: #fff;
+}
+.dev-result {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+  padding: 18rpx 20rpx;
+  border-bottom: 1rpx solid var(--line-2);
+}
+.dev-result:last-child {
+  border-bottom: none;
+}
+.dev-result:active {
+  background: var(--brand-soft);
+}
+.dr-name {
+  font-size: 26rpx;
+  color: var(--ink);
+  font-weight: 500;
+}
+.dr-path {
+  font-size: 21rpx;
+  color: var(--muted);
+}
+.dev-empty {
+  padding: 28rpx 20rpx;
+  text-align: center;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+
+/* 媒体区域 */
+.media-tip {
+  margin-bottom: 16rpx;
+}
+.media-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-bottom: 20rpx;
+}
+
+/* 上传卡片 */
+.upload-card {
+  background: var(--line-2);
+  border: 2rpx dashed var(--line);
+  border-radius: 20rpx;
+  padding: 24rpx;
+  margin-bottom: 16rpx;
+}
+.upload-card:active {
+  background: var(--line-2);
+}
+.uc-hd {
+  display: flex;
+  align-items: flex-start;
+  gap: 16rpx;
+  margin-bottom: 16rpx;
+}
+.up-ico {
+  flex: none;
+  width: 48rpx;
+  height: 48rpx;
+  padding: 10rpx;
+  box-sizing: border-box;
+  border-radius: 12rpx;
+  background: var(--brand-soft);
+  display: block;
+}
+.ut {
+  flex: 1;
+  min-width: 0;
+}
+.uc-name {
+  display: block;
+  font-size: 28rpx;
+  color: var(--ink);
+  font-weight: 500;
+  margin-bottom: 4rpx;
+}
+.uc-desc {
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.state {
+  flex: none;
+  font-size: 22rpx;
+  color: var(--muted);
+  background: var(--line-2);
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+}
+.uc-acts {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-bottom: 12rpx;
+}
+.up-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 56rpx;
+  padding: 0 24rpx;
+  border-radius: 12rpx;
+  background: var(--brand);
+  color: #fff;
+  font-size: 24rpx;
+  font-weight: 500;
+}
+.uc-hint {
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.uc-sec {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8rpx;
+  font-size: 20rpx;
+  color: var(--brand);
+  padding-top: 12rpx;
+  border-top: 1rpx dashed var(--line);
+}
+
+/* 已选文件列表：可自定义命名与删除 */
+.f-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+  margin-bottom: 16rpx;
+}
+.f-item {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 12rpx 16rpx;
+  border-radius: 12rpx;
+  background: #fff;
+  border: 1rpx solid var(--line-2);
+}
+.f-ico {
+  flex: none;
+  width: 44rpx;
+  height: 44rpx;
+  padding: 9rpx;
+  box-sizing: border-box;
+  border-radius: 10rpx;
+  background: var(--brand-soft);
+  display: block;
+}
+.f-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+.f-name {
+  font-size: 24rpx;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.f-meta {
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.f-acts {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+.f-btn {
+  font-size: 22rpx;
+  color: var(--brand);
+  padding: 6rpx 12rpx;
+  border-radius: 8rpx;
+  background: var(--brand-soft);
+}
+.f-btn.danger {
+  color: var(--danger);
+  background: #FDECEC;
+}
+
+/* 条件设置：自定义新增条件 */
+.cond-add {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  margin-top: 16rpx;
+}
+.cond-add input {
+  flex: 1;
+  min-width: 0;
+  height: 64rpx;
+  padding: 0 20rpx;
+  border: 1rpx dashed var(--line);
+  border-radius: 12rpx;
+  background: var(--line-2);
+  font-size: 24rpx;
+  color: var(--ink);
+}
+.add-btn {
+  flex: none;
+  height: 64rpx;
+  padding: 0 24rpx;
+  display: flex;
+  align-items: center;
+  border-radius: 12rpx;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 24rpx;
+  font-weight: 600;
+}
+
+/* 交易流程：自定义步骤 */
+.flow-edit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+.flow-edit {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 12rpx;
+  border: 1rpx solid var(--line-2);
+  border-radius: 16rpx;
+  background: var(--line-2);
+}
+.fe-idx {
+  flex: none;
+  width: 40rpx;
+  height: 40rpx;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #fff;
+  font-size: 20rpx;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fe-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+.fe-name,
+.fe-desc {
+  width: 100%;
+  height: 48rpx;
+  padding: 0 12rpx;
+  border-radius: 8rpx;
+  background: #fff;
+  border: 1rpx solid var(--line-2);
+  font-size: 24rpx;
+  color: var(--ink);
+}
+.fe-desc {
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.fe-acts {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+.fe-btn {
+  width: 44rpx;
+  height: 36rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+  color: var(--ink);
+  font-size: 22rpx;
+}
+.fe-btn.off {
+  color: #D4D4D8;
+}
+.fe-btn.danger {
+  color: var(--danger);
+}
+.step-add {
+  flex-wrap: wrap;
+}
+.step-add input {
+  height: 56rpx;
+}
+
+/* 底部提交栏 */
+.submit-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #fff;
+  border-top: 1rpx solid var(--line);
+  padding: 16rpx 24rpx;
+  z-index: 100;
+}
+.submit-bar .btn {
+  /* 与商品页 / 需求页底部主操作同一尺寸（.btn.lg） */
+  height: 92rpx;
+  font-size: 30rpx;
+  font-weight: 600;
+  border-radius: 18rpx;
+}
+.submit-row {
+  display: flex;
+  gap: 16rpx;
+}
+.submit-row .btn {
+  flex: 1;
+  margin: 0;
+}
+.submit-tip {
+  text-align: center;
+  font-size: 20rpx;
+  color: var(--muted);
+  margin-top: 8rpx;
+}
+
+/* 主体信息卡片：统一取「我的 · 个人信息」 */
+.subj-card {
+  padding: 20rpx 22rpx;
+  margin-bottom: 8rpx;
+  background: var(--line-2);
+  border: 1rpx solid var(--line);
+  border-radius: 18rpx;
+}
+.subj-hd {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+  flex-wrap: wrap;
+  margin-bottom: 12rpx;
+}
+.subj-nm {
+  font-size: 27rpx;
+  font-weight: 600;
+  color: var(--ink);
+  word-break: break-all;
+}
+.subj-tag {
+  flex: none;
+  padding: 2rpx 12rpx;
+  font-size: 20rpx;
+  line-height: 32rpx;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: 8rpx;
+}
+.subj-row {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  font-size: 22rpx;
+  line-height: 1.7;
+}
+.subj-k {
+  flex: none;
+  width: 110rpx;
+  color: var(--muted);
+}
+.subj-v {
+  color: var(--ink-2);
+}
+.subj-v.ok {
+  color: #15803D;
+}
+.subj-v.warn {
+  color: #B45309;
+}
+.subj-link {
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  color: var(--brand);
+  text-align: right;
+}
+.subj-empty {
+  padding: 22rpx;
+  margin-bottom: 8rpx;
+  background: var(--line-2);
+  border: 1rpx dashed var(--line);
+  border-radius: 18rpx;
+}
+.subj-empty .se-t {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.subj-empty .se-d {
+  margin: 8rpx 0 16rpx;
+  font-size: 21rpx;
+  line-height: 1.6;
+  color: var(--muted);
+}
+/* 代采：仅平台可见锁定提示 */
+.lock-row {
+  display: flex;
+  gap: 16rpx;
+  padding: 20rpx;
+  background: #F6FBF8;
+  border: 1rpx solid var(--line);
+  border-radius: 18rpx;
+}
+.lock-ico {
+  flex: none;
+  width: 52rpx;
+  height: 52rpx;
+  padding: 11rpx;
+  box-sizing: border-box;
+  border-radius: 14rpx;
+  background: var(--brand-soft);
+  display: block;
+}
+.lock-t {
+  display: block;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.lock-d {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 21rpx;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* 入口页服务费规则卡 */
+.fee-card {
+  margin: 4rpx 24rpx 24rpx;
+  padding: 28rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.fc-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 8rpx;
+}
+.fc-group {
+  margin-top: 14rpx;
+  font-size: 23rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.fc-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10rpx 0;
+  font-size: 24rpx;
+}
+.fc-k {
+  color: var(--muted);
+}
+.fc-row + .fc-row {
+  padding-top: 12rpx;
+  margin-top: 12rpx;
+  border-top: 1rpx solid var(--line-2);
+}
+.fc-v {
+  color: var(--ink);
+  font-weight: 600;
+}
+.fc-v.strong {
+  color: var(--brand);
+}
+.fc-note {
+  margin-top: 10rpx;
+  padding-top: 14rpx;
+  border-top: 1rpx dashed var(--line);
+  font-size: 21rpx;
+  color: var(--muted);
+  line-height: 1.7;
+}
+/* 入口页提示条 */
+.tip-card {
+  display: flex;
+  gap: 14rpx;
+  align-items: flex-start;
+  margin: 0 24rpx 24rpx;
+  padding: 20rpx 22rpx;
+  background: #F6FBF8;
+  border: 1rpx solid var(--line);
+  border-radius: 20rpx;
+}
+.tc-ico {
+  flex: none;
+  width: 32rpx;
+  height: 32rpx;
+  margin-top: 2rpx;
+  display: block;
+}
+.tc-txt {
+  font-size: 22rpx;
+  line-height: 1.7;
+  color: var(--muted);
+}
+
+/* 代采 / 代售：上传区块 */
+.ag-file {
+  padding: 20rpx;
+  margin-bottom: 16rpx;
+  background: var(--line-2);
+  border: 1rpx dashed var(--line);
+  border-radius: 16rpx;
+}
+.af-hd {
+  display: flex;
+  align-items: flex-start;
+  gap: 16rpx;
+  margin-bottom: 12rpx;
+}
+.af-hd .state {
+  margin-left: auto;
+}
+.af-hd .uc-name {
+  font-size: 27rpx;
+}
+
+/* 代采 / 代售：多行说明 */
+.ta {
+  display: block;
+  width: 100%;
+  min-height: 160rpx;
+  padding: 16rpx;
+  box-sizing: border-box;
+  border: 1rpx solid var(--line);
+  border-radius: 12rpx;
+  background: var(--line-2);
+  font-size: 26rpx;
+  color: var(--ink);
+  line-height: 1.6;
+}
+
+/* 服务费试算 */
+.fee-box {
+  padding: 20rpx;
+  background: #F6FBF8;
+  border: 1rpx solid var(--line);
+  border-radius: 16rpx;
+}
+.fee-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20rpx;
+  padding: 8rpx 0;
+  font-size: 24rpx;
+}
+.fee-k {
+  flex: none;
+  color: var(--muted);
+}
+.fee-v {
+  color: var(--ink);
+  text-align: right;
+}
+.fee-row.total {
+  margin-top: 8rpx;
+  padding-top: 16rpx;
+  border-top: 1rpx dashed var(--line);
+}
+.fee-num {
+  color: var(--brand);
+  font-size: 34rpx;
+  font-weight: 700;
+}
+.fee-num.muted {
+  color: var(--muted);
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+/* 服务费规则勾选 */
+.agree-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12rpx;
+  margin-top: 20rpx;
+}
+.agree-row .cb {
+  flex: none;
+  width: 36rpx;
+  height: 36rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 8rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22rpx;
+  color: #fff;
+  background: #fff;
+}
+.agree-row .cb.on {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+.agree-txt {
+  flex: 1;
+  min-width: 0;
+  font-size: 22rpx;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+/* 同步到库存开关 */
+.sw-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20rpx;
+  padding: 18rpx 0 6rpx;
+}
+.sw-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+.sw-t {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--text);
+}
+.sw-d {
+  font-size: 21rpx;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* 成色：二手时展示几成新，用更小的 chip */
+.sub-chips {
+  margin-top: 12rpx;
+}
+.chip.sm {
+  height: 52rpx;
+  padding: 0 18rpx;
+  font-size: 22rpx;
+}
+
+/* 更多要求：默认收起，展开后才显示条件与流程 */
+.more-sec {
+  padding: 0;
+  overflow: hidden;
+}
+.more-toggle {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 26rpx 28rpx;
+  background: var(--brand-soft);
+}
+.mt-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+.mt-t {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: var(--brand);
+}
+.mt-d {
+  font-size: 21rpx;
+  color: var(--muted);
+}
+.mt-a {
+  flex: none;
+  font-size: 22rpx;
+  font-weight: 600;
+  color: var(--brand);
+}
+.more-sec > .field,
+.more-sec > .sub-hd,
+.more-sec > .cond-add,
+.more-sec > .flow-edit-list,
+.more-sec > .empty-line {
+  margin-left: 28rpx;
+  margin-right: 28rpx;
+}
+.more-toggle + .field,
+.more-toggle + .sub-hd {
+  margin-top: 24rpx;
+}
+.more-sec > .field:last-child,
+.more-sec > .cond-add:last-child {
+  margin-bottom: 28rpx;
+}
+.sub-hd {
+  display: flex;
+  align-items: baseline;
+  gap: 10rpx;
+  margin: 8rpx 0 18rpx;
+  padding-top: 18rpx;
+  border-top: 1rpx dashed var(--line);
+}
+.sub-t {
+  font-size: 25rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+.sub-d {
+  font-size: 21rpx;
+  color: var(--muted);
+}
+.empty-line {
+  font-size: 22rpx;
+  color: var(--muted);
+  line-height: 1.6;
+  padding: 6rpx 0 2rpx;
+}
+
+/* 发布到：按钮加大，注释字号收小 */
+.ch-group {
+  display: flex;
+  gap: 14rpx;
+}
+.ch-opt {
+  flex: 1;
+  height: 88rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16rpx;
+  border: 1rpx solid var(--line);
+  background: var(--line-2);
+  font-size: 27rpx;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.ch-opt.on {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  color: var(--brand);
+}
+.ch-opt.disabled {
+  opacity: 0.45;
+}
+.ch-note {
+  margin-top: 10rpx;
+  font-size: 20rpx;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.ch-note.warn {
+  color: #B45309;
+}
+
+/* 代采 / 代售内嵌「更多要求」：与卡片内容对齐，不重复卡片内边距 */
+.ag-more {
+  margin: 24rpx -28rpx 0;
+  border-top: 1rpx solid var(--line);
+}

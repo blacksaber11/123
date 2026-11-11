@@ -1,0 +1,55 @@
+{
+  "pages": [
+    "pages/home/home",
+    "pages/tools/tools",
+    "pages/calc/calc",
+    "pages/finetune/finetune",
+    "pages/power/power",
+    "pages/roi/roi",
+    "pages/login/login",
+    "pages/product/product",
+    "pages/demand/demand",
+    "pages/news/news",
+    "pages/publish/publish",
+    "pages/consult/consult",
+    "pages/mine/mine",
+    "pages/mine/sub/sub",
+    "pages/stock/stock",
+    "pages/biz/biz",
+    "pages/bizdetail/bizdetail",
+    "pages/board/board",
+    "pages/profile/profile",
+    "pages/privacy/privacy",
+    "pages/msg/msg",
+    "pages/userhome/userhome",
+    "pages/report/report"
+  ],
+  "window": {
+    "navigationBarBackgroundColor": "#ffffff",
+    "navigationBarTitleText": "算力聚合",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#F4F5F9",
+    "backgroundTextStyle": "dark"
+  },
+  "tabBar": {
+    "custom": true,
+    "color": "#667085",
+    "selectedColor": "#4F46E5",
+    "backgroundColor": "#FFFFFF",
+    "borderStyle": "black",
+    "list": [
+      { "pagePath": "pages/home/home", "text": "首页" },
+      { "pagePath": "pages/msg/msg", "text": "消息" },
+      { "pagePath": "pages/mine/mine", "text": "我的" }
+    ]
+  },
+  "permission": {
+    "scope.userLocation": {
+      "desc": "用于自动填写所在城市与交易地，可拒绝"
+    }
+  },
+  "requiredPrivateInfos": ["getLocation", "chooseLocation"],
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents"
+}

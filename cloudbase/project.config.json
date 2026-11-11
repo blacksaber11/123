@@ -1,0 +1,20 @@
+{
+  "description": "算力聚合 · 微信小程序 + 云开发",
+  "appid": "wxe21e1b8732bfb4a3",
+  "compileType": "miniprogram",
+  "miniprogramRoot": "miniprogram/",
+  "cloudfunctionRoot": "cloudfunctions/",
+  "projectname": "suanli-cloudbase",
+  "libVersion": "3.5.5",
+  "setting": {
+    "urlCheck": true,
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "newFeature": true,
+    "nodeModules": false,
+    "checkSiteMap": false
+  },
+  "condition": {}
+}

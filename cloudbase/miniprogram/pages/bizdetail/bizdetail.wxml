@@ -1,0 +1,139 @@
+<view class="page bzd">
+  <view wx:if="{{loading}}" class="bd-loading">正在加载商机…</view>
+
+  <!-- 发布者删除商品 / 关闭需求：商机不再展示 -->
+  <view wx:elif="{{notFound}}" class="empty">
+    <view class="ttl">该商机已不可见</view>
+    <view class="ds">发布者已删除商品或关闭需求，或者我的库存已不再匹配，这条商机已从商机池移除。</view>
+    <view class="acts">
+      <button class="btn primary" bindtap="backList">返回商机列表</button>
+    </view>
+  </view>
+
+  <!-- 商机会员未开通 / 已到期 -->
+  <view wx:elif="{{locked}}" class="empty">
+    <view class="ttl">商机会员未开通或已到期</view>
+    <view class="ds">开通后可查看商机条件并领取联系方式。</view>
+    <view class="acts">
+      <button class="btn primary" bindtap="backList">返回商机页开通</button>
+    </view>
+  </view>
+
+  <block wx:else>
+    <!-- 商机概要 -->
+    <view class="bd-card">
+      <view class="bd-top">
+        <text class="bd-kind {{opp.type === 'supply' ? 'sell' : (opp.kind === '代采' ? 'buy' : (opp.kind === '代售' ? 'sell' : 'demand'))}}">{{opp.kind}}</text>
+        <text wx:if="{{opp.closed}}" class="bd-mode">{{opp.statusText || '已结束'}}</text>
+        <text wx:elif="{{claimed}}" class="bd-mode ok">已领取</text>
+        <text wx:elif="{{unsatisfied}}" class="bd-mode warn">已标记不满足</text>
+        <text wx:if="{{opp.platformOnly}}" class="bd-mode">平台对接</text>
+      </view>
+      <view class="bd-model">{{opp.model}}</view>
+      <view class="bd-price">
+        <text class="bd-p">{{opp.priceText}}</text>
+        <text class="bd-unit">/ {{opp.unit}} × {{opp.qty}}{{opp.unit}}</text>
+      </view>
+      <view class="bd-chips">
+        <text wx:if="{{opp.cat}}" class="chip">{{opp.cat}}</text>
+        <text wx:if="{{opp.city}}" class="chip">{{opp.city}}</text>
+        <text wx:if="{{opp.stockQty}}" class="chip brand">{{opp.type === 'supply' ? '需求匹配' : '库存匹配'}} ×{{opp.stockQty}}</text>
+      </view>
+      <view wx:if="{{opp.stockText}}" class="bd-line">{{opp.type === 'supply' ? '货源' : '我的库存'}}：{{opp.stockText}}</view>
+      <view wx:if="{{opp.demandText}}" class="bd-line">{{opp.demandText}}</view>
+      <view class="bd-meta">{{opp.org}} · {{opp.published}} · {{opp.closed ? '已结束，仅供回看' : opp.expireText}}</view>
+    </view>
+
+    <!-- 必须条件：逐项点击是否满足，全部满足才能领取 -->
+    <view wx:if="{{!opp.platformOnly}}" class="bd-card">
+      <view class="bd-hd">
+        <text class="bd-tt">发布者的必须条件</text>
+        <text class="bd-sd">已确认满足 {{condMet}} / {{condTotal}} 项</text>
+      </view>
+      <view class="callout {{condPass ? 'brand' : 'warn'}}">
+        <block wx:if="{{condTotal === 0}}">发布者未设置额外必须条件，确认商机信息后可直接领取。</block>
+        <block wx:elif="{{condPass}}">全部必须条件已确认满足，可以领取商机并查看联系方式。</block>
+        <block wx:else>请逐项对照实际情况选择「满足 / 不满足」。还有 {{condUnmet}} 项未满足，全部满足后才能领取。</block>
+      </view>
+      <view wx:if="{{condTotal}}" class="cond-list">
+        <view wx:for="{{mustList}}" wx:key="t" class="ci">
+          <text class="ci-ico {{item.state === 'yes' ? 'ok' : ''}}{{item.state === 'no' ? 'bad' : ''}}">{{item.state === 'yes' ? '✓' : (item.state === 'no' ? '✕' : '○')}}</text>
+          <view class="ci-body">
+            <view class="ci-name">{{item.t}}</view>
+            <view wx:if="{{item.state === 'no'}}" class="ci-desc bad">不满足该项，无法领取；可标记不满足，商机仍保留在「不满足」分类里</view>
+            <view wx:elif="{{item.state === 'yes'}}" class="ci-desc ok">已确认满足</view>
+            <view wx:else class="ci-desc">待确认</view>
+          </view>
+          <view class="ci-confirm">
+            <view class="cc-btn {{item.state === 'yes' ? 'on' : ''}}" data-i="{{index}}" data-val="yes" bindtap="setCond">满足</view>
+            <view class="cc-btn {{item.state === 'no' ? 'on bad' : ''}}" data-i="{{index}}" data-val="no" bindtap="setCond">不满足</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 已领取：主体与联系方式 -->
+    <view wx:if="{{claimed}}" class="bd-card">
+      <view class="bd-hd">
+        <text class="bd-tt">联系方式</text>
+        <text class="bd-sd">领取后可见</text>
+      </view>
+      <view class="bd-contact">
+        <view class="bc-l">
+          <text class="bc-name">{{opp.org || '商机发布者'}}</text>
+          <text class="bc-person">{{opp.contact || '对方未留联系人'}}</text>
+          <text wx:if="{{opp.phone}}" class="bc-phone">{{opp.phone}}</text>
+          <text wx:else class="bc-phone empty">对方未留电话，请用站内对话</text>
+        </view>
+        <button wx:if="{{opp.phone}}" class="btn sm" data-phone="{{opp.phone}}" bindtap="copyPhone">复制电话</button>
+      </view>
+    </view>
+
+    <!-- 代采 / 代售：平台居中对接 -->
+    <view wx:if="{{opp.platformOnly}}" class="bd-card">
+      <view class="bd-hd">
+        <text class="bd-tt">平台代为对接</text>
+        <text class="bd-sd">不展示委托方联系方式</text>
+      </view>
+      <view class="bd-ds">代采 / 代售委托由平台核验后居中联系，提交申请后客服会联系你确认交易细节，并推送采购方或货源。</view>
+    </view>
+  </block>
+
+  <!-- 底部操作栏：上方一行状态，下方等宽按钮 -->
+  <view wx:if="{{!loading && !notFound && !locked && opp}}" class="bd-bar">
+    <block wx:if="{{opp.platformOnly}}">
+      <view class="bb-head">
+        <text class="bb-status">平台对接</text>
+        <text class="bb-tip">委托由平台居中联系与核实</text>
+      </view>
+      <view class="bb-row">
+        <button class="btn primary bb-btn" bindtap="consult"
+                loading="{{consulting}}" disabled="{{consulted || consulting}}">{{consulted ? '已提交' : '联系平台'}}</button>
+      </view>
+    </block>
+
+    <block wx:elif="{{claimed}}">
+      <view class="bb-head">
+        <text class="bb-status ok">已领取</text>
+        <text class="bb-tip">联系方式已解锁，可直接沟通</text>
+      </view>
+      <view class="bb-row">
+        <button wx:if="{{opp.phone}}" class="btn bb-btn" data-phone="{{opp.phone}}" bindtap="copyPhone">复制电话</button>
+        <button class="btn primary bb-btn" bindtap="openChat">站内对话</button>
+      </view>
+    </block>
+
+    <block wx:else>
+      <view class="bb-head">
+        <text class="bb-status {{condPass ? 'ok' : 'bad'}}">{{condPass ? '条件已满足' : '不满足 · ' + condUnmet + ' 项'}}</text>
+        <text class="bb-tip">{{unsatisfied ? '已标记不满足，商机保留在「不满足」里' : (condPass ? '可以领取，查看主体与联系人' : '全部满足后才能领取')}}</text>
+      </view>
+      <view class="bb-row">
+        <button wx:if="{{unsatisfied}}" class="btn bb-btn" bindtap="unmark">取消标记</button>
+        <button wx:else class="btn bb-btn" bindtap="markUnsatisfied">标记不满足</button>
+        <button class="btn primary bb-btn" bindtap="claim"
+                loading="{{claiming}}" disabled="{{claiming || !condPass}}">领取商机</button>
+      </view>
+    </block>
+  </view>
+</view>

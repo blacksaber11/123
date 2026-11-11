@@ -1,0 +1,106 @@
+/* 需求详情与商品详情共用一套区块样式 */
+@import "../product/product.wxss";
+
+/* 需求主视觉：与管理端一致的品牌靛蓝，用更深的收尾与货盘区分 */
+.hero.demand {
+  background: linear-gradient(140deg, #4F46E5, #1E1B4B 70%);
+}
+.hero.demand .hbadge .pill-tag {
+  background: rgba(255, 255, 255, .24);
+}
+
+/* 响应咨询（发布方视角）：只展示条件满足度与报价 */
+.resp-card {
+  padding: 24rpx;
+  margin-bottom: 20rpx;
+  border: 1rpx solid var(--line);
+  /* 与信息流卡片、表单卡片统一圆角 */
+  border-radius: var(--radius);
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+.resp-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12rpx;
+}
+.resp-name {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.resp-met {
+  flex: none;
+  font-size: 22rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+  border: 1rpx solid var(--line);
+  color: var(--muted);
+}
+.resp-met.ok {
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.resp-met.warn {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.resp-quote {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: var(--ink);
+  margin-bottom: 16rpx;
+}
+.resp-sub {
+  font-size: 24rpx;
+  font-weight: 400;
+  color: var(--muted);
+}
+.resp-conds {
+  padding: 8rpx 0;
+}
+.resp-cond {
+  display: flex;
+  align-items: flex-start;
+  gap: 10rpx;
+  font-size: 24rpx;
+  line-height: 40rpx;
+  color: var(--ink-2);
+}
+.resp-cond.no .rc-n {
+  color: var(--muted);
+}
+.rc-ico {
+  flex: none;
+  width: 32rpx;
+  text-align: center;
+  font-weight: 700;
+}
+.resp-cond.ok .rc-ico {
+  color: var(--brand);
+}
+.resp-cond.no .rc-ico {
+  color: var(--danger);
+}
+.resp-note {
+  margin-top: 12rpx;
+  padding: 12rpx 16rpx;
+  border-radius: 10rpx;
+  background: var(--paper);
+  font-size: 22rpx;
+  color: var(--muted);
+  line-height: 36rpx;
+}
+.resp-acts {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16rpx;
+}
+.resp-time {
+  font-size: 22rpx;
+  color: var(--muted);
+}

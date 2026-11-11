@@ -1,0 +1,240 @@
+<view class="detail" wx:if="{{demand}}">
+
+  <!-- 分享落地提示：内容与平台内一致，只是再强调一次联系方式不对外 -->
+  <view wx:if="{{fromShare}}" class="share-tip">来自好友分享 · 满足必须条件后可与需求方直接对话</view>
+
+  <!-- 私密发布＝匿名公开：内容照常展示，发布人完全匿名 -->
+  <view wx:if="{{privateShare}}" class="callout warn private-tip">匿名发布 · 内容公开展示，但不显示发布人，也无法从这里进入对方主页</view>
+
+  <!-- Hero 区 -->
+  <view class="hero demand">
+    <view class="hero-bg"></view>
+    <view class="hbadge">
+      <text class="pill-tag {{demand.isRent ? 'rent' : 'buy'}}">{{demand.tradeMode}}</text>
+      <text class="chip">{{demand.status}}</text>
+    </view>
+    <view class="hero-fav" bindtap="toggleFav">{{fav ? '★' : '☆'}}</view>
+    <view class="htxt">{{demand.model}}</view>
+    <view class="hsub">{{demand.brand}} · 需 {{demand.qty}} 台 · {{demand.city}}</view>
+    <view class="dots">
+      <text class="dot on"></text>
+      <text class="dot"></text>
+    </view>
+  </view>
+
+  <!-- 需求信息 -->
+  <view class="block">
+    <view class="block-hd">
+      <text class="bt">① 需求信息</text>
+      <text class="r">{{demand.published}}发布</text>
+    </view>
+    <view class="d-title">{{demand.title}}</view>
+    <view class="price-row">
+      <view class="p">{{demand.budgetText}}<text wx:if="{{demand.budgetMode !== 'nego'}}" class="p-unit">以内</text></view>
+      <view class="pn">
+        <text class="br-line">{{demand.isRent ? '按「租金 × 数量 × 租期」报价' : '按「单价 × 数量」报价'}}</text>
+        <text class="br-line">报价是否含税以税费要求为准</text>
+      </view>
+    </view>
+    <view class="chips">
+      <text class="chip">{{demand.cat}}</text>
+      <text class="chip">{{demand.model}}</text>
+      <text class="chip">需 {{demand.qty}} 台</text>
+      <text class="chip">{{demand.city}}</text>
+      <text wx:for="{{demand.tags}}" wx:key="*this" class="chip brand">{{item}}</text>
+    </view>
+
+    <view class="spec-grid">
+      <view class="cell"><view class="k">设备类型</view><view class="v">{{demand.cat}}</view></view>
+      <view class="cell"><view class="k">品牌</view><view class="v">{{demand.brand}}</view></view>
+      <view class="cell"><view class="k">型号</view><view class="v">{{demand.model}}</view></view>
+      <view class="cell"><view class="k">需求数量</view><view class="v">{{demand.qty}} 台</view></view>
+      <view class="cell"><view class="k">需求城市</view><view class="v">{{demand.city}}</view></view>
+      <view class="cell"><view class="k">{{demand.budgetMode === 'nego' ? '价格' : '预算上限'}}</view><view class="v">{{demand.budgetText}}{{demand.budgetMode === 'nego' ? '' : ' 以内'}}</view></view>
+      <view class="cell"><view class="k">税费要求</view><view class="v">{{demand.tax}}</view></view>
+      <view class="cell"><view class="k">成色要求</view><view class="v">{{demand.cond}}{{demand.cond !== '全新' && demand.condLevel ? ' · ' + demand.condLevel : ''}}</view></view>
+      <view class="cell"><view class="k">交付时间</view><view class="v">{{demand.deliver}}</view></view>
+      <view wx:if="{{demand.accept}}" class="cell"><view class="k">验收方式</view><view class="v">{{demand.accept}}</view></view>
+      <view wx:if="{{demand.isRent}}" class="cell"><view class="k">租期要求</view><view class="v">{{demand.termText || '可议'}}</view></view>
+      <view wx:if="{{demand.isRent}}" class="cell"><view class="k">价格方式</view><view class="v">{{demand.closed || '可议'}}</view></view>
+      <view class="cell"><view class="k">浏览量</view><view class="v">{{demand.views}}</view></view>
+      <view class="cell"><view class="k">需求状态</view><view class="v">{{demand.status}}</view></view>
+    </view>
+
+    <view class="callout" style="margin-top: 20rpx">
+      需求发布后即可见，平台会进行抽查审核；平台仅提供信息发布与居间对接，不核验需求方真实交易意图。
+    </view>
+  </view>
+
+  <!-- 发布方：私密发布不展示该区域 -->
+  <view wx:if="{{!privateShare}}" class="block">
+    <view class="block-hd">
+      <text class="bt">② 发布方</text>
+      <text class="r">{{demand.ownerExposureLabel}}</text>
+    </view>
+    <view class="owner">
+      <view class="av">{{contactHidden ? '匿' : '需'}}</view>
+      <view class="owner-info">
+        <view class="nm">{{contactHidden ? '匿名发布' : (demand.ownerSubject || demand.contact)}}</view>
+        <view class="sb" wx:if="{{contactHidden}}">内容可正常浏览，主体与联系方式已隐藏；仍可在站内直接对话</view>
+        <view class="sb" wx:elif="{{demand.ownerSubject}}">{{demand.ownerContactName}} · {{demand.published}}</view>
+        <view class="sb" wx:else>{{demand.publisher}} · {{demand.published}}</view>
+        <!-- 需求方自愿公开联系电话：直接展示并可复制拨号 -->
+        <view wx:if="{{ownerPhone}}" class="owner-phone" catchtap="copyOwnerPhone">
+          <image class="op-ico" src="/assets/icons/ic-phone.png" mode="aspectFit" />
+          <text class="op-num">{{ownerPhone}}</text>
+          <text class="op-act">复制</text>
+        </view>
+        <view wx:elif="{{memberOnlyContact}}" class="owner-phone" catchtap="goBiz">
+          <image class="op-ico" src="/assets/icons/ic-phone.png" mode="aspectFit" />
+          <text class="op-num">商机会员可见</text>
+          <text class="op-act">开通</text>
+        </view>
+      </view>
+      <view class="owner-r">浏览 {{demand.views}}<text wx:if="{{demand.favCount}}" class="muted">收藏 {{demand.favCount}}</text></view>
+    </view>
+    <view class="klist">
+      <view class="ki"><text class="kn">主体状态</text><text class="kv">{{contactHidden ? '匿名发布，主体已隐藏' : '主体信息公开'}}</text></view>
+      <view class="ki"><text class="kn">联系方式</text><text class="kv mut">{{contactHidden ? '已隐藏，满足条件后可直接对话' : (ownerPhone ? '需求方已公开该号码，可直接拨打' : (memberOnlyContact ? '需求方公开了号码，商机会员可查看' : '不对外展示，满足条件后可直接对话'))}}</text></view>
+    </view>
+  </view>
+
+  <!-- 响应流程（需求方设定） -->
+  <view class="block">
+    <view class="block-hd">
+      <text class="bt">③ {{demand.isRent ? '租赁流程' : '购买流程'}}</text>
+      <text class="r">需求方设定，平台按流程推进</text>
+    </view>
+    <view class="flow-list">
+      <view wx:for="{{flow}}" wx:key="n" class="flow-item {{index < 2 ? 'hi' : ''}}">
+        <view class="fi-idx">{{index + 1}}</view>
+        <view class="fi-content">
+          <view class="fi-name">{{item.n}}</view>
+          <view wx:if="{{item.d}}" class="fi-desc">{{item.d}}</view>
+        </view>
+      </view>
+    </view>
+    <view class="callout" style="margin-top: 24rpx">
+      平台仅提供信息发布与居间对接，不参与交易、不担保履约、不核验材料真伪；双方信息只在平台内流转。
+    </view>
+  </view>
+
+  <!-- 响应条件（需求方设定） -->
+  <view class="block">
+    <view class="block-hd">
+      <text class="bt">④ {{demand.isRent ? '出租方必须条件' : '供给方必须条件'}}</text>
+      <text class="r">必须条件 {{must.length}} 项全部满足才能联系需求方</text>
+    </view>
+
+    <view wx:if="{{nego.length}}" class="cond-group">
+      <view class="cond-sub">可协商条件<text class="cs-note">不拦截对话，在会话中沟通</text></view>
+      <view class="chip-group cond-chips">
+        <text wx:for="{{nego}}" wx:key="*this" class="chip">{{item}}</text>
+      </view>
+    </view>
+
+    <view class="cond-group">
+      <view class="cond-sub">必须条件<text class="cs-note">逐项满足才能开始对话</text></view>
+      <view class="cond-list">
+        <view wx:for="{{must}}" wx:key="*this" class="ci">
+          <text class="ci-ico ok">✓</text>
+          <view class="ci-body">
+            <view class="ci-name">{{item}}</view>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 响应咨询（仅发布方可见） -->
+  <view wx:if="{{isMine}}" class="block">
+    <view class="block-hd">
+      <text class="bt">⑤ 收到的响应</text>
+      <text class="r">{{responses.length}} 人响应</text>
+    </view>
+    <view class="callout brand" style="margin-bottom: 20rpx">
+      仅向你展示响应人满足的必须条件、报价与数量；可直接在站内会话沟通，但主体、联系人与联系方式仍不可见。
+    </view>
+
+    <view wx:for="{{responses}}" wx:key="id" class="resp-card">
+      <view class="resp-top">
+        <text class="resp-name">{{item.masked}}</text>
+        <text class="resp-met {{item.allMet ? 'ok' : 'warn'}}">满足 {{item.metCount}}/{{item.total}} 项必须条件</text>
+      </view>
+      <view class="resp-quote">
+        匹配度 {{item.matchPct}}%<text class="resp-sub"> · {{item.status}}{{item.quoteText ? ' · ' + item.quoteText : ''}}{{item.at ? ' · ' + item.at : ''}}</text>
+      </view>
+      <view class="resp-conds">
+        <view wx:for="{{item.conds}}" wx:key="n" wx:for-item="c" class="resp-cond {{c.ok ? 'ok' : 'no'}}">
+          <text class="rc-ico">{{c.ok ? '✓' : '✗'}}</text>
+          <text class="rc-n">{{c.n}}</text>
+        </view>
+      </view>
+      <view wx:if="{{item.note}}" class="resp-note">{{item.note}}</view>
+      <view class="resp-acts">
+        <text class="resp-time">{{item.at}}</text>
+      </view>
+    </view>
+
+    <view wx:if="{{responses.length === 0}}" class="empty" style="margin: 0; padding: 40rpx 0">
+      <view class="big">0</view>
+      <view class="ttl">还没有供给方响应</view>
+      <view class="ds">平台会持续为你匹配，响应后这里只展示条件满足度与报价</view>
+    </view>
+  </view>
+
+  <view style="height: 200rpx"></view>
+
+  <!-- 底部响应栏 -->
+  <view class="sticky-consult safe-bottom">
+    <view wx:if="{{isMine}}" class="row">
+      <view class="cnt"><text class="b">{{responses.length}}</text> 人响应 · {{demand.status}}</view>
+      <button class="btn ghost share-btn" open-type="share">分享</button>
+      <button class="btn ghost lg" bindtap="back">返回</button>
+    </view>
+    <view wx:else class="row">
+      <view class="cnt"><text class="b">{{demand.views}}</text> 次浏览</view>
+      <button class="btn ghost share-btn" open-type="share">分享</button>
+      <button class="btn primary lg" bindtap="respond">联系需求方</button>
+    </view>
+    <view class="hint">先确认必须条件，满足后直接与需求方对话</view>
+  </view>
+
+  <!-- 必须条件确认弹层：确认完成后直接进入与需求方的会话 -->
+  <view wx:if="{{condSheet}}" class="cond-mask" catchtouchmove="noop" bindtap="closeCondSheet"></view>
+  <view wx:if="{{condSheet}}" class="cond-sheet">
+    <view class="cs-hd">
+      <view class="cs-tt">确认必须条件</view>
+      <view class="cs-sub">已确认满足 {{condMet}} / {{condTotal}} 项</view>
+      <view class="cs-x" bindtap="closeCondSheet">✕</view>
+    </view>
+    <view class="cs-tip">逐项对照自己的实际情况选择「满足 / 不满足」。全部满足后可直接与需求方对话并报价。</view>
+    <scroll-view scroll-y class="cs-list">
+      <view wx:for="{{condList}}" wx:key="t" class="cs-item">
+        <view class="cs-name">{{item.t}}</view>
+        <view class="cs-confirm">
+          <view class="cc-btn {{item.state === 'yes' ? 'on' : ''}}" data-i="{{index}}" data-val="yes" bindtap="setCond">满足</view>
+          <view class="cc-btn {{item.state === 'no' ? 'on bad' : ''}}" data-i="{{index}}" data-val="no" bindtap="setCond">不满足</view>
+        </view>
+      </view>
+    </scroll-view>
+    <view class="cs-ft">
+      <button class="btn ghost" bindtap="fullRespond">填报价</button>
+      <button class="btn primary" bindtap="confirmCond" disabled="{{!condPass || openingChat}}">
+        {{openingChat ? '正在打开…' : (condPass ? '确认并开始对话' : '还有 ' + condUnmet + ' 项未确认')}}
+      </button>
+    </view>
+  </view>
+</view>
+
+<!-- 失效态：本地与云端都没有这条需求，绝不拿演示数据顶替 -->
+<view wx:if="{{!demand && missing}}" class="empty">
+  <view class="big">404</view>
+  <view class="ttl">需求已关闭或不存在</view>
+  <view class="ds">链接可能已失效，或需求方已关闭该需求。</view>
+  <view class="acts">
+    <button class="btn ghost" bindtap="back">返回</button>
+    <button class="btn primary" bindtap="goHome">去首页看看</button>
+  </view>
+</view>
+<view wx:if="{{!demand && !missing}}" class="loading">加载中…</view>

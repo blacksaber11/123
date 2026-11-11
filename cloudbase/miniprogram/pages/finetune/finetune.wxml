@@ -1,0 +1,145 @@
+<view class="tool">
+  <view class="hero">
+    <view class="hero-tt">微调显存测算</view>
+    <view class="hero-ds">选模型规模和微调方式，算出训练要多少显存、几台机器</view>
+  </view>
+
+  <view class="sec">
+    <view class="sec-hd">
+      <text class="sec-tt">1. 模型规模</text>
+      <text class="sec-aside">按总参数量</text>
+    </view>
+    <view class="chips m-top">
+      <view wx:for="{{scales}}" wx:key="*this"
+            class="chip {{scale === item ? 'on' : ''}}"
+            data-v="{{item}}" bindtap="pickScale">{{item}}B</view>
+    </view>
+    <view class="field-tip">MoE 模型按总参数量算权重；激活参数少不代表训练显存小。</view>
+  </view>
+
+  <view class="sec">
+    <view class="sec-tt">2. 微调方式</view>
+    <view class="q-list m-top">
+      <view wx:for="{{modes}}" wx:key="key"
+            class="q-chip {{mode === item.key ? 'on' : ''}}"
+            data-v="{{item.key}}" bindtap="pickMode">
+        <text class="qc-name">{{item.name}}</text>
+        <text class="qc-tip">{{item.tip}}</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="sec">
+    <view class="sec-tt">3. 训练参数</view>
+    <view class="sub-tt">训练精度</view>
+    <view class="chips">
+      <view wx:for="{{precisions}}" wx:key="key"
+            class="chip {{precision === item.key ? 'on' : ''}}"
+            data-v="{{item.key}}" bindtap="pickPrecision">{{item.name}}</view>
+    </view>
+
+    <view class="sub-tt">序列长度</view>
+    <view class="chips">
+      <view wx:for="{{seqs}}" wx:key="*this"
+            class="chip {{seq === item ? 'on' : ''}}"
+            data-v="{{item}}" bindtap="pickSeq">{{item / 1024}}K</view>
+    </view>
+
+    <view class="sub-tt">Batch size</view>
+    <view class="chips">
+      <view wx:for="{{batches}}" wx:key="*this"
+            class="chip {{batch === item ? 'on' : ''}}"
+            data-v="{{item}}" bindtap="pickBatch">{{item}}</view>
+    </view>
+
+    <view class="sub-tt">激活显存预留</view>
+    <view class="chips">
+      <view wx:for="{{reserves}}" wx:key="*this"
+            class="chip {{reserve === item ? 'on' : ''}}"
+            data-v="{{item}}" bindtap="pickReserve">{{item}}%</view>
+    </view>
+    <view class="field-tip">开梯度检查点（重算）可把预留压到 20% 左右，代价是训练变慢。</view>
+  </view>
+
+  <view class="sec">
+    <view class="sec-hd">
+      <text class="sec-tt">4. 选择设备</text>
+      <text class="sec-link" bindtap="openDevices">全部 GPU 设备 ›</text>
+    </view>
+    <view wx:if="{{device}}" class="dev-card" bindtap="openDevices">
+      <view class="dev-main">
+        <view class="dev-model">{{device.model}}</view>
+        <view class="dev-spec">{{device.memText}}</view>
+        <view class="dev-cat">{{device.cat}} · {{device.brand}}</view>
+      </view>
+      <text class="dev-change">更换 ›</text>
+    </view>
+    <view class="reco-tt">按当前条件推荐</view>
+    <view class="reco-list">
+      <view wx:for="{{recos}}" wx:key="key"
+            class="reco {{item.on ? 'on' : ''}}"
+            data-key="{{item.key}}" bindtap="pickDevice">
+        <text class="rc-model">{{item.model}}</text>
+        <text class="rc-sub">{{item.memText}} · ×{{item.units}} {{item.unitLabel}}</text>
+      </view>
+    </view>
+    <view class="field-tip">推荐只是按显存占用排序，也可以点「全部 GPU 设备」自己挑型号。</view>
+  </view>
+
+  <view wx:if="{{result}}" class="res">
+    <view class="res-top">
+      <view>
+        <view class="res-k">预计需要</view>
+        <view class="res-v">{{result.unitsText}}</view>
+      </view>
+      <view class="res-tag">{{result.fitText}}</view>
+    </view>
+    <view class="res-dev">{{result.device}}</view>
+    <view class="res-grid">
+      <view class="rg"><text class="rg-k">训练总显存</text><text class="rg-v">{{result.totalText}}</text></view>
+      <view class="rg"><text class="rg-k">权重 + 梯度 + 优化器</text><text class="rg-v">{{result.coreText}}</text></view>
+      <view class="rg"><text class="rg-k">冻结权重</text><text class="rg-v">{{result.weightsText}}</text></view>
+      <view class="rg"><text class="rg-k">激活预留</text><text class="rg-v">{{result.actText}}</text></view>
+    </view>
+    <view wx:if="{{result.machineText}}" class="res-note">{{result.machineText}}</view>
+    <view wx:if="{{result.warn}}" class="res-warn">{{result.warn}}</view>
+    <view class="res-note">{{result.note}}</view>
+  </view>
+
+  <view class="cta-space"></view>
+
+  <!-- 设备选择面板 -->
+  <view wx:if="{{deviceSheet}}" class="mask" bindtap="closeDevices"></view>
+  <view wx:if="{{deviceSheet}}" class="sheet">
+    <view class="sheet-hd">
+      <text class="sheet-tt">选择 GPU 设备</text>
+      <text class="sheet-x" bindtap="closeDevices">✕</text>
+    </view>
+    <view class="sheet-search">
+      <input class="ss-input" value="{{deviceSearch}}" bindinput="onDeviceSearch"
+             placeholder="搜型号 / 品牌，如 H100、4090、昇腾" />
+    </view>
+    <scroll-view scroll-x="true" class="sheet-cats" enhanced show-scrollbar="{{false}}">
+      <view class="hrow">
+        <view wx:for="{{deviceCats}}" wx:key="*this"
+              class="chip {{deviceCat === item ? 'on' : ''}}"
+              data-v="{{item}}" bindtap="pickDeviceCat">{{item}}</view>
+      </view>
+    </scroll-view>
+    <scroll-view scroll-y="true" class="sheet-list">
+      <view wx:for="{{deviceList}}" wx:key="key"
+            class="d-row {{pickKey === item.key ? 'on' : ''}}"
+            data-key="{{item.key}}" bindtap="pickSheetDevice">
+        <view class="d-main">
+          <view class="d-model">{{item.model}}</view>
+          <view class="d-spec">{{item.memText}}</view>
+          <view class="d-cat">{{item.cat}} · {{item.brand}}</view>
+        </view>
+        <view class="d-need">{{item.unitsText}}</view>
+      </view>
+      <view wx:if="{{!deviceList.length}}" class="d-empty">没有匹配的 GPU 设备</view>
+      <view wx:if="{{deviceMore}}" class="more-tip">还有 {{deviceMore}} 个结果，输入关键词缩小范围</view>
+      <view class="sheet-space"></view>
+    </scroll-view>
+  </view>
+</view>

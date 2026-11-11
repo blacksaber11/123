@@ -1,0 +1,105 @@
+<view class="nw-page">
+
+  <view wx:if="{{loading}}" class="nw-empty">加载中…</view>
+  <view wx:elif="{{error}}" class="nw-empty" bindtap="retry">{{error}}，点击重试</view>
+
+  <block wx:else>
+    <view class="nw-body">
+      <view class="nw-title">{{news.title}}</view>
+
+      <!-- 作者信息：点头像 / 名称进入作者主页；官方资讯没有主页 -->
+      <view class="nw-author">
+        <view class="nw-author-l" bindtap="openAuthor">
+          <view class="nw-av {{news.official ? 'official' : ''}}">{{news.official ? '平' : news.authorShort}}</view>
+          <view class="nw-author-i">
+            <view class="nw-author-nm">
+              {{news.author}}
+              <text wx:if="{{news.authorKey}}" class="nw-author-go">›</text>
+            </view>
+            <view class="nw-author-sb">
+              <text wx:if="{{news.publishedText}}">{{news.publishedText}}</text>
+              <text>{{news.views}} 次浏览</text>
+              <text wx:if="{{news.city}}">{{news.city}}</text>
+            </view>
+          </view>
+        </view>
+        <view wx:if="{{news.authorKey}}" class="nw-follow {{following ? 'on' : ''}}" catchtap="toggleFollow">
+          {{following ? '已关注' : '＋ 关注'}}
+        </view>
+      </view>
+
+      <view class="nw-content">{{news.content}}</view>
+    </view>
+
+    <!-- 互动：点赞 / 评论 / 收藏 -->
+    <view class="nw-acts">
+      <view class="nw-act {{liked ? 'on' : ''}}" bindtap="toggleLike">
+        <text class="nw-act-ic">{{liked ? '♥' : '♡'}}</text>
+        <text>赞{{likes ? ' ' + likes : ''}}</text>
+      </view>
+      <view class="nw-act">
+        <text class="nw-act-ic">✎</text>
+        <text>评论{{commentTotal ? ' ' + commentTotal : ''}}</text>
+      </view>
+      <view class="nw-act {{faved ? 'on' : ''}}" bindtap="toggleFav">
+        <text class="nw-act-ic">{{faved ? '★' : '☆'}}</text>
+        <text>{{faved ? '已收藏' : '收藏'}}</text>
+      </view>
+    </view>
+
+    <!-- 评论列表与回复 -->
+    <view class="nw-cmts">
+      <view class="nw-cmt-hd">评论 {{commentTotal}}</view>
+
+      <view class="nw-cmt-editor">
+        <view wx:if="{{replyTo}}" class="nw-reply-tip">
+          回复 {{replyTo.author}}
+          <text class="nw-reply-x" bindtap="cancelReply">取消</text>
+        </view>
+        <view class="nw-cmt-row">
+          <input
+            class="nw-cmt-input"
+            value="{{commentInput}}"
+            placeholder="{{replyTo ? '回复 ' + replyTo.author : '说点什么…'}}"
+            confirm-type="send"
+            maxlength="300"
+            bindinput="onCommentInput"
+            bindconfirm="sendComment"
+          />
+          <view class="nw-cmt-send {{commentSending ? 'off' : ''}}" bindtap="sendComment">
+            {{commentSending ? '发送中' : '发送'}}
+          </view>
+        </view>
+      </view>
+
+      <view wx:if="{{commentLoading}}" class="nw-cmt-empty">评论加载中…</view>
+      <view wx:elif="{{!comments.length}}" class="nw-cmt-empty">还没有评论，来说两句</view>
+      <view wx:else class="nw-cmt-list">
+        <view wx:for="{{comments}}" wx:key="id" class="nw-cmt">
+          <view class="nw-cmt-top">
+            <text class="nw-cmt-author">{{item.author}}</text>
+            <text class="nw-cmt-time">{{item.createdText}}</text>
+            <text class="nw-cmt-reply" data-id="{{item.id}}" data-author="{{item.author}}" bindtap="startReply">回复</text>
+          </view>
+          <view class="nw-cmt-text">{{item.content}}</view>
+          <view wx:for="{{item.replies}}" wx:for-item="rep" wx:key="id" class="nw-cmt-sub">
+            <view class="nw-cmt-top">
+              <text class="nw-cmt-author">{{rep.author}}</text>
+              <text wx:if="{{rep.replyToName}}" class="nw-cmt-to">回复 {{rep.replyToName}}</text>
+              <text class="nw-cmt-time">{{rep.createdText}}</text>
+              <text class="nw-cmt-reply" data-id="{{rep.id}}" data-author="{{rep.author}}" bindtap="startReply">回复</text>
+            </view>
+            <view class="nw-cmt-text">{{rep.content}}</view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{news.authorKey}}" class="nw-more" bindtap="openAuthor">
+      查看作者主页 · 在架商品与 TA 的资讯 <text class="nw-more-go">›</text>
+    </view>
+
+    <view class="nw-tip">资讯内容由发布者提供，交易前请自行核验主体与资质。<text class="nw-report" catchtap="report">举报该资讯</text></view>
+  </block>
+
+</view>

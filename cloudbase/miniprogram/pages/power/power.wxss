@@ -1,0 +1,24 @@
+@import "../../assets/tool.wxss";
+
+.field-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+  margin-top: 18rpx;
+}
+.field-cell {
+  width: calc(50% - 8rpx);
+  box-sizing: border-box;
+}
+.fc-label {
+  display: block;
+  font-size: 21rpx;
+  color: var(--muted);
+  margin-bottom: 8rpx;
+}
+.more-tip {
+  padding: 14rpx 0 4rpx;
+  text-align: center;
+  font-size: 20rpx;
+  color: var(--muted);
+}

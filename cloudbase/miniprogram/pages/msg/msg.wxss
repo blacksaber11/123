@@ -1,0 +1,1271 @@
+.msg-page {
+  min-height: 100vh;
+  background: var(--paper);
+  /* 底部导航占 110rpx + 安全区，列表要留出让位 */
+  padding-bottom: calc(130rpx + env(safe-area-inset-bottom));
+}
+
+/* 自定义导航：内容从状态栏下方开始，右侧为胶囊让位 */
+.msg-nav {
+  background: #fff;
+  border-bottom: 1rpx solid var(--line-2);
+}
+.nav-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 0 24rpx;
+}
+.nav-back {
+  width: 56rpx;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  font-size: 48rpx;
+  line-height: 1;
+  color: var(--ink);
+}
+.nav-title {
+  position: absolute;
+  left: 120rpx;
+  right: 200rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+/* 会话标题：过长时省略，商机会员标识始终完整跟在名字后面，不换行 */
+.nav-title-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nav-title-arrow {
+  flex: none;
+  margin-left: 6rpx;
+  font-size: 30rpx;
+  color: var(--muted-2);
+}
+
+/* Tab 切换 */
+.tabs {
+  position: relative;
+  display: flex;
+  background: #fff;
+  padding: 24rpx 0 16rpx;
+  border-bottom: 1rpx solid var(--line-2);
+}
+.tab {
+  flex: 1;
+  text-align: center;
+  font-size: 28rpx;
+  color: var(--muted);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+}
+.tab.on {
+  color: var(--ink);
+  font-weight: 700;
+  font-size: 30rpx;
+}
+.tab .badge {
+  flex: none;
+  margin-left: 2rpx;
+  min-width: 32rpx;
+  height: 32rpx;
+  padding: 0 8rpx;
+  border-radius: 16rpx;
+  background: var(--danger);
+  color: #fff;
+  font-size: 20rpx;
+  line-height: 32rpx;
+  text-align: center;
+  font-weight: 400;
+}
+.tab-ink {
+  position: absolute;
+  bottom: 0;
+  width: 33.33%;
+  height: 6rpx;
+  display: flex;
+  justify-content: center;
+  transform: translateX(-50%);
+  transition: left .25s;
+}
+.tab-ink::before {
+  content: '';
+  width: 48rpx;
+  height: 6rpx;
+  border-radius: 3rpx;
+  background: var(--brand);
+}
+
+/* 消息列表 */
+.msg-list {
+  padding: 20rpx 24rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+.msg-item {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding: 24rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  position: relative;
+}
+.msg-item:active {
+  background: var(--line-2);
+}
+.msg-ico {
+  flex: none;
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 20rpx;
+  background: var(--brand-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36rpx;
+}
+.msg-ico.sys {
+  background: #FFF2E6;
+}
+.mi-img {
+  width: 40rpx;
+  height: 40rpx;
+  display: block;
+}
+.msg-avatar {
+  flex: none;
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #fff;
+  font-size: 28rpx;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.msg-body {
+  flex: 1;
+  min-width: 0;
+}
+.msg-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8rpx;
+}
+.msg-title {
+  flex: 1;
+  font-size: 28rpx;
+  font-weight: 500;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 名字 + 商机会员标识：标识紧跟在名字后，长名字先省略，标识不被挤断 */
+.msg-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.msg-name .msg-title {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.msg-member {
+  flex: none;
+  margin-left: 8rpx;
+  padding: 1rpx 8rpx;
+  border-radius: 999rpx;
+  background: var(--brand-soft);
+  border: 1rpx solid var(--brand-line);
+  color: var(--brand);
+  font-size: 18rpx;
+  font-weight: 600;
+  line-height: 26rpx;
+  white-space: nowrap;
+}
+.msg-time {
+  flex: none;
+  font-size: 20rpx;
+  color: var(--muted);
+  margin-left: 12rpx;
+}
+.msg-content {
+  font-size: 24rpx;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 系统提示（下架 / 退回原因）：与普通消息区分开，最多两行，不把原因截成半句 */
+.msg-reason {
+  margin-top: 6rpx;
+  padding: 6rpx 10rpx;
+  border-radius: 8rpx;
+  background: #fdeeee;
+  color: #c0392b;
+  font-size: 21rpx;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+  word-break: break-all;
+}
+.msg-dot {
+  flex: none;
+  width: 16rpx;
+  height: 16rpx;
+  border-radius: 50%;
+  background: var(--danger);
+}
+.msg-badge {
+  flex: none;
+  min-width: 36rpx;
+  height: 36rpx;
+  padding: 0 10rpx;
+  border-radius: 18rpx;
+  background: var(--danger);
+  color: #fff;
+  font-size: 20rpx;
+  text-align: center;
+  line-height: 36rpx;
+}
+
+/* 空状态 */
+/* 空状态统一走 app.wxss 的 .empty / .big / .ttl / .ds */
+
+/* 需求响应消息 */
+.msg-ico.inq {
+  background: var(--brand-soft);
+}
+.msg-avatar.official {
+  background: var(--info);
+}
+.msg-arrow {
+  flex: none;
+  margin-left: 8rpx;
+  font-size: 26rpx;
+  color: var(--muted);
+}
+
+.inq-panel {
+  padding: 20rpx 24rpx 24rpx;
+  background: #F7FBF9;
+  border-bottom: 1rpx solid var(--line-2);
+}
+.inq-tip {
+  padding: 16rpx;
+  border-radius: 10rpx;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 22rpx;
+  line-height: 34rpx;
+}
+.inq-card {
+  margin-top: 16rpx;
+  padding: 20rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+  /* 与信息流卡片、表单卡片统一圆角 */
+  border-radius: var(--radius-sm);
+}
+.ic-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ic-name {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.ic-met {
+  flex: none;
+  font-size: 20rpx;
+  padding: 4rpx 10rpx;
+  border-radius: 8rpx;
+  border: 1rpx solid var(--line);
+  color: var(--muted);
+}
+.ic-met.ok {
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.ic-met.warn {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.ic-quote {
+  margin-top: 10rpx;
+  font-size: 30rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+.ic-sub {
+  font-size: 22rpx;
+  font-weight: 400;
+  color: var(--muted);
+}
+.ic-conds {
+  margin-top: 12rpx;
+}
+.ic-cond {
+  display: flex;
+  align-items: flex-start;
+  gap: 8rpx;
+  font-size: 22rpx;
+  line-height: 36rpx;
+  color: var(--ink-2);
+}
+.ic-ico {
+  flex: none;
+  width: 28rpx;
+  text-align: center;
+  font-weight: 700;
+}
+.ic-cond.ok .ic-ico {
+  color: var(--brand);
+}
+.ic-cond.no .ic-ico {
+  color: var(--danger);
+}
+.ic-cond.no .ic-cn {
+  color: var(--muted);
+}
+.ic-foot {
+  margin-top: 14rpx;
+  padding-top: 14rpx;
+  border-top: 1rpx solid var(--line-2);
+}
+.ic-note {
+  display: block;
+  margin-bottom: 12rpx;
+  font-size: 22rpx;
+  line-height: 34rpx;
+  color: var(--muted);
+}
+.inq-empty {
+  padding: 24rpx 0;
+  text-align: center;
+  font-size: 24rpx;
+  color: var(--muted);
+}
+.demand-card {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-top: 16rpx;
+  padding: 20rpx;
+  background: #fff;
+  border: 1rpx solid var(--info-line);
+  border-radius: 14rpx;
+}
+.dc-ico {
+  flex: none;
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 12rpx;
+  background: var(--info-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dc-img {
+  width: 34rpx;
+  height: 34rpx;
+  display: block;
+}
+.dc-body {
+  flex: 1;
+  min-width: 0;
+}
+.dc-title {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dc-meta {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.dc-go {
+  flex: none;
+  font-size: 32rpx;
+  color: var(--muted);
+}
+
+/* 平台直连会话 */
+.chat-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  /* 输入框要落在底部导航之上 */
+  bottom: calc(110rpx + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+}
+/* 会话顶部标的卡：固定不随消息滚动，双方都看到同一条商品 / 需求 */
+.chat-target {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  margin: 16rpx 24rpx 0;
+  padding: 14rpx 16rpx;
+  border-radius: 16rpx;
+  border: 1rpx solid var(--line);
+  background: #fff;
+  box-shadow: 0 4rpx 16rpx rgba(15, 23, 42, .05);
+}
+.chat-target .ct-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+}
+.chat-target .ct-img {
+  width: 84rpx;
+  height: 84rpx;
+  flex: none;
+  border-radius: 12rpx;
+  background: var(--brand-soft);
+}
+.chat-target .ct-ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--brand);
+  font-size: 30rpx;
+  font-weight: 700;
+}
+.chat-target .ct-body {
+  flex: 1;
+  min-width: 0;
+}
+.chat-target .ct-t {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-target .ct-m {
+  margin-top: 6rpx;
+  display: flex;
+  gap: 14rpx;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.chat-target .ct-price {
+  color: #DC2626;
+  font-weight: 600;
+}
+.chat-target .ct-go {
+  flex: none;
+  color: var(--muted);
+  font-size: 28rpx;
+}
+.chat-target .ct-x {
+  flex: none;
+  width: 44rpx;
+  height: 44rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 24rpx;
+}
+.chat-scroll {
+  flex: 1;
+  min-height: 0;
+  padding: 24rpx;
+  box-sizing: border-box;
+}
+/* 商机会员：直接以标签形式跟在会话标题后面 */
+.nav-member {
+  flex: none;
+  margin-left: 8rpx;
+  padding: 2rpx 10rpx;
+  border-radius: 999rpx;
+  background: var(--brand-soft);
+  border: 1rpx solid var(--brand-line);
+  color: var(--brand);
+  font-size: 19rpx;
+  font-weight: 600;
+  line-height: 28rpx;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.chat-tip {
+  margin-bottom: 20rpx;
+  padding: 16rpx;
+  border-radius: 10rpx;
+  border: 1rpx solid var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 22rpx;
+  line-height: 34rpx;
+}
+/* 对方授权后展示的主体卡片 */
+.peer-card {
+  margin-bottom: 20rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 12rpx;
+  border: 1rpx solid var(--line);
+  background: #fff;
+}
+.peer-card .pc-hd {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 10rpx;
+}
+.peer-card .pc-row {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  font-size: 23rpx;
+  line-height: 38rpx;
+}
+.peer-card .pc-k {
+  width: 84rpx;
+  color: var(--muted);
+}
+.peer-card .pc-v {
+  flex: 1;
+  color: var(--ink);
+  word-break: break-all;
+}
+.peer-card .pc-copy {
+  color: var(--brand);
+  font-size: 21rpx;
+}
+.peer-card .pc-tip {
+  margin-top: 8rpx;
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.chat-row {
+  display: flex;
+  gap: 12rpx;
+  margin-bottom: 20rpx;
+}
+.chat-row.me {
+  flex-direction: row-reverse;
+}
+.chat-avatar {
+  flex: none;
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 24rpx;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.chat-row.me .chat-avatar {
+  background: var(--brand);
+  color: #fff;
+}
+/* 对方头像可点：进入对方主页（关注 / 私信 / 主体信息） */
+.chat-avatar.tappable {
+  box-shadow: 0 0 0 2rpx var(--brand-soft);
+}
+.chat-avatar.avatar-hover {
+  opacity: 0.7;
+}
+.chat-wrap {
+  max-width: 520rpx;
+}
+.chat-row.me .chat-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.chat-bubble {
+  padding: 16rpx 20rpx;
+  border-radius: 14rpx;
+  border: 1rpx solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  font-size: 26rpx;
+  line-height: 38rpx;
+  word-break: break-all;
+}
+.chat-row.me .chat-bubble {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+/* 图片消息：气泡只做圆角包裹，不再加内边距与底色 */
+.chat-bubble.bubble-media {
+  padding: 0;
+  border: none;
+  background: transparent;
+  line-height: 0;
+  overflow: hidden;
+  border-radius: 12rpx;
+}
+.chat-row.me .chat-bubble.bubble-media {
+  background: transparent;
+  border: none;
+}
+.chat-img {
+  display: block;
+  width: 320rpx;
+  max-width: 100%;
+  border-radius: 12rpx;
+  background: var(--line-2);
+}
+/* 视频消息：与图片气泡同尺寸，封面 + 纯 CSS 播放角标 */
+.chat-video {
+  position: relative;
+  width: 320rpx;
+  max-width: 100%;
+  height: 200rpx;
+  border-radius: 12rpx;
+  background-color: #1b2333;
+  background-size: cover;
+  background-position: center;
+  overflow: hidden;
+}
+.cv-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 72rpx;
+  height: 72rpx;
+  margin: -36rpx 0 0 -36rpx;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+}
+.cv-play::after {
+  content: '';
+  position: absolute;
+  left: 28rpx;
+  top: 22rpx;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 14rpx 0 14rpx 22rpx;
+  border-color: transparent transparent transparent #fff;
+}
+.cv-badge {
+  position: absolute;
+  right: 10rpx;
+  bottom: 10rpx;
+  padding: 2rpx 10rpx;
+  border-radius: 6rpx;
+  background: rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 18rpx;
+  line-height: 26rpx;
+}
+/* 媒体过期占位：与图片 / 视频气泡同尺寸 */
+.chat-media-dead {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 320rpx;
+  max-width: 100%;
+  height: 200rpx;
+  border-radius: 12rpx;
+  background: var(--line-2);
+  color: var(--muted);
+  font-size: 24rpx;
+  line-height: 36rpx;
+}
+/* 个人名片消息：始终白底卡片，避免落在自己的品牌色气泡里看不清 */
+.chat-bubble.bubble-card,
+.chat-row.me .chat-bubble.bubble-card {
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+/* 方形名片：摘要 + 点击查看，完整信息放在详情弹层 */
+.chat-card {
+  display: flex;
+  flex-direction: column;
+  width: 440rpx;
+  min-height: 300rpx;
+  overflow: hidden;
+  border-radius: 22rpx;
+  border: 1rpx solid var(--line);
+  background: #fff;
+  box-shadow: 0 10rpx 28rpx rgba(16, 32, 64, .08);
+}
+.cc-band {
+  height: 8rpx;
+  background: linear-gradient(90deg, var(--brand), var(--brand-2, #3f7cff));
+}
+.cc-head {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 26rpx 24rpx 20rpx;
+}
+.cc-av {
+  flex: none;
+  width: 76rpx;
+  height: 76rpx;
+  border-radius: 16rpx;
+  background: var(--brand);
+  color: #fff;
+  font-size: 30rpx;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cc-body {
+  flex: 1;
+  min-width: 0;
+}
+.cc-nm {
+  font-size: 27rpx;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cc-badge {
+  margin-left: 8rpx;
+  padding: 2rpx 8rpx;
+  border-radius: 6rpx;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 18rpx;
+  font-weight: 400;
+}
+.cc-sub {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cc-meta {
+  margin-top: 4rpx;
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.cc-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16rpx 24rpx;
+  border-top: 1rpx solid var(--line-2);
+  background: #fafbfe;
+}
+.cc-tag {
+  flex: none;
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+  border: 1rpx solid var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 20rpx;
+}
+.cc-hint {
+  font-size: 21rpx;
+  color: var(--brand);
+}
+
+/* 名片详情弹层 */
+.card-pop {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48rpx;
+  background: rgba(8, 16, 32, .45);
+}
+.card-sheet {
+  width: 100%;
+  max-width: 580rpx;
+  overflow: hidden;
+  border-radius: 28rpx;
+  background: #fff;
+  box-shadow: 0 24rpx 60rpx rgba(8, 16, 32, .2);
+  padding-bottom: 24rpx;
+}
+.cs-band {
+  height: 10rpx;
+  background: linear-gradient(90deg, var(--brand), var(--brand-2, #3f7cff));
+}
+.cs-av {
+  width: 96rpx;
+  height: 96rpx;
+  margin: 28rpx auto 0;
+  border-radius: 20rpx;
+  background: var(--brand);
+  color: #fff;
+  font-size: 38rpx;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cs-nm {
+  margin-top: 16rpx;
+  text-align: center;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+/* 名片详情分三块：主体信息 / 联系方式 / 个人身份 */
+.cs-block {
+  margin: 20rpx 32rpx 0;
+  padding: 6rpx 20rpx;
+  border-radius: 16rpx;
+  background: #fafbfe;
+  border: 1rpx solid var(--line-2);
+}
+.cs-title {
+  padding: 14rpx 0 8rpx;
+  font-size: 20rpx;
+  font-weight: 600;
+  letter-spacing: 1rpx;
+  color: var(--muted);
+}
+.cs-line {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 14rpx 0;
+  font-size: 24rpx;
+  line-height: 34rpx;
+  border-bottom: 1rpx solid var(--line-2);
+}
+.cs-line:last-child {
+  border-bottom: 0;
+}
+.cs-k {
+  flex: none;
+  width: 112rpx;
+  color: var(--muted);
+}
+.cs-v {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink);
+  word-break: break-all;
+}
+.cs-v.strong {
+  font-weight: 600;
+  color: var(--brand);
+}
+.cs-act {
+  flex: none;
+  padding: 4rpx 14rpx;
+  border-radius: 999rpx;
+  border: 1rpx solid var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 20rpx;
+}
+.cs-tip {
+  margin: 20rpx 32rpx 0;
+  font-size: 20rpx;
+  line-height: 30rpx;
+  color: var(--muted);
+}
+.cs-btns {
+  display: flex;
+  gap: 16rpx;
+  margin: 24rpx 32rpx 0;
+}
+.cs-btns .btn {
+  flex: 1;
+}
+.chat-time {
+  margin-top: 6rpx;
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.chat-end {
+  height: 8rpx;
+}
+/* 商品咨询上下文提示：仅商品页咨询入口出现，颜色低调不抢消息 */
+.chat-ctx {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 12rpx 24rpx;
+  background: var(--paper);
+  border-top: 1rpx solid var(--line-2);
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.chat-ctx-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.chat-ctx-clear {
+  flex: none;
+  padding: 2rpx 16rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 999rpx;
+  color: var(--muted);
+}
+/* 底部输入区：会话整屏（已隐藏 tabBar），安全区留在这里 */
+.chat-bottom {
+  flex: none;
+  background: #fff;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.chat-input {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 16rpx 24rpx;
+  background: #fff;
+  border-top: 1rpx solid var(--line-2);
+}
+.chat-input-box {
+  flex: 1;
+  height: 72rpx;
+  padding: 0 20rpx;
+  border-radius: 12rpx;
+  background: var(--paper);
+  font-size: 26rpx;
+}
+/* 发送：与微信一致，有输入时输入框右侧出现发送按钮 */
+.chat-send {
+  flex: none;
+  height: 64rpx;
+  margin: 0;
+  padding: 0 24rpx;
+  line-height: 64rpx;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #fff;
+  background: var(--brand);
+  border-radius: 10rpx;
+  text-align: center;
+}
+.chat-send:active {
+  opacity: .85;
+}
+/* 加号：无输入时替代发送按钮，展开图片 / 名片面板 */
+.chat-plus {
+  flex: none;
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 50%;
+  border: 1rpx solid var(--line);
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform .2s;
+}
+.chat-plus.on {
+  transform: rotate(45deg);
+}
+.cp-ico {
+  font-size: 44rpx;
+  line-height: 1;
+  font-weight: 300;
+  color: var(--ink);
+  margin-top: -6rpx;
+}
+/* 加号面板：与微信功能面板一致，点击即发送图片 / 个人名片 */
+.chat-tools {
+  flex: none;
+  display: flex;
+  gap: 24rpx;
+  padding: 24rpx;
+  background: #fff;
+  border-top: 1rpx solid var(--line-2);
+}
+.tool-item {
+  width: 120rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10rpx;
+}
+.tool-item:active {
+  opacity: .7;
+}
+.tool-ico {
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 24rpx;
+  border: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* 三个工具图标：统一用轻量线条绘制，避免直接显示汉字 */
+.ico-pic {
+  background: linear-gradient(135deg, #EEF2FF, #E0E7FF);
+}
+.ico-video {
+  background: linear-gradient(135deg, #F5F3FF, #EDE9FE);
+}
+.ico-card {
+  background: linear-gradient(135deg, #ECFDF5, #D1FAE5);
+}
+/* 图片：相框 + 太阳 + 山峰 */
+.ti-frame {
+  position: relative;
+  width: 46rpx;
+  height: 38rpx;
+  border: 3rpx solid #4F46E5;
+  border-radius: 8rpx;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.ti-sun {
+  position: absolute;
+  left: 7rpx;
+  top: 7rpx;
+  width: 10rpx;
+  height: 10rpx;
+  border-radius: 50%;
+  background: #4F46E5;
+}
+.ti-hill {
+  position: absolute;
+  left: -2rpx;
+  bottom: -1rpx;
+  width: 0;
+  height: 0;
+  border-left: 17rpx solid transparent;
+  border-right: 17rpx solid transparent;
+  border-bottom: 24rpx solid #4F46E5;
+}
+/* 视频：播放框 + 播放三角 */
+.ti-vframe {
+  width: 46rpx;
+  height: 36rpx;
+  border: 3rpx solid #7C3AED;
+  border-radius: 8rpx;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ti-play {
+  width: 0;
+  height: 0;
+  margin-left: 4rpx;
+  border-top: 8rpx solid transparent;
+  border-bottom: 8rpx solid transparent;
+  border-left: 13rpx solid #7C3AED;
+}
+/* 名片：证件卡 + 头像 + 两条信息线 */
+.ti-card {
+  position: relative;
+  width: 46rpx;
+  height: 38rpx;
+  border: 3rpx solid #059669;
+  border-radius: 8rpx;
+  box-sizing: border-box;
+}
+.ti-head {
+  position: absolute;
+  left: 7rpx;
+  top: 8rpx;
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background: #059669;
+}
+.ti-line {
+  position: absolute;
+  left: 24rpx;
+  top: 10rpx;
+  width: 14rpx;
+  height: 3rpx;
+  border-radius: 2rpx;
+  background: #059669;
+}
+.ti-line.s {
+  top: 18rpx;
+  width: 10rpx;
+}
+.tool-nm {
+  font-size: 22rpx;
+  color: var(--muted);
+}
+
+/* 微信消息提醒引导条 */
+.notify-tip {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin: 20rpx 24rpx 0;
+  padding: 20rpx 24rpx;
+  border-radius: 20rpx;
+  background: var(--brand-soft);
+  border: 1rpx solid var(--brand-line);
+}
+.notify-tip:active {
+  opacity: 0.75;
+}
+.nt-ico {
+  width: 40rpx;
+  height: 40rpx;
+  flex: none;
+  display: block;
+}
+.nt-body {
+  flex: 1;
+  min-width: 0;
+}
+.nt-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--brand);
+}
+.nt-sub {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.nt-go {
+  flex: none;
+  font-size: 24rpx;
+  color: var(--brand);
+}
+
+/* ===== 会话水印：整页铺满 + 消息图片右下角 =====
+   水印只做「泄漏可定位」，不拦截点击，pointer-events 必须为 none */
+.chat-wm {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 8;
+}
+.chat-wm-t {
+  width: 33.33%;
+  height: 16.66%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8rpx;
+  box-sizing: border-box;
+  font-size: 20rpx;
+  color: rgba(17, 24, 39, 0.07);
+  white-space: nowrap;
+  overflow: hidden;
+  transform: rotate(-18deg);
+}
+.chat-bubble.bubble-media {
+  position: relative;
+}
+.chat-img-wm {
+  position: absolute;
+  right: 8rpx;
+  bottom: 8rpx;
+  max-width: 88%;
+  padding: 2rpx 8rpx;
+  border-radius: 6rpx;
+  background: rgba(0, 0, 0, 0.35);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 18rpx;
+  line-height: 26rpx;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+/* 页内图片查看器：不调用 wx.previewImage，避免长按保存 / 转发 */
+.img-pop {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.94);
+}
+.img-pop-img {
+  width: 100%;
+  height: 100%;
+}
+.img-pop-wm {
+  position: absolute;
+  right: 24rpx;
+  bottom: calc(84rpx + env(safe-area-inset-bottom));
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 22rpx;
+}
+.img-pop-tip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(32rpx + env(safe-area-inset-bottom));
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 22rpx;
+}
+
+/* 名片弹层底部账号水印 */
+.cs-wm {
+  margin-top: 16rpx;
+  text-align: center;
+  font-size: 20rpx;
+  color: var(--muted);
+}
+

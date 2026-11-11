@@ -1,0 +1,142 @@
+<view class="tool">
+  <view class="hero">
+    <view class="hero-tt">回本收益测算</view>
+    <view class="hero-ds">设备吞吐与月产出按型号自动折算，填使用率、电价、成本价、卖价就能看回本周期</view>
+  </view>
+
+  <view class="sec">
+    <view class="sec-hd">
+      <text class="sec-tt">1. 部署设备</text>
+      <text class="sec-link" bindtap="openDevices">全部 GPU 设备 ›</text>
+    </view>
+    <view wx:if="{{device}}" class="dev-card" bindtap="openDevices">
+      <view class="dev-main">
+        <view class="dev-model">{{device.model}}</view>
+        <view class="dev-spec">{{device.specText}}</view>
+        <view class="dev-cat">{{device.cat}} · {{device.brand}}</view>
+      </view>
+      <text class="dev-change">更换 ›</text>
+    </view>
+
+    <view class="field-grid">
+      <view class="field-cell">
+        <text class="fc-label">设备成本价（单{{device.unitLabel || '台'}}）</text>
+        <view class="num-field">
+          <input class="num-input" type="digit" value="{{price}}" bindinput="onPrice" />
+          <text class="num-unit">万元</text>
+        </view>
+      </view>
+      <view class="field-cell">
+        <text class="fc-label">使用率（负载）</text>
+        <view class="num-field">
+          <input class="num-input" type="digit" value="{{usage}}" bindinput="onUsage" />
+          <text class="num-unit">%</text>
+        </view>
+      </view>
+    </view>
+    <view class="field-tip">单台功率 {{device.powerText || '—'}} · 带宽 {{device.bwText || '—'}} · 显存 {{device.memText || '—'}}。使用率同时决定月产出与电费：机器闲着也耗电。</view>
+  </view>
+
+  <view class="sec">
+    <view class="sec-tt">2. 部署模型</view>
+    <view class="m-list m-top">
+      <view wx:for="{{models}}" wx:key="id"
+            class="m-chip {{modelId === item.id ? 'on' : ''}}"
+            data-id="{{item.id}}" bindtap="pickModel">
+        <text class="mc-name">{{item.name}}</text>
+        <text class="mc-sub">{{item.vendor}} · 官方 {{item.price}} 元/百万</text>
+      </view>
+    </view>
+    <view class="field-tip">官方价为各平台公开的输出价（2026-11 查询）：DeepSeek 取高峰时段价，MiniMax M3 取永久五折后的实付价；其余取标准价，不含限时活动。实际价格以官方页面为准。</view>
+  </view>
+
+  <view class="sec">
+    <view class="sec-tt">3. 价格参数</view>
+    <view class="field-grid">
+      <view class="field-cell">
+        <text class="fc-label">电价</text>
+        <view class="num-field">
+          <input class="num-input" type="digit" value="{{electricity}}" bindinput="onElectricity" />
+          <text class="num-unit">元/度</text>
+        </view>
+      </view>
+      <view class="field-cell">
+        <text class="fc-label">你的卖价（可空）</text>
+        <view class="num-field">
+          <input class="num-input" type="digit" value="{{sellPrice}}" bindinput="onSellPrice" placeholder="默认官方价" />
+          <text class="num-unit">元/百万</text>
+        </view>
+      </view>
+    </view>
+    <view class="field-tip">卖价留空时按官方 API 价算。吞吐不用填，按设备带宽与模型激活参数自动折算。</view>
+  </view>
+
+  <view wx:if="{{result}}" class="res">
+    <view class="res-top">
+      <view>
+        <view class="res-k">回本周期</view>
+        <view class="res-v">{{result.paybackText}}</view>
+      </view>
+      <view class="res-tag">{{result.paybackSub}}</view>
+    </view>
+    <view class="res-dev">{{result.deviceText}}</view>
+    <view class="res-dev">{{result.modelText}}</view>
+    <view class="res-grid">
+      <view class="rg"><text class="rg-k">使用率</text><text class="rg-v">{{result.usageText}}</text></view>
+      <view class="rg"><text class="rg-k">所需数量（最少）</text><text class="rg-v">{{result.unitsText}}</text></view>
+      <view class="rg"><text class="rg-k">单{{device.unitLabel || '台'}}峰值吞吐</text><text class="rg-v">{{result.tpsText}}</text></view>
+      <view class="rg"><text class="rg-k">单{{device.unitLabel || '台'}}月产出</text><text class="rg-v">{{result.tokensText}}</text></view>
+      <view class="rg"><text class="rg-k">显存需求 / 可用</text><text class="rg-v">{{result.vramText}}</text></view>
+      <view class="rg"><text class="rg-k">token 电费成本</text><text class="rg-v">{{result.costText}}</text></view>
+      <view class="rg"><text class="rg-k">官方 API 价</text><text class="rg-v">{{result.officialText}}</text></view>
+      <view class="rg"><text class="rg-k">你的卖价</text><text class="rg-v">{{result.sellText}}</text></view>
+      <view class="rg"><text class="rg-k">单位 token 价差</text><text class="rg-v">{{result.gapText}}</text></view>
+      <view class="rg"><text class="rg-k">月电费</text><text class="rg-v">{{result.powerCostText}}</text></view>
+      <view class="rg"><text class="rg-k">电费占营收</text><text class="rg-v">{{result.costShareText}}</text></view>
+      <view class="rg"><text class="rg-k">月营收</text><text class="rg-v">{{result.revenueText}}</text></view>
+      <view class="rg"><text class="rg-k">月毛利</text><text class="rg-v">{{result.profitText}}</text></view>
+      <view class="rg"><text class="rg-k">年化回报</text><text class="rg-v">{{result.roiText}}</text></view>
+    </view>
+    <view wx:if="{{result.clusterTip}}" class="res-tip">{{result.clusterTip}}</view>
+    <view wx:if="{{result.verdict}}" class="res-verdict">{{result.verdict}}</view>
+    <view wx:if="{{result.warn}}" class="res-warn">{{result.warn}}</view>
+    <view class="res-note">{{result.note}}</view>
+  </view>
+
+  <view class="cta-space"></view>
+
+  <!-- 设备选择面板 -->
+  <view wx:if="{{deviceSheet}}" class="mask" bindtap="closeDevices"></view>
+  <view wx:if="{{deviceSheet}}" class="sheet">
+    <view class="sheet-hd">
+      <text class="sheet-tt">选择 GPU 设备</text>
+      <text class="sheet-x" bindtap="closeDevices">✕</text>
+    </view>
+    <view class="sheet-search">
+      <input class="ss-input" value="{{deviceSearch}}" bindinput="onDeviceSearch"
+             placeholder="搜型号 / 品牌，如 H100、4090、昇腾" />
+    </view>
+    <scroll-view scroll-x="true" class="sheet-cats" enhanced show-scrollbar="{{false}}">
+      <view class="hrow">
+        <view wx:for="{{deviceCats}}" wx:key="*this"
+              class="chip {{deviceCat === item ? 'on' : ''}}"
+              data-v="{{item}}" bindtap="pickDeviceCat">{{item}}</view>
+      </view>
+    </scroll-view>
+    <scroll-view scroll-y="true" class="sheet-list">
+      <view wx:for="{{deviceList}}" wx:key="key"
+            class="d-row {{deviceKey === item.key ? 'on' : ''}}"
+            data-key="{{item.key}}" bindtap="pickSheetDevice">
+        <view class="d-main">
+          <view class="d-model">{{item.model}}</view>
+          <view class="d-spec">{{item.specText}}</view>
+          <view class="d-cat">{{item.cat}} · {{item.brand}}</view>
+        </view>
+        <view class="d-need">{{item.powerText}}</view>
+      </view>
+      <view wx:if="{{!deviceList.length}}" class="d-empty">没有匹配的 GPU 设备</view>
+      <view wx:if="{{deviceMore}}" class="more-tip">还有 {{deviceMore}} 个结果，输入关键词缩小范围</view>
+      <view class="sheet-space"></view>
+    </scroll-view>
+  </view>
+</view>

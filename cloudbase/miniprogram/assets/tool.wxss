@@ -1,0 +1,542 @@
+/* 测算类工具共用样式：工具中心、微调、功耗、回本三个页面复用 */
+.tool {
+  min-height: 100vh;
+  padding: 24rpx 24rpx 0;
+}
+
+/* 头部 */
+.hero {
+  padding: 32rpx 30rpx;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, #4F46E5 0%, #6D5EF6 58%, #8B7CFF 100%);
+  color: #fff;
+  box-shadow: 0 16rpx 40rpx rgba(79, 70, 229, .24);
+}
+.hero-tt {
+  font-size: 40rpx;
+  font-weight: 700;
+  letter-spacing: 1rpx;
+}
+.hero-ds {
+  margin-top: 10rpx;
+  font-size: 24rpx;
+  line-height: 36rpx;
+  color: rgba(255, 255, 255, .8);
+}
+
+/* 区块 */
+.sec {
+  margin-top: 20rpx;
+  padding: 28rpx 24rpx;
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+.sec-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sec-tt {
+  font-size: 29rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+.sec-aside {
+  font-size: 21rpx;
+  color: var(--muted);
+}
+.sub-tt {
+  margin: 26rpx 0 14rpx;
+  font-size: 23rpx;
+  color: var(--muted);
+}
+.sub-tt:first-of-type {
+  margin-top: 6rpx;
+}
+.field-tip {
+  margin-top: 14rpx;
+  font-size: 20rpx;
+  line-height: 30rpx;
+  color: var(--muted);
+}
+
+.m-top {
+  margin-top: 18rpx;
+}
+
+/* chip 组 */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
+.chips .chip {
+  height: 56rpx;
+  line-height: 54rpx;
+  padding: 0 22rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 999rpx;
+  background: #fff;
+  font-size: 23rpx;
+  color: var(--ink-2);
+}
+.chips .chip.on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 600;
+}
+
+/* 卡片式选项 */
+.m-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
+.m-chip {
+  width: calc(50% - 6rpx);
+  padding: 16rpx 18rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 16rpx;
+  background: #fff;
+  box-sizing: border-box;
+}
+.m-chip.on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+.mc-name {
+  display: block;
+  font-size: 24rpx;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 34rpx;
+}
+.m-chip.on .mc-name {
+  color: var(--brand);
+}
+.mc-sub {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 20rpx;
+  color: var(--muted);
+  line-height: 28rpx;
+}
+
+/* 微调方式：卡片式两列 */
+.q-list {
+  display: flex;
+  gap: 12rpx;
+}
+.q-chip {
+  flex: 1;
+  padding: 16rpx 12rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 14rpx;
+  text-align: center;
+  background: #fff;
+}
+.q-chip.on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+.qc-name {
+  display: block;
+  font-size: 24rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.q-chip.on .qc-name {
+  color: var(--brand);
+}
+.qc-tip {
+  display: block;
+  margin-top: 4rpx;
+  font-size: 18rpx;
+  color: var(--muted);
+  line-height: 26rpx;
+}
+
+/* 推荐设备横排 */
+.reco-list {
+  display: flex;
+  gap: 12rpx;
+  margin-top: 18rpx;
+  overflow-x: auto;
+}
+.reco {
+  flex: none;
+  max-width: 320rpx;
+  padding: 14rpx 16rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 14rpx;
+  background: #fff;
+}
+.reco.on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+.rc-model {
+  display: block;
+  font-size: 21rpx;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 28rpx;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reco.on .rc-model {
+  color: var(--brand);
+}
+.rc-sub {
+  display: block;
+  margin-top: 4rpx;
+  font-size: 19rpx;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* 数字输入行 */
+.num-row {
+  display: flex;
+  gap: 12rpx;
+}
+.num-field {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  height: 76rpx;
+  padding: 0 18rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 14rpx;
+  background: #fff;
+}
+.num-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.num-unit {
+  flex: none;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+
+/* 设备列表 */
+.pick-search {
+  margin-top: 16rpx;
+}
+.pick-input {
+  height: 68rpx;
+  padding: 0 20rpx;
+  border-radius: 14rpx;
+  background: var(--line-2);
+  font-size: 24rpx;
+}
+.pick-cats {
+  margin-top: 14rpx;
+  white-space: nowrap;
+}
+.pick-cats .hrow {
+  display: inline-flex;
+  gap: 12rpx;
+  padding-right: 12rpx;
+}
+.pick-cats .chip {
+  flex: none;
+  height: 52rpx;
+  line-height: 50rpx;
+  padding: 0 20rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 999rpx;
+  background: #fff;
+  font-size: 22rpx;
+  color: var(--ink-2);
+}
+.pick-cats .chip.on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 600;
+}
+.pick-list {
+  margin-top: 8rpx;
+  width: 100%;
+  height: 640rpx;
+  overflow: hidden;
+}
+.d-row {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+  padding: 20rpx 8rpx;
+  border-bottom: 1rpx solid var(--line-2);
+}
+.d-row.on {
+  background: var(--brand-soft);
+  border-radius: 12rpx;
+}
+.d-main {
+  flex: 1;
+  min-width: 0;
+}
+.d-model {
+  font-size: 25rpx;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 34rpx;
+}
+.d-spec {
+  margin-top: 4rpx;
+  font-size: 21rpx;
+  color: var(--ink-2);
+}
+.d-cat {
+  margin-top: 2rpx;
+  font-size: 19rpx;
+  color: var(--muted);
+}
+.d-need {
+  flex: none;
+  padding: 8rpx 16rpx;
+  border-radius: 999rpx;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 21rpx;
+  font-weight: 600;
+}
+.empty {
+  padding: 60rpx 0;
+  text-align: center;
+  font-size: 24rpx;
+  color: var(--muted);
+}
+
+/* 结果卡 */
+.res {
+  margin-top: 20rpx;
+  padding: 30rpx 26rpx;
+  border-radius: var(--radius-sm);
+  background: #101828;
+  color: #fff;
+  box-shadow: 0 16rpx 36rpx rgba(16, 24, 40, .22);
+}
+.res-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.res-k {
+  font-size: 22rpx;
+  color: rgba(255, 255, 255, .62);
+}
+.res-v {
+  margin-top: 4rpx;
+  font-size: 50rpx;
+  font-weight: 700;
+  line-height: 62rpx;
+  letter-spacing: 1rpx;
+}
+.res-tag {
+  padding: 6rpx 16rpx;
+  border-radius: 999rpx;
+  background: rgba(99, 102, 241, .28);
+  border: 1rpx solid rgba(139, 124, 255, .5);
+  font-size: 20rpx;
+  color: #C7C9FF;
+}
+.res-dev {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  color: rgba(255, 255, 255, .72);
+  line-height: 34rpx;
+}
+.res-grid {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 24rpx;
+  padding-top: 8rpx;
+  border-top: 1rpx solid rgba(255, 255, 255, .1);
+}
+.rg {
+  width: 50%;
+  padding: 14rpx 0;
+}
+.rg-k {
+  display: block;
+  font-size: 20rpx;
+  color: rgba(255, 255, 255, .5);
+}
+.rg-v {
+  display: block;
+  margin-top: 4rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #fff;
+}
+.res-warn {
+  margin-top: 14rpx;
+  padding: 12rpx 16rpx;
+  border-radius: 10rpx;
+  background: rgba(220, 104, 3, .18);
+  color: #FFD8A8;
+  font-size: 21rpx;
+  line-height: 30rpx;
+}
+.res-note {
+  margin-top: 16rpx;
+  font-size: 19rpx;
+  line-height: 29rpx;
+  color: rgba(255, 255, 255, .42);
+}
+
+/* 底部操作 */
+.cta-space {
+  height: 60rpx;
+}
+
+/* 当前选中设备卡 */
+.dev-card {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-top: 18rpx;
+  padding: 22rpx 20rpx;
+  border: 1rpx solid var(--brand-line);
+  border-radius: 16rpx;
+  background: linear-gradient(180deg, #FAFAFF, #F5F6FF);
+}
+.dev-main {
+  flex: 1;
+  min-width: 0;
+}
+.dev-model {
+  font-size: 27rpx;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 36rpx;
+}
+.dev-spec {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: var(--ink-2);
+}
+.dev-cat {
+  margin-top: 4rpx;
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.dev-change {
+  flex: none;
+  font-size: 23rpx;
+  color: var(--brand);
+  font-weight: 500;
+}
+.reco-tt {
+  margin-top: 24rpx;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.sec-link {
+  font-size: 22rpx;
+  color: var(--brand);
+}
+.more-tip {
+  padding: 14rpx 0 4rpx;
+  text-align: center;
+  font-size: 20rpx;
+  color: var(--muted);
+}
+
+/* 设备选择面板 */
+.mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(16, 24, 40, .45);
+  z-index: 40;
+}
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 82vh;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 28rpx 28rpx 0 0;
+  z-index: 41;
+  padding: 0 24rpx;
+}
+.sheet-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 26rpx 0 18rpx;
+}
+.sheet-tt {
+  font-size: 30rpx;
+  font-weight: 700;
+}
+.sheet-x {
+  font-size: 30rpx;
+  color: var(--muted);
+  padding: 4rpx 8rpx;
+}
+.sheet-search {
+  padding-bottom: 14rpx;
+}
+.ss-input {
+  height: 68rpx;
+  padding: 0 20rpx;
+  border-radius: 14rpx;
+  background: var(--line-2);
+  font-size: 24rpx;
+}
+.sheet-cats {
+  white-space: nowrap;
+  padding-bottom: 14rpx;
+  flex: none;
+}
+.sheet-cats .hrow {
+  display: inline-flex;
+  gap: 12rpx;
+  padding-right: 12rpx;
+}
+.sheet-cats .chip {
+  flex: none;
+  height: 52rpx;
+  line-height: 50rpx;
+  padding: 0 20rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 999rpx;
+  background: #fff;
+  font-size: 22rpx;
+  color: var(--ink-2);
+}
+.sheet-cats .chip.on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 600;
+}
+.sheet-list {
+  flex: 1;
+  min-height: 0;
+}
+.d-empty {
+  padding: 60rpx 0;
+  text-align: center;
+  font-size: 24rpx;
+  color: var(--muted);
+}
+.sheet-space {
+  height: calc(30rpx + env(safe-area-inset-bottom));
+}

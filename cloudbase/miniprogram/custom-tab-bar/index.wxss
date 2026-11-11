@@ -1,0 +1,79 @@
+/* 自定义组件不在 page 节点内，这里自带一份色板变量，避免取不到 app.wxss 的变量 */
+.tabbar {
+  --brand: #4F46E5;
+  --muted: #667085;
+  --line: #E7E9F0;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 80;
+  height: calc(110rpx + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: center;
+  background: #fff;
+  border-top: 1rpx solid var(--line);
+  box-shadow: 0 -8rpx 32rpx rgba(16, 24, 40, .05);
+}
+
+.tb-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4rpx;
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.tb-item.on {
+  color: var(--brand);
+  font-weight: 600;
+}
+.tb-item .ico {
+  width: 44rpx;
+  height: 44rpx;
+  display: block;
+}
+.tb-ico-wrap {
+  position: relative;
+  display: flex;
+}
+.tb-badge {
+  position: absolute;
+  top: -8rpx;
+  left: 28rpx;
+  min-width: 28rpx;
+  height: 28rpx;
+  padding: 0 6rpx;
+  border-radius: 14rpx;
+  background: #D92D20;
+  color: #fff;
+  font-size: 18rpx;
+  line-height: 28rpx;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.fab {
+  justify-self: center;
+  width: 96rpx;
+  height: 96rpx;
+  margin-top: -40rpx;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #6366F1, #4F46E5);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 12rpx 28rpx rgba(79, 70, 229, .35);
+}
+.fab-t {
+  font-size: 48rpx;
+  line-height: 1;
+}
+.fab-ico {
+  width: 40rpx;
+  height: 40rpx;
+}

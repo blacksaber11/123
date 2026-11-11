@@ -1,0 +1,99 @@
+<view class="tool">
+  <view class="hero">
+    <view class="hero-tt">功耗与机柜测算</view>
+    <view class="hero-ds">选设备数量，算出总功率、需要几个机柜、一年多少电费</view>
+  </view>
+
+  <view class="sec">
+    <view class="sec-hd">
+      <text class="sec-tt">1. 选择设备</text>
+      <text class="sec-aside">共 {{hitCount}} 个匹配</text>
+    </view>
+
+    <view class="pick-search">
+      <input class="pick-input" value="{{keyword}}" bindinput="onSearch"
+             placeholder="搜型号 / 品牌，如 H100、昇腾、Mac" confirm-type="search" />
+    </view>
+
+    <scroll-view scroll-x="true" class="pick-cats" enhanced show-scrollbar="{{false}}">
+      <view class="hrow">
+        <view wx:for="{{cats}}" wx:key="*this"
+              class="chip {{cat === item ? 'on' : ''}}"
+              data-v="{{item}}" bindtap="pickCat">{{item}}</view>
+      </view>
+    </scroll-view>
+
+    <scroll-view scroll-y="true" class="pick-list" enhanced show-scrollbar="{{false}}">
+      <view wx:for="{{list}}" wx:key="key"
+            class="d-row {{deviceKey === item.key ? 'on' : ''}}"
+            data-key="{{item.key}}" bindtap="pickDevice">
+        <view class="d-main">
+          <view class="d-model">{{item.model}}</view>
+          <view class="d-spec">{{item.spec}}</view>
+          <view class="d-cat">{{item.brand}} · {{item.cat}}</view>
+        </view>
+        <view class="d-need">{{item.powerText}}</view>
+      </view>
+      <view wx:if="{{!list.length}}" class="empty">没有匹配的设备，换个关键词试试</view>
+      <view wx:if="{{more}}" class="more-tip">还有 {{more}} 个结果，输入关键词继续缩小范围</view>
+    </scroll-view>
+  </view>
+
+  <view class="sec">
+    <view class="sec-tt">2. 部署参数</view>
+    <view class="field-grid">
+      <view class="field-cell">
+        <text class="fc-label">设备数量</text>
+        <view class="num-field">
+          <input class="num-input" type="number" value="{{qty}}" bindinput="onQty" />
+          <text class="num-unit">{{device.unitLabel || '台'}}</text>
+        </view>
+      </view>
+      <view class="field-cell">
+        <text class="fc-label">电价</text>
+        <view class="num-field">
+          <input class="num-input" type="digit" value="{{price}}" bindinput="onPrice" />
+          <text class="num-unit">元/度</text>
+        </view>
+      </view>
+      <view class="field-cell">
+        <text class="fc-label">机房 PUE</text>
+        <view class="num-field">
+          <input class="num-input" type="digit" value="{{pue}}" bindinput="onPue" />
+          <text class="num-unit">倍</text>
+        </view>
+      </view>
+      <view class="field-cell">
+        <text class="fc-label">单柜功率上限</text>
+        <view class="num-field">
+          <input class="num-input" type="digit" value="{{rack}}" bindinput="onRack" />
+          <text class="num-unit">kW</text>
+        </view>
+      </view>
+    </view>
+    <view class="field-tip">pue 1.3 约等于主流风冷机房；液冷可到 1.1 左右。</view>
+  </view>
+
+  <view wx:if="{{result}}" class="res">
+    <view class="res-top">
+      <view>
+        <view class="res-k">IT 总功率</view>
+        <view class="res-v">{{result.totalText}}</view>
+      </view>
+      <view class="res-tag">{{result.qtyText}}</view>
+    </view>
+    <view class="res-dev">{{result.deviceText}}</view>
+    <view class="res-grid">
+      <view class="rg"><text class="rg-k">单{{device.unitLabel || '台'}}功率</text><text class="rg-v">{{result.singleText}}</text></view>
+      <view class="rg"><text class="rg-k">需要机柜</text><text class="rg-v">{{result.rackText}}</text></view>
+      <view class="rg"><text class="rg-k">月耗电</text><text class="rg-v">{{result.monthKwhText}}</text></view>
+      <view class="rg"><text class="rg-k">月电费</text><text class="rg-v">{{result.monthCostText}}</text></view>
+      <view class="rg"><text class="rg-k">年电费</text><text class="rg-v">{{result.yearCostText}}</text></view>
+      <view class="rg"><text class="rg-k">机柜口径</text><text class="rg-v">{{result.rackSub}}</text></view>
+    </view>
+    <view wx:if="{{result.warning}}" class="res-warn">{{result.warning}}</view>
+    <view class="res-note">{{result.note}}</view>
+  </view>
+
+  <view class="cta-space"></view>
+</view>

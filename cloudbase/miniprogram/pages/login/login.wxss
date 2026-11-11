@@ -1,0 +1,314 @@
+.login-page {
+  min-height: 100vh;
+  padding: 72rpx 32rpx 48rpx;
+  box-sizing: border-box;
+  background: var(--paper);
+}
+
+/* ========== 顶部品牌区 ========== */
+.lg-hero {
+  text-align: center;
+  margin-bottom: 36rpx;
+}
+.lg-logo {
+  width: 120rpx;
+  height: 120rpx;
+  margin: 0 auto 28rpx;
+  border-radius: 32rpx;
+  background: linear-gradient(135deg, var(--brand), #1E1B4B);
+  color: #fff;
+  font-size: 52rpx;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 16rpx 36rpx rgba(79, 70, 229, 0.28);
+}
+.lg-title {
+  font-size: 38rpx;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.lg-sub {
+  margin-top: 14rpx;
+  padding: 0 24rpx;
+  font-size: 24rpx;
+  line-height: 1.7;
+  color: var(--muted);
+}
+
+/* ========== 主卡片 ========== */
+.lg-card {
+  background: #fff;
+  border-radius: 28rpx;
+  padding: 36rpx 32rpx 32rpx;
+  box-shadow: 0 12rpx 40rpx rgba(16, 24, 40, 0.06);
+}
+
+/* 卡片标题 */
+.lg-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-bottom: 26rpx;
+}
+.lg-head-t {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+.lg-head-s {
+  font-size: 22rpx;
+  color: var(--muted);
+}
+
+/* 登录中 */
+.lg-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20rpx;
+  padding: 28rpx 0 36rpx;
+}
+.lg-spinner {
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 50%;
+  border: 6rpx solid var(--brand-soft);
+  border-top-color: var(--brand);
+  animation: lg-spin 0.8s linear infinite;
+}
+@keyframes lg-spin {
+  to { transform: rotate(360deg); }
+}
+.lg-state-t {
+  font-size: 26rpx;
+  color: var(--muted);
+}
+
+/* ========== 头像 + 昵称 ========== */
+.lg-profile {
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+  margin-bottom: 24rpx;
+}
+.lg-avatar {
+  flex: none;
+  width: 112rpx;
+  min-width: 112rpx;
+  max-width: 112rpx;
+  height: 112rpx;
+  min-height: 112rpx;
+  max-height: 112rpx;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--brand-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  box-sizing: border-box;
+}
+.lg-avatar::after {
+  border: none;
+}
+.lg-avatar-img {
+  display: block;
+  width: 112rpx;
+  height: 112rpx;
+}
+.lg-avatar-ph {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--brand);
+}
+.lg-avatar-plus {
+  font-size: 34rpx;
+  line-height: 1;
+  font-weight: 300;
+}
+.lg-avatar-t {
+  margin-top: 6rpx;
+  font-size: 20rpx;
+  line-height: 1;
+}
+
+.lg-field {
+  flex: 1;
+  min-width: 0;
+}
+.lg-label {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  margin-bottom: 10rpx;
+  font-size: 23rpx;
+  color: var(--muted);
+}
+.lg-optional {
+  padding: 2rpx 10rpx;
+  border-radius: 999rpx;
+  background: var(--line-2);
+  font-size: 18rpx;
+  color: var(--muted);
+}
+.lg-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 82rpx;
+  padding: 0 22rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 16rpx;
+  background: #fbfcfe;
+  font-size: 28rpx;
+  color: var(--ink);
+}
+
+/* ========== 手机号 ========== */
+.lg-phone {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding: 22rpx 24rpx;
+  margin-bottom: 28rpx;
+  background: var(--paper);
+  border-radius: 18rpx;
+}
+.lg-phone-ic {
+  flex: none;
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 26rpx;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lg-phone-main {
+  flex: 1;
+  min-width: 0;
+}
+.lg-phone-t {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.lg-phone-s {
+  margin-top: 6rpx;
+  font-size: 21rpx;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.lg-phone-tag {
+  flex: none;
+  padding: 6rpx 16rpx;
+  border-radius: 999rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+  font-size: 20rpx;
+  color: var(--muted);
+}
+
+/* ========== 主按钮 ========== */
+.lg-btn {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 96rpx;
+  padding: 0 24rpx;
+  margin-top: 8rpx;
+  font-size: 30rpx;
+  font-weight: 600;
+  line-height: 1.3;
+  border-radius: 20rpx;
+  white-space: nowrap;
+}
+
+/* ========== 失败提示与手填 ========== */
+.lg-fail {
+  margin-top: 20rpx;
+  padding: 20rpx;
+  border-radius: 16rpx;
+  background: #fff8eb;
+  border: 1rpx solid #f8dfae;
+}
+.lg-fail-t {
+  font-size: 23rpx;
+  line-height: 1.7;
+  color: #8a5a00;
+}
+.lg-manual {
+  margin-top: 16rpx;
+}
+.lg-manual-i {
+  width: 100%;
+  box-sizing: border-box;
+  height: 84rpx;
+  padding: 0 22rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 16rpx;
+  background: #fff;
+  font-size: 28rpx;
+  color: var(--ink);
+  margin-bottom: 16rpx;
+}
+.lg-manual-link {
+  margin-top: 14rpx;
+  font-size: 25rpx;
+  font-weight: 600;
+  color: var(--brand);
+}
+
+.lg-error {
+  margin-bottom: 20rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 14rpx;
+  background: #fef2f2;
+  color: #d92d20;
+  font-size: 24rpx;
+  line-height: 1.6;
+}
+
+/* ========== 次要与协议 ========== */
+.lg-skip {
+  margin-top: 24rpx;
+  padding: 12rpx 0;
+  text-align: center;
+  font-size: 26rpx;
+  color: var(--muted);
+}
+.lg-skip:active {
+  opacity: 0.6;
+}
+.lg-agree {
+  margin-top: 8rpx;
+  text-align: center;
+  font-size: 21rpx;
+  line-height: 1.7;
+  color: var(--muted);
+}
+.lg-link {
+  color: var(--brand);
+}
+
+/* ========== 底部说明 ========== */
+.lg-foot {
+  margin-top: 28rpx;
+  text-align: center;
+  font-size: 21rpx;
+  line-height: 1.7;
+  color: var(--muted);
+}

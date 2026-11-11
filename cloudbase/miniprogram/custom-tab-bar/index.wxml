@@ -1,0 +1,31 @@
+<view class="tabbar" wx:if="{{!hidden}}">
+  <view class="tb-item {{selected === 0 ? 'on' : ''}}" data-index="0" bindtap="switchTab">
+    <view class="tb-ico-wrap">
+      <image class="ico" src="{{selected === 0 ? '/assets/icons/tab-home-on.png' : '/assets/icons/tab-home.png'}}" mode="aspectFit" />
+      <text wx:if="{{bizBadge > 0}}" class="tb-badge">{{bizBadge > 99 ? '99+' : bizBadge}}</text>
+    </view>
+    <text class="lb">首页</text>
+  </view>
+
+  <view class="tb-item {{selected === 1 ? 'on' : ''}}" data-index="1" bindtap="switchTab">
+    <image class="ico" src="{{selected === 1 ? '/assets/icons/tab-news-on.png' : '/assets/icons/tab-news.png'}}" mode="aspectFit" />
+    <text class="lb">资讯</text>
+  </view>
+
+  <view class="fab" bindtap="goPublish">
+    <image class="fab-ico" src="/assets/icons/fab-plus.png" mode="aspectFit" />
+  </view>
+
+  <view class="tb-item {{selected === 3 ? 'on' : ''}}" data-index="3" bindtap="switchTab">
+    <view class="tb-ico-wrap">
+      <image class="ico" src="{{selected === 3 ? '/assets/icons/tab-msg-on.png' : '/assets/icons/tab-msg.png'}}" mode="aspectFit" />
+      <text wx:if="{{unread > 0}}" class="tb-badge">{{unread > 99 ? '99+' : unread}}</text>
+    </view>
+    <text class="lb">消息</text>
+  </view>
+
+  <view class="tb-item {{selected === 4 ? 'on' : ''}}" data-index="4" bindtap="switchTab">
+    <image class="ico" src="{{selected === 4 ? '/assets/icons/tab-mine-on.png' : '/assets/icons/tab-mine.png'}}" mode="aspectFit" />
+    <text class="lb">我的</text>
+  </view>
+</view>

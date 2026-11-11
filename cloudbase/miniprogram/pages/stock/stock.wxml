@@ -1,0 +1,191 @@
+<view class="page stock">
+  <!-- 概览：型号 / 数量 / 命中商机 -->
+  <view class="st-hero">
+    <view class="st-hd">
+      <view class="st-hd-l">
+        <view class="st-tt">我的库存</view>
+        <view class="st-ds">私有清单，只用于匹配商机，不对外公开</view>
+      </view>
+      <view class="st-city">{{city}}</view>
+    </view>
+    <view class="st-kpis">
+      <view class="st-k">
+        <text class="n">{{stats.sku}}</text>
+        <text class="l">在售型号</text>
+      </view>
+      <view class="st-k">
+        <text class="n">{{stats.qty}}</text>
+        <text class="l">可售数量</text>
+      </view>
+      <view class="st-k link" bindtap="goBiz">
+        <text class="n">{{matched}}</text>
+        <text class="l">命中商机 ›</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 搜索 + 导出 -->
+  <view class="st-tools">
+    <view class="st-search">
+      <image class="st-search-ico" src="/assets/icons/ic-search.png" mode="aspectFit" />
+      <input class="st-search-in" value="{{keyword}}" bindinput="onSearch" confirm-type="search"
+             placeholder="搜索型号 / 品牌 / 城市，可不带空格" />
+      <text wx:if="{{keyword}}" class="st-search-x" bindtap="clearSearch">✕</text>
+    </view>
+    <view class="st-export" bindtap="openExport">导出</view>
+  </view>
+
+  <!-- 状态筛选 + 添加 -->
+  <view class="st-bar">
+    <view class="st-tabs">
+      <view wx:for="{{filters}}" wx:key="key"
+            class="st-tab {{filter === item.key ? 'on' : ''}}"
+            data-key="{{item.key}}" bindtap="switchFilter">
+        {{item.label}}<text class="st-tab-n">{{item.count}}</text>
+      </view>
+    </view>
+    <view class="st-add" bindtap="openAdd">＋ 添加</view>
+  </view>
+
+  <!-- 库存列表 -->
+  <view class="st-list">
+    <view wx:for="{{items}}" wx:key="id" class="st-card {{item.off ? 'off' : ''}}">
+      <view class="st-card-hd">
+        <view class="st-name">
+          <text class="st-model">{{item.model}}</text>
+          <text class="st-meta-line">{{item.meta}}</text>
+        </view>
+        <text class="st-tag {{item.off ? 'off' : 'on'}}">{{item.status}}</text>
+      </view>
+
+      <view class="st-figures">
+        <view class="st-price">{{item.priceText}}<text class="st-u"> / {{item.unitText}}</text></view>
+        <view class="st-qty">库存 <text class="st-qty-n">{{item.qty}}</text> {{item.unitText}}</view>
+      </view>
+
+      <view class="st-meta">
+        <text class="st-meta-i">{{item.city}}</text>
+        <text wx:if="{{item.hits}}" class="st-meta-i link" bindtap="goBiz">命中 {{item.hits}} 条商机 ›</text>
+        <text wx:else class="st-meta-i muted">暂无匹配商机</text>
+        <text class="st-meta-i right">{{item.atText}}</text>
+      </view>
+
+      <view wx:if="{{item.note}}" class="st-desc">{{item.note}}</view>
+
+      <view class="st-acts">
+        <text class="st-act" data-id="{{item.id}}" bindtap="openEdit">编辑</text>
+        <text class="st-act" data-id="{{item.id}}" bindtap="toggleItem">{{item.off ? '上架' : '下架'}}</text>
+        <text class="st-act danger" data-id="{{item.id}}" bindtap="removeItem">删除</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 空态：区分「没有库存」与「筛选无结果」 -->
+  <view wx:if="{{listEmpty}}" class="st-empty">
+    <block wx:if="{{rowCount}}">
+      <image class="se-ico" src="/assets/icons/ic-search.png" mode="aspectFit" />
+      <view class="se-tt">没有符合条件的库存</view>
+      <view class="se-ds">换个关键词或切换状态筛选看看</view>
+      <view class="se-btn" bindtap="backToAll">查看全部</view>
+    </block>
+    <block wx:else>
+      <image class="se-ico" src="/assets/icons/empty-package.png" mode="aspectFit" />
+      <view class="se-tt">还没有库存</view>
+      <view class="se-ds">填上型号与数量，匹配到的代采 / 代售委托会自动进入商机</view>
+      <view class="se-btn primary" bindtap="openAdd">添加第一条库存</view>
+    </block>
+  </view>
+
+  <view wx:if="{{!listEmpty}}" class="st-foot">
+    <button class="btn block" bindtap="goPublish">去发布新货源</button>
+  </view>
+
+  <!-- 添加 / 编辑库存 -->
+  <view wx:if="{{sheetOpen}}" class="sheet-mask" bindtap="closeSheet">
+    <view class="sheet sheet-form" catchtap="noop">
+      <view class="sheet-hd">
+        <text class="sheet-tt">{{editingId ? '编辑库存' : '添加库存'}}</text>
+        <text class="sheet-x" bindtap="closeSheet">✕</text>
+      </view>
+
+      <scroll-view class="sheet-body" scroll-y enhanced="{{true}}" show-scrollbar="{{false}}">
+        <view class="sec-tt">设备信息</view>
+        <view class="f-label">品牌与型号<text class="f-req">*</text></view>
+        <view class="f-dev">
+          <image class="f-dev-ico" src="/assets/icons/ic-search.png" mode="aspectFit" />
+          <input class="f-dev-in" value="{{devKw}}" bindinput="onDeviceInput" bindfocus="focusDeviceSearch"
+                 confirm-type="search" placeholder="输入型号 / 品牌，如 H100、A100" />
+          <text wx:if="{{devKw}}" class="f-dev-x" bindtap="clearDevice">✕</text>
+        </view>
+        <view wx:if="{{devSearchOpen}}" class="f-dev-results">
+          <view wx:for="{{devResults}}" wx:key="k" class="f-dev-item"
+                data-i="{{index}}" bindtap="pickDevice">
+            <text class="f-dev-name">{{item.model}}</text>
+            <text class="f-dev-path">{{item.path}}</text>
+          </view>
+          <view wx:if="{{!devResults.length}}" class="f-dev-empty">没有匹配的设备，换个关键词试试</view>
+        </view>
+        <view wx:if="{{devPath}}" class="f-dev-path now">{{devPath}}</view>
+        <view class="f-tip">输入型号 / 品牌即可搜索（支持乱序多词、连写不带空格），点搜索结果直接选中；发布需求时才能与库存精确匹配。</view>
+
+        <view class="f-label">新旧成色</view>
+        <picker range="{{conds}}" value="{{condIndex}}" bindchange="pickCondIndex">
+          <view class="f-input f-picker">{{form.cond || '请选择'}}<text class="f-arrow">›</text></view>
+        </picker>
+
+        <view class="sec-tt">数量与价格</view>
+        <view class="f-row">
+          <view class="f-col">
+            <view class="f-label">库存数量<text class="f-req">*</text></view>
+            <input class="f-input" type="number" value="{{form.qty}}" data-key="qty" bindinput="onFormInput" placeholder="如 6" />
+          </view>
+          <view class="f-col">
+            <view class="f-label">单价（{{formUnit}}）<text class="f-req">*</text></view>
+            <input class="f-input" type="digit" value="{{form.price}}" data-key="price" bindinput="onFormInput" placeholder="如 228000" />
+          </view>
+        </view>
+
+        <view class="f-label">所在城市<text class="f-req">*</text></view>
+        <view class="f-city">
+          <input class="f-input" value="{{form.city}}" data-key="city" bindinput="onFormInput" placeholder="如 深圳" />
+          <text class="f-city-use" catchtap="useLocalCity">定位 {{city}}</text>
+        </view>
+
+        <view class="sec-tt">备注</view>
+        <view class="f-label">库存描述<text class="f-opt">选填</text></view>
+        <textarea class="f-textarea" value="{{form.note}}" data-key="note" bindinput="onFormInput"
+                  maxlength="200" placeholder="新旧程度、外观 / 功能损坏、是否拆封、能否提供检测报告等" />
+        <view class="f-tip">城市默认读取本机定位、可手动修改；描述只对你自己和平台客服可见。</view>
+      </scroll-view>
+
+      <view class="sheet-foot">
+        <button class="btn primary block" bindtap="submitForm">{{editingId ? '保存修改' : '保存到库存'}}</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- 导出表格 -->
+  <view wx:if="{{exportOpen}}" class="sheet-mask" bindtap="closeExport">
+    <view class="sheet" catchtap="noop">
+      <view class="sheet-hd">
+        <text class="sheet-tt">导出库存表格</text>
+        <text class="sheet-x" bindtap="closeExport">✕</text>
+      </view>
+      <view class="ex-tip">共 {{rowCount}} 条库存，含设备类型、品牌、型号、数量、单位、单价、城市、成色、描述、状态。</view>
+      <view class="ex-row">
+        <view class="ex-main">
+          <view class="ex-k">复制表格</view>
+          <view class="ex-v">复制为制表符文本，粘贴进 Excel / 飞书表格即成表</view>
+        </view>
+        <button class="btn sm primary" bindtap="copyTable">复制</button>
+      </view>
+      <view class="ex-row">
+        <view class="ex-main">
+          <view class="ex-k">保存 CSV</view>
+          <view class="ex-v">生成 UTF-8 CSV，Excel 可直接打开，可转发到微信 / 电脑</view>
+        </view>
+        <button class="btn sm" bindtap="saveCsv">保存</button>
+      </view>
+    </view>
+  </view>
+</view>

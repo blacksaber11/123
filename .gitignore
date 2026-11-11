@@ -1,0 +1,26 @@
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# 依赖
+node_modules/
+cloudbase/**/node_modules/
+
+# 本地环境变量与密钥（不入库）
+.env
+.env.*
+*.pem
+*.key
+
+# 本地运行态数据（mock repo 落盘状态，可重新生成）
+cloudbase/.dev-data/
+
+# 调试与临时产物
+*.log
+logs/
+.screenshots/
+.trae-html-share-packages/
+.trae/
+miniprogram_npm/

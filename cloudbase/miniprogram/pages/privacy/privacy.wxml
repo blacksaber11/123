@@ -1,0 +1,18 @@
+<view class="doc">
+  <view class="doc-hd">
+    <text class="doc-t">{{title}}</text>
+    <text class="doc-v">生效日期：{{version}}</text>
+  </view>
+
+  <view class="doc-hero">
+    <text class="dh-t">平台保密与追责要点</text>
+    <text class="dh-d">材料全程加密、查看全程水印、水印指向具体账号；因个人泄漏造成损失的，由泄漏者承担全部责任。</text>
+  </view>
+
+  <view wx:for="{{blocks}}" wx:key="h" class="doc-sec">
+    <text class="ds-h">{{item.h}}</text>
+    <text wx:for="{{item.ps}}" wx:for-item="p" wx:key="*this" class="ds-p">{{p}}</text>
+  </view>
+
+  <view class="doc-ft">如对以上内容有异议，请停止使用本平台并联系在线客服。</view>
+</view>

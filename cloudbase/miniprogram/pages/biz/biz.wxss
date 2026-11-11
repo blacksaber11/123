@@ -1,0 +1,827 @@
+/* 商机：概览 + 开通门禁 + 商机卡片 + 开通弹层 */
+.biz {
+  background: var(--paper);
+}
+
+/* 概览 */
+.bz-hero {
+  margin: 24rpx 24rpx 0;
+  padding: 28rpx;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, #4F46E5, #6366F1 55%, #818CF8);
+  color: #fff;
+}
+.bz-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.bz-tt {
+  font-size: 36rpx;
+  font-weight: 700;
+}
+.bz-badge {
+  font-size: 21rpx;
+  line-height: 44rpx;
+  padding: 0 16rpx;
+  border-radius: 22rpx;
+  background: rgba(255, 255, 255, .18);
+  color: #fff;
+}
+.bz-ds {
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, .8);
+}
+.bz-stats {
+  display: flex;
+  margin-top: 26rpx;
+  padding-top: 22rpx;
+  border-top: 1rpx solid rgba(255, 255, 255, .18);
+}
+.bz-s {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+.bz-s .n {
+  font-size: 38rpx;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.bz-s .l {
+  font-size: 22rpx;
+  color: rgba(255, 255, 255, .78);
+}
+.bz-s.link .l {
+  color: #D9F7E7;
+  font-weight: 600;
+}
+
+/* 囤货榜单 */
+.bz-board {
+  margin: 20rpx 24rpx 0;
+  background: #fff;
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.bb-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22rpx 24rpx;
+}
+.bb-l {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+  min-width: 0;
+}
+.bb-tt {
+  font-size: 27rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+.bb-ds {
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.bb-x {
+  flex-shrink: 0;
+  font-size: 22rpx;
+  color: var(--brand);
+}
+
+/* 未开通：原理卡 */
+.bz-gate {
+  margin: 22rpx 24rpx 0;
+  padding: 28rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.gate-tt {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+.gate-hd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12rpx;
+}
+.gate-ribbon {
+  font-size: 20rpx;
+  line-height: 1.5;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border: 1rpx solid var(--brand-line);
+  border-radius: 999rpx;
+  padding: 4rpx 14rpx;
+}
+.gate-ds {
+  margin-top: 10rpx;
+  font-size: 23rpx;
+  line-height: 1.7;
+  color: var(--muted);
+}
+/* 未开通：会员权益清单 */
+.gate-benefits {
+  margin-top: 18rpx;
+}
+.gb {
+  display: flex;
+  gap: 14rpx;
+  padding: 18rpx 0;
+  border-top: 1rpx solid var(--line-2);
+}
+.gb:first-child {
+  border-top: 0;
+  padding-top: 6rpx;
+}
+.gb-no {
+  flex-shrink: 0;
+  width: 38rpx;
+  height: 38rpx;
+  border-radius: 12rpx;
+  background: var(--brand);
+  color: #fff;
+  font-size: 21rpx;
+  font-weight: 700;
+  text-align: center;
+  line-height: 38rpx;
+}
+.gb-c {
+  flex: 1;
+}
+.gb-t {
+  font-size: 25rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.gb-d {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  line-height: 1.65;
+  color: var(--muted);
+}
+.gate-sub {
+  margin-top: 26rpx;
+  font-size: 23rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.gate-list {
+  margin-top: 4rpx;
+}
+.gl {
+  display: flex;
+  gap: 16rpx;
+  padding: 16rpx 0;
+  border-top: 1rpx solid var(--line-2);
+}
+.gi {
+  flex-shrink: 0;
+  width: 40rpx;
+  height: 40rpx;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 22rpx;
+  font-weight: 700;
+  text-align: center;
+  line-height: 40rpx;
+}
+.gc {
+  flex: 1;
+}
+.gt {
+  font-size: 25rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.gd {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  line-height: 1.6;
+  color: var(--muted);
+}
+/* 引导页直接展示四档套餐：与弹层同一套卡片样式，选中后可立即开通 */
+.gate-plans {
+  margin-top: 12rpx;
+}
+/* 匹配概览：三格数字，替代原来的黄色提示条 */
+.gate-kpi {
+  display: flex;
+  margin-top: 20rpx;
+  padding: 18rpx 0;
+  border-top: 1rpx solid var(--line-2);
+  border-bottom: 1rpx solid var(--line-2);
+}
+.gk {
+  flex: 1;
+  text-align: center;
+}
+.gk + .gk {
+  border-left: 1rpx solid var(--line-2);
+}
+.gk-n {
+  display: block;
+  font-size: 34rpx;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--brand);
+}
+.gk-l {
+  display: block;
+  margin-top: 4rpx;
+  font-size: 20rpx;
+  color: var(--muted);
+}
+/* 区块小标题：权益 / 套餐 */
+.gate-sec {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 26rpx;
+}
+.gs-t {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+.gs-d {
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.gate-btn {
+  margin-top: 24rpx;
+}
+.gate-foot {
+  margin-top: 16rpx;
+  text-align: center;
+  font-size: 21rpx;
+  color: var(--muted);
+}
+/* 商机质量说明：独立卡片，与权益卡分开 */
+.bz-quality {
+  margin: 20rpx 24rpx 0;
+  padding: 24rpx 28rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius);
+}
+.bz-quality .gate-sub {
+  margin-top: 0;
+}
+
+/* 未开通：商机预览 */
+.bz-teaser {
+  margin: 20rpx 24rpx 0;
+  padding: 24rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.teaser-hd {
+  font-size: 23rpx;
+  color: var(--muted);
+  margin-bottom: 8rpx;
+}
+.teaser-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18rpx 0;
+  border-top: 1rpx solid var(--line-2);
+}
+.tr-l {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  min-width: 0;
+}
+.tr-kind {
+  flex-shrink: 0;
+  font-size: 20rpx;
+  line-height: 36rpx;
+  padding: 0 12rpx;
+  border-radius: 8rpx;
+  background: var(--line-2);
+  color: var(--muted);
+}
+.tr-kind.buy {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.tr-kind.sell {
+  background: var(--info-soft);
+  color: var(--info);
+}
+.tr-model {
+  font-size: 25rpx;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tr-price {
+  flex-shrink: 0;
+  font-size: 24rpx;
+  color: var(--muted);
+  letter-spacing: 1rpx;
+}
+.teaser-none {
+  padding: 20rpx 0 8rpx;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+
+/* 已开通状态条 + 筛选 */
+.bz-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 20rpx 24rpx 0;
+  padding: 18rpx 22rpx;
+  border-radius: 16rpx;
+  background: var(--brand-soft);
+  border: 1rpx solid var(--brand-line);
+}
+.bs-l {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  font-size: 23rpx;
+  color: var(--brand);
+  font-weight: 600;
+}
+.bs-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background: var(--brand);
+}
+.bs-r {
+  font-size: 22rpx;
+  color: var(--brand);
+  border-bottom: 1rpx solid var(--brand-line);
+  padding-bottom: 2rpx;
+}
+.bz-tabs {
+  display: flex;
+  gap: 12rpx;
+  padding: 22rpx 24rpx 8rpx;
+}
+.bz-tab {
+  font-size: 23rpx;
+  line-height: 52rpx;
+  padding: 0 22rpx;
+  border-radius: 12rpx;
+  border: 1rpx solid var(--line);
+  background: #fff;
+  color: var(--ink-2);
+}
+.bz-tab.on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 600;
+}
+/* 可领取 / 已领取：与品类筛选同款样式，两行之间收紧间距 */
+.bz-tabs.state-tabs {
+  padding-bottom: 0;
+}
+.bz-tabs.state-tabs .bz-tab {
+  font-weight: 600;
+}
+.bz-tabs.state-tabs .bz-tab text {
+  margin-left: 8rpx;
+  font-size: 21rpx;
+  opacity: .72;
+}
+.bz-tabs.cat-tabs {
+  padding-top: 12rpx;
+}
+
+/* 商机卡片 */
+.opp-list {
+  padding: 8rpx 24rpx 0;
+}
+.opp-card {
+  background: #fff;
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius);
+  padding: 24rpx;
+  margin-bottom: 18rpx;
+  box-shadow: var(--shadow);
+}
+.op-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+}
+.op-top-l {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  min-width: 0;
+}
+/* 平台单标识：品牌色浅底，与普通需求区分 */
+.op-mode {
+  flex: none;
+  font-size: 20rpx;
+  line-height: 34rpx;
+  padding: 0 12rpx;
+  border-radius: 8rpx;
+  border: 1rpx solid var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 600;
+}
+.op-kind {
+  font-size: 21rpx;
+  line-height: 40rpx;
+  padding: 0 14rpx;
+  border-radius: 10rpx;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 600;
+}
+.op-kind.sell {
+  background: var(--info-soft);
+  color: var(--info);
+}
+.op-kind.demand {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.op-fee {
+  font-size: 21rpx;
+  color: var(--muted);
+}
+.op-top-r {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  flex: none;
+}
+/* 每条商机独立的分享入口：分享该条的型号 / 数量 / 城市 / 主体 */
+.op-share {
+  flex: none;
+  margin: 0;
+  padding: 0 16rpx;
+  height: 44rpx;
+  line-height: 44rpx;
+  font-size: 20rpx;
+  color: var(--muted);
+  background: var(--line-2);
+  border-radius: 999rpx;
+}
+.op-share::after {
+  border: none;
+}
+.op-model {
+  margin-top: 14rpx;
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.4;
+}
+.op-price {
+  display: flex;
+  align-items: baseline;
+  gap: 8rpx;
+  margin-top: 10rpx;
+}
+.op-p {
+  font-size: 34rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+.op-unit {
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.op-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  margin-top: 14rpx;
+}
+.op-stock {
+  margin-top: 14rpx;
+  padding: 14rpx 16rpx;
+  border-radius: 12rpx;
+  background: var(--brand-soft);
+  font-size: 22rpx;
+  color: var(--brand);
+  line-height: 1.6;
+}
+.op-meta {
+  margin-top: 14rpx;
+  font-size: 21rpx;
+  color: var(--muted);
+}
+.op-more {
+  margin-left: 12rpx;
+  color: var(--brand);
+}
+.op-claim {
+  margin-top: 8rpx;
+  font-size: 21rpx;
+  color: var(--brand);
+}
+.op-claim.full {
+  color: var(--warn);
+}
+/* 平台单说明条：与操作按钮分层，避免挤在一起 */
+.op-platform {
+  margin-top: 14rpx;
+  padding: 14rpx 16rpx;
+  border-radius: 12rpx;
+  border: 1rpx solid var(--brand-line);
+  background: var(--brand-soft);
+  font-size: 24rpx;
+  line-height: 1.6;
+  color: var(--brand);
+}
+/* 领取 / 联系平台统一尺寸：48rpx 高、圆角 */
+.btn.sm.op-btn {
+  flex: none;
+  height: 48rpx;
+  padding: 0 22rpx;
+  border-radius: 12rpx;
+  font-size: 22rpx;
+}
+.op-contact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 18rpx;
+  padding-top: 18rpx;
+  border-top: 1rpx dashed var(--line);
+}
+.oc-l {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+.oc-name {
+  font-size: 25rpx;
+  color: var(--ink);
+  font-weight: 600;
+}
+.oc-phone {
+  font-size: 24rpx;
+  color: var(--brand);
+  letter-spacing: 1rpx;
+}
+.oc-phone.empty {
+  color: var(--muted);
+  font-size: 22rpx;
+  letter-spacing: 0;
+}
+.op-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-top: 18rpx;
+  padding-top: 18rpx;
+  border-top: 1rpx dashed var(--line);
+}
+.op-tip {
+  flex: 1;
+  font-size: 21rpx;
+  color: var(--muted);
+  line-height: 1.5;
+}
+/* 已标记不满足：提示用弱警示色，与可领取状态区分 */
+.op-foot.unsatisfied .op-tip {
+  color: var(--warn);
+}
+/* 平台单：说明在上、按钮整行在下，不互相挤压 */
+.op-foot.platform {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12rpx;
+}
+.op-foot.platform .op-tip {
+  flex: none;
+  font-size: 22rpx;
+  line-height: 1.6;
+}
+.op-foot.platform .op-btn {
+  width: 100%;
+}
+
+/* 开通弹层 */
+.m-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(24, 24, 27, .45);
+}
+.m-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 91;
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: 28rpx 28rpx calc(28rpx + env(safe-area-inset-bottom));
+  border-radius: 28rpx 28rpx 0 0;
+  background: #fff;
+}
+.ms-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 30rpx;
+  font-weight: 700;
+}
+.ms-x {
+  font-size: 26rpx;
+  color: var(--muted);
+  padding: 4rpx 8rpx;
+}
+.ms-price {
+  display: flex;
+  align-items: baseline;
+  gap: 14rpx;
+  margin-top: 16rpx;
+}
+.ms-p {
+  font-size: 40rpx;
+  font-weight: 700;
+  color: var(--brand);
+}
+.ms-d {
+  font-size: 21rpx;
+  color: var(--muted);
+}
+/* 四档套餐卡片：2 列排布，选中态描边高亮 */
+.ms-plans {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+  margin-top: 20rpx;
+}
+.ms-plan {
+  width: calc(50% - 8rpx);
+  box-sizing: border-box;
+  padding: 18rpx 20rpx;
+  border: 2rpx solid var(--line-2);
+  border-radius: 16rpx;
+  background: #fff;
+}
+.ms-plan.on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+.pl-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.pl-label {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+.pl-save {
+  padding: 2rpx 10rpx;
+  border-radius: 8rpx;
+  background: #fff1e8;
+  color: #d46b08;
+  font-size: 19rpx;
+}
+.pl-price {
+  margin-top: 8rpx;
+  font-size: 34rpx;
+  font-weight: 700;
+  color: var(--brand);
+}
+.pl-y {
+  font-size: 22rpx;
+  margin-right: 2rpx;
+}
+.pl-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4rpx;
+}
+.pl-days {
+  font-size: 21rpx;
+  color: var(--muted);
+}
+.pl-origin {
+  font-size: 19rpx;
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.ms-plans-tip {
+  margin-top: 10rpx;
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.ms-note {
+  margin-top: 16rpx;
+  padding: 16rpx 18rpx;
+  border-radius: 12rpx;
+  background: var(--warn-soft);
+  border: 1rpx solid var(--warn-line);
+  font-size: 21rpx;
+  line-height: 1.6;
+  color: var(--warn);
+}
+.ms-demo {
+  margin-top: 20rpx;
+  text-align: center;
+  font-size: 21rpx;
+  color: var(--muted);
+  text-decoration: underline;
+}
+
+/* 开通申请回执：申请已提交 / 已开通续费提示 */
+.ms-applied {
+  margin-top: 16rpx;
+  padding: 16rpx 18rpx;
+  border-radius: 12rpx;
+  background: var(--brand-soft, #eef4ff);
+  border: 1rpx solid var(--brand-line, #d6e2ff);
+  font-size: 21rpx;
+  line-height: 1.6;
+  color: var(--brand, #2f6bff);
+}
+
+/* 分享落地提示条：来自分享的商机 → 一键回到完整列表 */
+.bz-focus {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 16rpx 24rpx 0;
+  padding: 14rpx 18rpx;
+  border-radius: 12rpx;
+  background: var(--brand-soft, #eef4ff);
+  border: 1rpx solid var(--brand-line, #d6e2ff);
+}
+.bz-focus .bf-t {
+  font-size: 22rpx;
+  color: var(--brand, #2f6bff);
+}
+.bz-focus .bf-b {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: var(--brand, #2f6bff);
+}
+/* 接口失败提示：与分享定位条同样式，点击整条重试 */
+.bz-fail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 16rpx 24rpx 0;
+  padding: 14rpx 18rpx;
+  border-radius: 12rpx;
+  background: #fff5f5;
+  border: 1rpx solid #ffd9d9;
+}
+.bz-renew {
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+  margin: 16rpx 24rpx 0;
+  padding: 18rpx;
+  border-radius: 12rpx;
+  background: #fffbe6;
+  border: 1rpx solid #ffe58f;
+}
+.bz-renew .br-t {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #874d00;
+}
+.bz-renew .br-b {
+  font-size: 22rpx;
+  color: #ad6800;
+}
+.bz-fail .bf-t {
+  font-size: 22rpx;
+  color: #d4380d;
+}
+.bz-fail .bf-b {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #d4380d;
+}

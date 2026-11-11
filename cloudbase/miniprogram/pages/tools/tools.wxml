@@ -1,0 +1,26 @@
+<view class="tools">
+  <view class="hero">
+    <view class="hero-tt">算力工具</view>
+    <view class="hero-ds">选完参数直接出结果，不用注册、不用等报价</view>
+  </view>
+
+  <view class="t-list">
+    <view wx:for="{{tools}}" wx:key="key"
+          class="t-card" data-url="{{item.url}}" bindtap="openTool">
+      <view class="t-badge tone-{{item.tone}}">{{item.badge}}</view>
+      <view class="t-body">
+        <view class="t-hd">
+          <text class="t-name">{{item.name}}</text>
+          <text class="t-tag">{{item.tag}}</text>
+        </view>
+        <view class="t-desc">{{item.desc}}</view>
+        <view class="t-foot">
+          <text class="t-go">开始测算 ›</text>
+          <button class="t-share" open-type="share" data-tool="{{item.key}}" catchtap="noop">分享</button>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="t-note">结果按公开规格估算，用于选型与预算参考；成交前建议以实测与厂商资料为准。</view>
+</view>

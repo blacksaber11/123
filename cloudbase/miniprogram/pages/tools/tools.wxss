@@ -1,0 +1,135 @@
+@import "../../assets/tool.wxss";
+
+.tools {
+  min-height: 100vh;
+  padding: 28rpx 28rpx 56rpx;
+}
+
+/* 首页头部：比测算页再松一点，标题与说明拉开层次 */
+.tools .hero {
+  padding: 36rpx 32rpx;
+}
+.tools .hero-ds {
+  margin-top: 12rpx;
+  line-height: 38rpx;
+}
+
+.t-list {
+  margin-top: 28rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 22rpx;
+}
+
+/* 卡片改为「图标 + 内容」两列，内容内部再分标题 / 说明 / 操作三行 */
+.t-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 24rpx;
+  padding: 30rpx 28rpx;
+  border-radius: 24rpx;
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.t-badge {
+  flex: none;
+  width: 92rpx;
+  height: 92rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 24rpx;
+  font-size: 24rpx;
+  font-weight: 700;
+  letter-spacing: 1rpx;
+  color: #fff;
+}
+.tone-c1 { background: linear-gradient(135deg, #6366F1, #4F46E5); }
+.tone-c2 { background: linear-gradient(135deg, #0EA5E9, #0284C7); }
+.tone-c3 { background: linear-gradient(135deg, #F59E0B, #D97706); }
+.tone-c4 { background: linear-gradient(135deg, #10B981, #059669); }
+
+.t-body {
+  flex: 1;
+  min-width: 0;
+}
+.t-hd {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+.t-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 30rpx;
+  line-height: 42rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+.t-tag {
+  flex: none;
+  padding: 0 12rpx;
+  line-height: 34rpx;
+  border-radius: 8rpx;
+  background: var(--line-2);
+  font-size: 19rpx;
+  color: var(--muted);
+}
+/* 固定两行高度：说明长短不一时卡片仍然等高、底部操作行对齐 */
+.t-desc {
+  margin-top: 8rpx;
+  min-height: 76rpx;
+  font-size: 24rpx;
+  line-height: 38rpx;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+/* 操作行单独占一行：左侧进入提示，右侧小胶囊分享，避免挤在标题旁 */
+.t-foot {
+  margin-top: 16rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+.t-go {
+  font-size: 22rpx;
+  color: var(--brand);
+  font-weight: 500;
+}
+
+/* 分享按钮固定小尺寸：宽高、字号、行高全部锁死，不受原生 button 默认值影响 */
+.t-share {
+  flex: none;
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0 20rpx;
+  height: 44rpx;
+  line-height: 44rpx;
+  font-size: 20rpx;
+  font-weight: 400;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: 999rpx;
+  box-sizing: border-box;
+}
+.t-share::after {
+  border: none;
+}
+
+.t-note {
+  margin-top: 32rpx;
+  padding: 0 4rpx;
+  font-size: 21rpx;
+  line-height: 34rpx;
+  color: var(--muted);
+}

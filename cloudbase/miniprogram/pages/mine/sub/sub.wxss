@@ -1,0 +1,6 @@
+@import "../mine.wxss";
+
+/* 二级页没有底部导航，不需要给 tabBar 预留 150rpx */
+.mine-page.is-view {
+  padding-bottom: calc(40rpx + env(safe-area-inset-bottom));
+}

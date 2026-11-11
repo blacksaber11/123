@@ -1,0 +1,1039 @@
+.mine-page {
+  min-height: 100vh;
+  background: var(--paper);
+  /* 自定义 tabBar 不再由框架预留底部空间，页面自己留白 */
+  padding: 20rpx 24rpx calc(150rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+
+/* ========== 用户信息卡 ========== */
+.me-card {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius);
+  padding: 28rpx;
+  margin-bottom: 20rpx;
+  box-shadow: var(--shadow);
+}
+.me-card .av {
+  width: 84rpx;
+  height: 84rpx;
+  border-radius: 24rpx;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 32rpx;
+  font-weight: 700;
+}
+/* 微信授权后自动带入的头像图片，尺寸与文字兜底一致 */
+.me-card .me-av-img {
+  width: 84rpx;
+  height: 84rpx;
+  border-radius: 24rpx;
+  flex: none;
+  background: var(--brand-soft);
+}
+.me-card .mi {
+  flex: 1;
+  min-width: 0;
+}
+.me-card .nm {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+}
+.me-card .mi-go {
+  display: inline-block;
+  margin-left: 10rpx;
+  color: #B4B4BB;
+  font-size: 30rpx;
+  font-weight: 400;
+}
+.me-card .sb {
+  font-size: 22rpx;
+  color: var(--muted);
+  margin-top: 6rpx;
+  line-height: 1.5;
+}
+
+/* 微信授权状态 */
+.me-card .ma-line {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  flex-wrap: wrap;
+  margin-top: 14rpx;
+}
+.me-card .ma-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  font-size: 20rpx;
+  line-height: 36rpx;
+  padding: 0 14rpx;
+  border-radius: 10rpx;
+  border: 1rpx dashed var(--line);
+  background: #fff;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.me-card .ma-pill.on {
+  border-style: solid;
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+/* ========== 顶部四宫格入口 ========== */
+/* 商机会员引导条：一行，位于四宫格（浏览记录）上方 */
+.biz-guide {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 20rpx 24rpx;
+  margin-bottom: 20rpx;
+  border-radius: var(--radius);
+  border: 1rpx solid var(--brand-line);
+  background: var(--brand-soft);
+}
+.biz-guide:active {
+  opacity: .8;
+}
+.biz-guide .bg-ico {
+  flex: none;
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 16rpx;
+  background: var(--brand);
+  color: #fff;
+  font-size: 28rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.biz-guide .bg-body {
+  flex: 1;
+  min-width: 0;
+}
+.biz-guide .bg-t {
+  font-size: 27rpx;
+  font-weight: 600;
+  color: var(--brand);
+  line-height: 36rpx;
+}
+.biz-guide .bg-d {
+  font-size: 21rpx;
+  color: var(--muted);
+  line-height: 30rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.biz-guide .bg-go {
+  flex: none;
+  font-size: 22rpx;
+  color: var(--brand);
+  font-weight: 600;
+}
+.me-quick {
+  display: flex;
+  background: #fff;
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 28rpx 8rpx 24rpx;
+  margin-bottom: 20rpx;
+}
+.me-quick .mq-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12rpx;
+}
+.me-quick .mq-item:active {
+  opacity: .65;
+}
+.me-quick .mq-ico {
+  position: relative;
+  width: 76rpx;
+  height: 76rpx;
+  border-radius: 24rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--brand-soft);
+}
+.me-quick .mq-img {
+  width: 40rpx;
+  height: 40rpx;
+}
+/* 角标：条数常驻在图标右上角，0 条不显示 */
+.me-quick .mq-c {
+  position: absolute;
+  top: -10rpx;
+  right: -16rpx;
+  min-width: 32rpx;
+  height: 32rpx;
+  padding: 0 8rpx;
+  border-radius: 16rpx;
+  border: 2rpx solid #fff;
+  background: var(--brand);
+  color: #fff;
+  font-size: 18rpx;
+  line-height: 28rpx;
+  text-align: center;
+}
+/* 未读回复：红色数字角标 */
+.me-quick .mq-c.unread {
+  background: #e5484d;
+}
+.me-quick .mq-n {
+  font-size: 24rpx;
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+/* ========== 分类菜单（竖排） ========== */
+.me-menu {
+  background: #fff;
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.me-menu .mm-row {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding: 26rpx 24rpx;
+  border-bottom: 1rpx solid var(--line-2);
+}
+.me-menu .mm-row:last-child {
+  border-bottom: none;
+}
+.me-menu .mm-row:active {
+  background: var(--paper);
+}
+.me-menu .mm-ico {
+  flex: none;
+  width: 64rpx;
+  height: 64rpx;
+  padding: 13rpx;
+  box-sizing: border-box;
+  border-radius: 18rpx;
+  background: var(--brand-soft);
+  display: block;
+}
+.me-menu .mm-txt {
+  flex: 1;
+  min-width: 0;
+}
+.me-menu .mm-n {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.4;
+}
+.me-menu .mm-d {
+  font-size: 22rpx;
+  color: var(--muted);
+  margin-top: 4rpx;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.me-menu .mm-cnt {
+  flex: none;
+  font-size: 22rpx;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.me-menu .mm-go {
+  flex: none;
+  color: #B4B4BB;
+  font-size: 30rpx;
+  line-height: 1;
+}
+
+/* 二级页全屏：进入后个人卡 / 四宫格 / 菜单整体隐藏，内容从顶部占满整屏 */
+.mine-page.is-view {
+  padding: 0 0 calc(150rpx + env(safe-area-inset-bottom));
+}
+.mine-view-hd {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  height: 88rpx;
+  padding: 0 24rpx;
+  background: #fff;
+  border-bottom: 1rpx solid var(--line-2);
+}
+.mine-view-hd .mv-back {
+  width: 56rpx;
+  height: 88rpx;
+  display: flex;
+  align-items: center;
+  font-size: 44rpx;
+  color: var(--ink);
+}
+.mine-view-hd .mv-tt {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.me-view {
+  padding: 20rpx 24rpx 0;
+}
+
+/* ========== 分段控件 ========== */
+.segs {
+  display: flex;
+  background: var(--line-2);
+  border-radius: 20rpx;
+  padding: 6rpx;
+  gap: 2rpx;
+}
+.segs .seg {
+  flex: 1;
+  border: 0;
+  background: none;
+  font-size: 24rpx;
+  color: var(--muted);
+  padding: 10rpx 8rpx;
+  border-radius: 16rpx;
+  text-align: center;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.segs .seg.on {
+  background: #fff;
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 0 2rpx 8rpx rgba(16,24,40,.1);
+}
+.segs .seg-em {
+  font-style: normal;
+  font-size: 20rpx;
+  margin-left: 6rpx;
+  color: var(--muted);
+}
+.segs .seg.on .seg-em {
+  color: var(--brand);
+}
+.mine-sub {
+  margin-bottom: 16rpx;
+}
+
+/* ========== 内容区 ========== */
+.pane {
+  margin-top: 0;
+}
+.tip-callout {
+  margin-bottom: 20rpx;
+}
+
+/* ========== 列表行 ========== */
+.mine-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18rpx;
+  margin-top: 20rpx;
+}
+.mine-row {
+  background: #fff;
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 24rpx 28rpx;
+  box-shadow: var(--shadow);
+}
+.mr-top {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  margin-bottom: 12rpx;
+}
+.mr-top .st {
+  font-size: 20rpx;
+  padding: 0 12rpx;
+  line-height: 36rpx;
+  border-radius: 8rpx;
+  border: 1rpx solid var(--line);
+  color: var(--muted);
+}
+.mr-top .st.ok {
+  background: var(--brand-soft);
+  border-color: var(--brand-line);
+  color: var(--brand);
+  font-weight: 600;
+}
+/* 草稿 / 待审核 / 已驳回 / 已下架：一眼看出与「在售」的差别 */
+.mr-top .st.st-draft {
+  background: #f2f3f5;
+  border-color: var(--line);
+  color: var(--muted);
+}
+.mr-top .st.st-pending {
+  background: #fff5e6;
+  border-color: #f0d0a0;
+  color: #a96410;
+  font-weight: 600;
+}
+.mr-top .st.st-reject {
+  background: #fdeeee;
+  border-color: #f0bdbd;
+  color: #c0392b;
+  font-weight: 600;
+}
+.mr-top .st.st-offline {
+  background: #f2f3f5;
+  border-color: var(--line);
+  color: #6b7280;
+}
+.mr-reason {
+  margin-top: 8rpx;
+  padding: 10rpx 12rpx;
+  border-radius: 10rpx;
+  background: #fdeeee;
+  color: #c0392b;
+  font-size: 22rpx;
+  line-height: 1.5;
+}
+.mr-top .mr-mono {
+  font-size: 20rpx;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.mr-top .mr-vis {
+  flex: none;
+  margin-left: 12rpx;
+  padding: 2rpx 10rpx;
+  border-radius: 8rpx;
+  background: var(--info-soft);
+  color: var(--info);
+  font-size: 20rpx;
+}
+.mr-top .mr-time {
+  margin-left: auto;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.mr-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.5;
+  margin-bottom: 10rpx;
+}
+.mr-meta {
+  font-size: 22rpx;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.mr-price {
+  font-weight: 700;
+  color: var(--ink);
+}
+/* 委托进度：竖向时间线，已完成节点实心，当前节点高亮 */
+.ag-prog {
+  margin-top: 14rpx;
+  padding: 12rpx 16rpx;
+  border-radius: 12rpx;
+  background: #f7f8fa;
+}
+.agp {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 14rpx;
+  padding-bottom: 14rpx;
+}
+.agp:last-child {
+  padding-bottom: 0;
+}
+.agp::before {
+  content: '';
+  position: absolute;
+  left: 7rpx;
+  top: 18rpx;
+  bottom: 0;
+  width: 2rpx;
+  background: var(--line);
+}
+.agp:last-child::before {
+  display: none;
+}
+.agp-dot {
+  flex: none;
+  width: 16rpx;
+  height: 16rpx;
+  margin-top: 6rpx;
+  border-radius: 50%;
+  border: 2rpx solid #c9cdd4;
+  background: #fff;
+  box-sizing: border-box;
+}
+.agp.done .agp-dot {
+  border-color: var(--brand);
+  background: var(--brand);
+}
+.agp.active .agp-dot {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+.agp-body {
+  flex: 1;
+  min-width: 0;
+}
+.agp-label {
+  font-size: 22rpx;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.agp.done .agp-label {
+  color: var(--ink);
+}
+.agp.active .agp-label {
+  color: var(--brand);
+  font-weight: 600;
+}
+.agp-at {
+  font-size: 20rpx;
+  color: var(--muted);
+  line-height: 1.5;
+}
+/* 条目操作区：固定三列等宽网格，按钮数量变化也逐行对齐 */
+.mr-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-top: 18rpx;
+}
+.mr-acts .btn {
+  flex: 0 0 calc((100% - 24rpx) / 3);
+  width: calc((100% - 24rpx) / 3);
+  min-width: 0;
+  margin: 0;
+  padding: 0 8rpx;
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+
+/* ========== 区块 ========== */
+.block {
+  background: #fff;
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius);
+  padding: 28rpx;
+  box-shadow: var(--shadow);
+  /* 页面已有 24rpx 左右内边距，这里清零避免二次缩进 */
+  margin: 0 0 20rpx;
+}
+.qual-block {
+  margin-top: 0;
+}
+.block-hd {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-bottom: 20rpx;
+}
+.block-hd .bt {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+.block-hd .r {
+  margin-left: auto;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+
+/* ========== 清单行 ========== */
+.item-list {
+  border-top: 1rpx solid var(--line-2);
+}
+.item-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid var(--line-2);
+  font-size: 24rpx;
+}
+.item-row:last-child {
+  border-bottom: none;
+}
+.item-row .nm {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-2);
+  word-break: break-all;
+}
+/* 状态文字先让位：超长时省略号收尾，避免把标题挤成竖排或把按钮顶出屏幕 */
+.item-row .st {
+  flex: 0 1 auto;
+  max-width: 45%;
+  font-size: 22rpx;
+  padding: 0 14rpx;
+  line-height: 38rpx;
+  border-radius: 8rpx;
+  border: 1rpx solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.item-row .st.ok {
+  background: var(--brand-soft);
+  border-color: var(--brand-line);
+  color: var(--brand);
+  font-weight: 600;
+}
+.item-row .st.no {
+  background: #fff;
+  border-style: dashed;
+  color: var(--muted);
+}
+/* 行内按钮：重置小程序 button 默认的左右 auto 外边距 */
+.item-row .btn {
+  flex: none;
+  margin: 0;
+}
+.qual-btn {
+  flex: none;
+  margin-left: 12rpx;
+}
+
+/* ========== 设置页 ========== */
+/* 每行两段式：左侧标题 + 说明，右侧值 / 开关 / 按钮；说明文字换行而不是把标题挤成竖排 */
+.set-list {
+  border-top: 1rpx solid var(--line-2);
+}
+.set-list-gap {
+  margin-top: 24rpx;
+}
+.set-row {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding: 24rpx 0;
+  border-bottom: 1rpx solid var(--line-2);
+}
+.set-row:last-child {
+  border-bottom: none;
+}
+.set-row .sr-main {
+  flex: 1;
+  min-width: 0;
+}
+.set-row .sr-nm {
+  flex: 1;
+  min-width: 0;
+  font-size: 26rpx;
+  color: var(--ink);
+  line-height: 1.5;
+  word-break: break-all;
+}
+.set-row .sr-d {
+  font-size: 22rpx;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-top: 6rpx;
+  word-break: break-all;
+}
+.set-row .sr-val {
+  flex: none;
+  max-width: 42%;
+  font-size: 24rpx;
+  color: var(--muted);
+  text-align: right;
+  line-height: 1.5;
+  word-break: break-all;
+}
+.set-row .sr-val.ok {
+  color: var(--brand);
+  font-weight: 600;
+}
+.set-row .sr-tag {
+  flex: none;
+  font-size: 22rpx;
+  line-height: 40rpx;
+  padding: 0 14rpx;
+  border-radius: 8rpx;
+  border: 1rpx solid var(--line);
+  color: var(--muted);
+}
+.set-row .sr-tag.on {
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 600;
+}
+.set-row .sr-go {
+  flex: none;
+  color: #B4B4BB;
+  font-size: 30rpx;
+  line-height: 1;
+}
+/* 行内按钮重置小程序默认的左右 auto 外边距，避免把按钮推出屏幕 */
+.set-row .btn {
+  flex: none;
+  margin: 0;
+}
+/* 行内开关：与右侧按钮同宽视觉，避免撑高列表行 */
+.set-row .sr-sw {
+  flex: none;
+  transform: scale(0.8);
+  transform-origin: right center;
+}
+.set-acts {
+  margin-top: 24rpx;
+}
+.set-acts .btn {
+  width: 100%;
+}
+.set-title {
+  margin-top: 24rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.5;
+}
+.set-desc {
+  margin-top: 6rpx;
+  font-size: 24rpx;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+/* 开关：纯样式实现，父级整行可点 */
+.tg {
+  position: relative;
+  flex: none;
+  width: 88rpx;
+  height: 52rpx;
+  border-radius: 26rpx;
+  background: #D8DAE0;
+  transition: background .2s;
+}
+.tg.on {
+  background: var(--brand);
+}
+.tg::after {
+  content: '';
+  position: absolute;
+  top: 4rpx;
+  left: 4rpx;
+  width: 44rpx;
+  height: 44rpx;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2rpx 6rpx rgba(16, 24, 40, .18);
+  transition: transform .2s;
+}
+.tg.on::after {
+  transform: translateX(36rpx);
+}
+
+/* 信息公开范围：大类 + 组内条目，开关只出现在大类上 */
+.vis-group {
+  margin-top: 18rpx;
+  border-radius: 16rpx;
+  background: var(--fill-2, #F7F8FA);
+  padding: 0 20rpx;
+}
+.vis-group .vis-master {
+  border-bottom: 1rpx solid var(--line-2);
+}
+.vis-group .vis-master .sr-nm {
+  font-weight: 600;
+}
+.vis-items {
+  padding: 6rpx 0 14rpx;
+}
+.vis-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10rpx;
+  padding: 10rpx 0;
+  font-size: 22rpx;
+  line-height: 1.5;
+}
+.vi-name {
+  flex: none;
+  color: var(--ink);
+}
+.vi-d {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+}
+.vi-state {
+  flex: none;
+  color: #B4B4BB;
+}
+.vi-state.on {
+  color: var(--brand);
+  font-weight: 600;
+}
+
+/* ========== 关注 / 卖家主页 ========== */
+.fl-row {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+}
+.fl-av {
+  flex: none;
+  width: 76rpx;
+  height: 76rpx;
+  border-radius: 22rpx;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 30rpx;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fl-info {
+  flex: 1;
+  min-width: 0;
+}
+.fl-nm {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fl-sb {
+  font-size: 22rpx;
+  color: var(--muted);
+  margin-top: 4rpx;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.seller-card {
+  padding: 24rpx;
+}
+.seller-note {
+  margin: 20rpx 0 0;
+}
+
+/* ========== 空状态 ========== */
+/* 结构样式统一走 app.wxss，这里只收紧外边距（内容区自己已有左右内边距） */
+.empty {
+  margin: 36rpx 0;
+}
+
+/* ========== 退出 ========== */
+.logout-btn {
+  margin-top: 32rpx;
+}
+
+/* ========== 修改委托 ========== */
+.ag-edit-mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 90;
+}
+.ag-edit-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 91;
+  max-height: 82vh;
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 28rpx 28rpx 0 0;
+  padding: 28rpx 28rpx calc(28rpx + env(safe-area-inset-bottom));
+}
+.ag-edit-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ag-edit-tt {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+.ag-edit-x {
+  font-size: 40rpx;
+  color: var(--muted);
+  line-height: 1;
+  padding: 4rpx 12rpx;
+}
+.ag-edit-tip {
+  margin-top: 14rpx;
+  font-size: 22rpx;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.ag-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-top: 20rpx;
+}
+.ag-edit-row.col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8rpx;
+}
+.ag-edit-lb {
+  flex: none;
+  width: 150rpx;
+  font-size: 26rpx;
+  color: var(--ink-2, #475569);
+}
+/* 委托详情：只读字段值 */
+.ag-detail-v {
+  flex: 1;
+  min-width: 0;
+  font-size: 26rpx;
+  color: var(--ink);
+  line-height: 1.5;
+  word-break: break-all;
+}
+.ag-detail-sec {
+  margin-top: 28rpx;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.ag-edit-ipt {
+  flex: 1;
+  height: 76rpx;
+  padding: 0 20rpx;
+  border-radius: 14rpx;
+  background: #f5f7fa;
+  font-size: 27rpx;
+  color: var(--ink);
+}
+.ag-edit-area {
+  width: 100%;
+  height: 160rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 14rpx;
+  background: #f5f7fa;
+  font-size: 27rpx;
+  color: var(--ink);
+  box-sizing: border-box;
+}
+.ag-edit-acts {
+  display: flex;
+  gap: 20rpx;
+  margin-top: 28rpx;
+}
+.ag-edit-acts .btn {
+  flex: 1;
+}
+
+/* ========== 我的评论 / 关注 / 收藏资讯 ========== */
+/* 未读回复角标：红色数字，挂在页签或评论行上 */
+.seg-badge {
+  min-width: 30rpx;
+  height: 30rpx;
+  padding: 0 8rpx;
+  margin-left: 6rpx;
+  border-radius: 999rpx;
+  background: #e5484d;
+  color: #fff;
+  font-style: normal;
+  font-size: 18rpx;
+  font-weight: 700;
+  line-height: 30rpx;
+  text-align: center;
+  box-sizing: border-box;
+}
+.cmt-badge {
+  margin-left: auto;
+}
+.cmt-content {
+  font-weight: 500;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.cmt-news {
+  color: var(--brand);
+}
+.cmt-replies {
+  margin-top: 16rpx;
+  padding: 16rpx 18rpx;
+  background: var(--line-2);
+  border-radius: 12rpx;
+}
+.cmt-reply {
+  padding: 10rpx 0;
+  border-bottom: 1rpx solid rgba(16, 24, 40, 0.06);
+}
+.cmt-reply:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.cmt-reply-top {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.cmt-reply-nm {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.cmt-reply-tx {
+  margin-top: 6rpx;
+  font-size: 25rpx;
+  line-height: 1.7;
+  color: var(--ink-2);
+  word-break: break-word;
+}
+.cmt-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background: #e5484d;
+}
+
+/* 失效态：资讯、商品、账号注销后保留条目但降低视觉权重 */
+.pill-tag.off {
+  background: #f1f2f4;
+  color: var(--muted);
+}
+.fl-off {
+  margin-left: 10rpx;
+  padding: 2rpx 10rpx;
+  font-size: 18rpx;
+  font-weight: 500;
+  color: var(--muted);
+  background: #f1f2f4;
+  border-radius: 999rpx;
+  vertical-align: middle;
+}

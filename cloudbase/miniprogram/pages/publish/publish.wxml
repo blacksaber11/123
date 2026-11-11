@@ -1,0 +1,1039 @@
+<view class="publish-page">
+
+  <!-- 自定义导航：表单内未发布退出的返回到「发布类型选择」，已发布 / 入口页才离开发布页 -->
+  <view class="pub-nav" style="padding-top: {{statusBarH}}px">
+    <view class="nav-row" style="height: {{navH}}px">
+      <view class="nav-back" bindtap="onNavBack">‹</view>
+      <view class="nav-title">{{navTitle}}</view>
+    </view>
+  </view>
+
+  <!-- 入口卡片页 -->
+  <block wx:if="{{!type && !agencyType}}">
+    <view class="pub-header">
+      <view class="pub-sub">直接发布免费 · 平台委托由坐席代寻</view>
+    </view>
+
+    <view class="entry-group">
+      <view class="entry-head">
+        <text class="entry-title">直接发布</text>
+        <text class="entry-note">免费 · 双方自行沟通</text>
+      </view>
+      <view class="entry-grid">
+        <view class="entry-card sell" bindtap="goSell">
+          <view class="ec-icon"><image class="ec-ico" src="/assets/icons/entry-product.png" mode="aspectFit" /></view>
+          <view class="ec-tt">发布商品</view>
+          <view class="ec-ds">出售 / 出租设备</view>
+          <view class="ec-go">去发布 ›</view>
+        </view>
+        <view class="entry-card buy" bindtap="goBuy">
+          <view class="ec-icon"><image class="ec-ico" src="/assets/icons/entry-demand.png" mode="aspectFit" /></view>
+          <view class="ec-tt">发布需求</view>
+          <view class="ec-ds">求购 / 承租设备</view>
+          <view class="ec-go">去发布 ›</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="entry-group">
+      <view class="entry-head">
+        <text class="entry-title">委托平台</text>
+        <text class="entry-note">平台核验 · 代寻代验</text>
+      </view>
+      <view class="entry-grid">
+        <view class="entry-card agency" bindtap="openAgency" data-type="buy">
+          <view class="ec-icon"><image class="ec-ico" src="/assets/icons/entry-agency-buy.png" mode="aspectFit" /></view>
+          <view class="ec-tt">发起代采</view>
+          <view class="ec-ds">平台代寻货源</view>
+          <view class="ec-badge">委托方信息保密</view>
+        </view>
+        <view class="entry-card agency sell" bindtap="openAgency" data-type="sell">
+          <view class="ec-icon"><image class="ec-ico" src="/assets/icons/entry-agency-sell.png" mode="aspectFit" /></view>
+          <view class="ec-tt">发起代售</view>
+          <view class="ec-ds">平台代找买家</view>
+          <view class="ec-badge">委托方信息保密</view>
+          <view class="ec-go">去委托 ›</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="fee-card">
+      <view class="fc-title">平台服务费</view>
+      <view class="fc-group">代采 / 代售</view>
+      <view class="fc-row">
+        <text class="fc-k">≤ 3 万元</text>
+        <text class="fc-v">299 元 / 单</text>
+      </view>
+      <view class="fc-row">
+        <text class="fc-k">3 万 – 100 万元</text>
+        <text class="fc-v">1%，封顶 5,000 元</text>
+      </view>
+      <view class="fc-row">
+        <text class="fc-k">100 万元以上</text>
+        <text class="fc-v">0.5%，上不封顶</text>
+      </view>
+      <view class="fc-group">算力租赁</view>
+      <view class="fc-row">
+        <text class="fc-k">首月租金合计</text>
+        <text class="fc-v">买卖双方各承担 50%</text>
+      </view>
+      <view class="fc-note">发布、审核、上架都不收费，成交后支付服务费。</view>
+    </view>
+
+    <view class="tip-card">
+      <image class="tc-ico" src="/assets/icons/ic-info.png" mode="aspectFit" />
+      <text class="tc-txt">直接发布不收费。商品 / 需求可选择公开或保密；代采 / 代售统一由平台核验，委托方信息仅平台可见，并由平台居中对接。</text>
+    </view>
+  </block>
+
+  <!-- 代采 / 代售表单 -->
+  <block wx:if="{{agencyType}}">
+    <view class="form-wrap">
+      <view class="form-back" bindtap="closeAgency">
+        <image class="fb-ico" src="/assets/icons/ic-back.png" mode="aspectFit" />
+        <text class="fb-txt">返回发布方式选择</text>
+      </view>
+
+      <view class="callout brand edit-tip">
+        <view class="ttl">{{agencyType === 'buy' ? '发起代采 · 平台代寻货源' : '发起代售 · 平台代找买家'}}</view>
+        按真实需求填写，主体信息与证明材料仅平台内可见，查看时叠加账号与昵称水印。发布、审核、上架都不收费，成交后支付服务费；代采 / 代售 ≤3 万元 299 元 / 单，3 万–100 万元 1% 封顶 5,000 元，100 万元以上 0.5% 上不封顶；算力租赁按首月租金合计，买卖双方各承担 50%。
+      </view>
+
+      <view class="form-sec">
+        <view class="sh">
+          <text class="st">委托内容</text>
+          <text class="sd">填你真实需要的设备</text>
+        </view>
+
+        <view class="field">
+          <text class="f-label">委托方式<text class="req">*</text></text>
+          <view class="chip-group">
+            <view wx:for="{{agencyModeOptions}}" wx:key="*this"
+                  class="chip {{agencyMode === item ? 'on' : ''}}"
+                  data-v="{{item}}" bindtap="pickAgencyMode">{{item}}</view>
+          </view>
+          <view class="tip">
+            {{agencyRent ? '租赁按「元 / 台 / 月」填月租金；服务费为一个月租金，买卖双方各承担 50%，委托方支付半个月租金，成交后支付。' : '购买 / 出售按「元 / 台」填预算或期望售价，服务费按成交金额分档计。'}}
+          </view>
+        </view>
+
+        <view class="field">
+          <text class="f-label">{{agencyType === 'buy' ? '需要采购的设备 / 配件' : '需要代售的设备 / 配件'}}<text class="req">*</text></text>
+
+          <!-- 单框搜索：输入型号 / 品牌即匹配，点结果直接显示在同一框里 -->
+          <view class="dev-search">
+            <input class="dev-search-input" type="text" value="{{agDeviceKeyword}}"
+                   placeholder="搜索型号 / 品牌，如 H100、A100、DDR5"
+                   confirm-type="search" bindinput="onAgencyDeviceSearch" bindfocus="focusAgencyDeviceSearch" />
+            <view wx:if="{{agDeviceKeyword}}" class="dev-search-clear" bindtap="clearAgencyDeviceSearch">清空</view>
+          </view>
+          <view wx:if="{{agDeviceSearchOpen}}" class="dev-results">
+            <view wx:for="{{agDeviceResults}}" wx:key="k" class="dev-result"
+                  data-i="{{index}}" bindtap="pickAgencyDeviceSearch">
+              <text class="dr-name">{{item.model}}</text>
+              <text class="dr-path">{{item.path}}</text>
+            </view>
+            <view wx:if="{{!agDeviceResults.length}}" class="dev-empty">没有匹配的设备，换个关键词试试</view>
+          </view>
+          <view wx:if="{{agDevicePath}}" class="dev-path">{{agDevicePath}}</view>
+          <view class="tip">设备必须从平台预设型号库选择，平台按型号匹配商机；输入型号 / 品牌即可搜索（支持乱序多词、连写不带空格），点搜索结果直接选中，空输入框点开可浏览型号。配件规格、成色与交付要求写在下方条件设置中。</view>
+        </view>
+
+        <view class="field">
+          <text class="f-label">数量（台 / 套）<text class="req">*</text></text>
+          <input type="number" value="{{agencyForm.qty}}" data-key="qty" bindinput="onAgencyInput" placeholder="如 8"/>
+        </view>
+
+        <view class="field">
+          <text class="f-label">计价币种<text class="req">*</text></text>
+          <picker range="{{currencyLabels}}" value="{{currencyIndex}}" bindchange="pickCurrency">
+            <view class="f-input f-picker">{{currencyLabels[currencyIndex]}}<text class="f-arrow">›</text></view>
+          </picker>
+        </view>
+
+        <view class="field">
+          <text class="f-label">{{agencyRent ? '月租金' : (agencyType === 'buy' ? '采购预算' : '期望售价')}}<text class="req">*</text></text>
+          <input type="digit" value="{{agencyForm.price}}" data-key="price" bindinput="onAgencyInput" placeholder="请输入金额"/>
+        </view>
+
+        <!-- 截止时间：到期仍未成交则委托停止；代采合同即以此时间为准 -->
+        <view class="field">
+          <text class="f-label">截止时间<text class="req">*</text></text>
+          <picker mode="date" value="{{agencyDeadline}}" start="{{agencyDeadlineMin}}" end="{{agencyDeadlineMax}}" bindchange="pickAgencyDeadline">
+            <view class="pick-btn {{agencyDeadline ? '' : 'placeholder'}}">
+              <text class="pb-t">{{agencyDeadline || '请选择截止时间'}}</text>
+              <text class="pb-a">›</text>
+            </view>
+          </picker>
+          <view class="tip">到期仍未成交即停止代寻；代采委托的合同截止时间即为此日期。</view>
+        </view>
+
+        <view class="field" wx:if="{{agencyRent}}">
+          <text class="f-label">计划租期<text class="req">*</text></text>
+          <view class="chip-group">
+            <view wx:for="{{agencyTerms}}" wx:key="*this"
+                  class="chip {{agencyTerm === item ? 'on' : ''}}"
+                  data-v="{{item}}" bindtap="pickAgencyTerm">{{item}}</view>
+          </view>
+        </view>
+
+        <!-- 条件设置与交易流程：常显，条件逐项添加、流程可增删排序 -->
+        <view class="more-sec ag-more">
+          <view class="sub-hd">
+            <text class="sub-t">条件设置</text>
+            <text class="sub-d">对方必须满足 / 可协商</text>
+          </view>
+
+          <view class="field">
+            <text class="f-label">{{agencyMustTitle}}<text class="opt">选填</text></text>
+            <view class="chip-group">
+              <view wx:for="{{agencyMustOpts}}" wx:key="v"
+                    class="chip {{item.on ? 'on' : ''}}"
+                    data-kind="must" data-v="{{item.v}}" bindtap="pickAgencyCond">{{item.v}}</view>
+            </view>
+            <view class="cond-add">
+              <input value="{{agencyMustInput}}" data-kind="must" bindinput="onAgencyCondInput"
+                     placeholder="没有合适的？自己加一条必须条件" maxlength="30"/>
+              <view class="add-btn" data-kind="must" bindtap="addAgencyCond">＋ 添加</view>
+            </view>
+            <view class="tip">选填。勾选的必须条件由平台在审核与对接时逐项确认。</view>
+          </view>
+
+          <view class="field">
+            <text class="f-label">{{agencyNegoTitle}}<text class="opt">可多选</text></text>
+            <view class="chip-group">
+              <view wx:for="{{agencyNegoOpts}}" wx:key="v"
+                    class="chip {{item.on ? 'on' : ''}}"
+                    data-kind="nego" data-v="{{item.v}}" bindtap="pickAgencyCond">{{item.v}}</view>
+            </view>
+            <view class="cond-add">
+              <input value="{{agencyNegoInput}}" data-kind="nego" bindinput="onAgencyCondInput"
+                     placeholder="没有合适的？自己加一条可协商条件" maxlength="30"/>
+              <view class="add-btn" data-kind="nego" bindtap="addAgencyCond">＋ 添加</view>
+            </view>
+            <view class="tip">可协商条件由平台带进对接，双方自行协商；不选也可以。</view>
+          </view>
+
+          <view class="sub-hd">
+            <text class="sub-t">{{agencyFlowTitle}}</text>
+            <text class="sub-d">不预设，可自行添加与排序</text>
+          </view>
+
+          <view wx:if="{{agencyFlow.length}}" class="flow-edit-list">
+            <view wx:for="{{agencyFlow}}" wx:key="id" class="flow-edit">
+              <view class="fe-idx">{{index + 1}}</view>
+              <view class="fe-main">
+                <input class="fe-name" value="{{item.n}}" data-i="{{index}}" data-k="n"
+                       bindinput="onAgencyStepInput" placeholder="步骤名称" maxlength="20"/>
+                <input class="fe-desc" value="{{item.d}}" data-i="{{index}}" data-k="d"
+                       bindinput="onAgencyStepInput" placeholder="步骤说明（选填）" maxlength="40"/>
+              </view>
+              <view class="fe-acts">
+                <text class="fe-btn {{index === 0 ? 'off' : ''}}" data-i="{{index}}" data-dir="up" bindtap="moveAgencyStep">↑</text>
+                <text class="fe-btn {{index === agencyFlow.length - 1 ? 'off' : ''}}" data-i="{{index}}" data-dir="down" bindtap="moveAgencyStep">↓</text>
+                <text class="fe-btn danger" data-i="{{index}}" bindtap="removeAgencyStep">✕</text>
+              </view>
+            </view>
+          </view>
+          <view wx:else class="empty-line">还没有步骤，需要时在下方添加；不设置也可以直接提交。</view>
+
+          <view class="cond-add step-add">
+            <input value="{{agencyStepName}}" data-k="name" bindinput="onAgencyStepDraft" placeholder="新步骤名称" maxlength="20"/>
+            <input value="{{agencyStepDesc}}" data-k="desc" bindinput="onAgencyStepDraft" placeholder="说明（选填）" maxlength="40"/>
+            <view class="add-btn" bindtap="addAgencyStep">＋ 添加步骤</view>
+          </view>
+
+          <view class="field">
+            <view class="tip">审核时会按你填写的流程对接，未填写则按标准流程执行。</view>
+          </view>
+        </view>
+      </view>
+
+      <view class="form-sec">
+        <view class="sh">
+          <text class="st">真实主体信息</text>
+          <text class="sd">企业或个人均可</text>
+        </view>
+
+        <view class="callout brand">
+          <view class="ttl">{{agencyType === 'buy' ? '代采' : '代售'}}委托直接对接平台</view>
+          无需选择可见范围与发布渠道：委托提交后由平台代为核验与匹配。上传的主体信息与证明材料只有平台可见，成交前不会透露给任何公司。
+        </view>
+
+        <view class="field">
+          <text class="f-label">主体类型<text class="req">*</text></text>
+          <view class="chip-group">
+            <view class="chip {{agencySubjectType === 'company' ? 'on' : ''}}" data-v="company" bindtap="pickAgencySubject">企业</view>
+            <view class="chip {{agencySubjectType === 'person' ? 'on' : ''}}" data-v="person" bindtap="pickAgencySubject">个人</view>
+          </view>
+          <view class="tip">{{agencySubjectType === 'company' ? '企业需填写执照信息并上传营业执照。' : '个人只需填写姓名、身份证号与手机号，无需营业执照。'}}</view>
+        </view>
+
+        <view class="callout warn sec-tip">
+          <view class="ttl">必须证明你是真实{{agencyType === 'buy' ? '买家' : '卖家'}}</view>
+          {{agencySubjectType === 'company' ? '企业名称、统一社会信用代码、法定代表人须与执照一致；' : '姓名与身份证号须为本人真实信息；'}}信息不符会被退回，多次提交不实信息将暂停委托资格。
+        </view>
+
+        <block wx:if="{{agencySubjectType === 'company'}}">
+          <view class="field">
+            <text class="f-label">企业 / 主体名称<text class="req">*</text></text>
+            <input type="text" value="{{agencyForm.subject}}" data-key="subject" bindinput="onAgencyInput" placeholder="如：杭州云帆数据科技有限公司"/>
+          </view>
+
+          <view class="field">
+            <text class="f-label">统一社会信用代码<text class="req">*</text></text>
+            <input type="text" maxlength="18" value="{{agencyForm.creditCode}}" data-key="creditCode" bindinput="onAgencyInput" placeholder="18 位统一社会信用代码"/>
+          </view>
+
+          <view class="field">
+            <text class="f-label">法定代表人<text class="req">*</text></text>
+            <input type="text" value="{{agencyForm.legal}}" data-key="legal" bindinput="onAgencyInput" placeholder="与营业执照一致的姓名"/>
+          </view>
+        </block>
+        <block wx:else>
+          <view class="field">
+            <text class="f-label">姓名<text class="req">*</text></text>
+            <input type="text" value="{{agencyForm.subject}}" data-key="subject" bindinput="onAgencyInput" placeholder="与身份证一致的姓名"/>
+          </view>
+
+          <view class="field">
+            <text class="f-label">身份证号<text class="req">*</text></text>
+            <input type="text" maxlength="18" value="{{agencyForm.idCard}}" data-key="idCard" bindinput="onAgencyInput" placeholder="18 位身份证号"/>
+          </view>
+        </block>
+
+        <view class="field">
+          <text class="f-label">联系人手机号<text class="req">*</text></text>
+          <input type="text" maxlength="20" value="{{agencyForm.phone}}" data-key="phone" bindinput="onAgencyInput"
+                 bindblur="onAgencyPhoneBlur" placeholder="11 位手机号，支持粘贴 +86 / 空格"/>
+          <view class="tip">仅平台坐席可见，用于核验主体与推进委托，不会展示给交易对方。</view>
+        </view>
+      </view>
+
+      <view class="form-sec">
+        <view class="sh">
+          <text class="st">证明材料</text>
+          <text class="sd">委托授权书与被委托人身份证必传</text>
+        </view>
+
+        <view wx:if="{{agencySubjectType === 'company'}}" class="ag-file">
+          <view class="af-hd">
+            <view class="ut">
+              <text class="uc-name">营业执照<text class="req"> *</text></text>
+              <text class="uc-desc">需清晰完整，四角与年检页可见</text>
+            </view>
+            <text class="state">{{agLicense ? '已上传' : '必传'}}</text>
+          </view>
+          <view wx:if="{{agLicense}}" class="f-item">
+            <image class="f-ico" src="/assets/icons/ic-file.png" mode="aspectFit" />
+            <view class="f-main">
+              <text class="f-name">{{agLicense.name}}</text>
+              <text class="f-meta">{{agLicense.sizeText}}</text>
+            </view>
+            <text class="f-btn danger" data-kind="license" bindtap="removeAgencyFile">删除</text>
+          </view>
+          <view wx:else class="uc-acts" bindtap="chooseAgencyFile" data-kind="license">
+            <view class="up-btn">＋ 上传营业执照</view>
+            <text class="uc-hint">仅平台可见</text>
+          </view>
+        </view>
+
+        <view class="ag-file">
+          <view class="af-hd">
+            <view class="ut">
+              <text class="uc-name">委托授权书<text class="req"> *</text></text>
+              <text class="uc-desc">写明受托人与联系人电话，须与下方填写一致</text>
+            </view>
+            <text class="state">{{agAuthorization ? '已上传' : '必传'}}</text>
+          </view>
+          <view wx:if="{{agAuthorization}}" class="f-item">
+            <image class="f-ico" src="/assets/icons/ic-file.png" mode="aspectFit" />
+            <view class="f-main">
+              <text class="f-name">{{agAuthorization.name}}</text>
+              <text class="f-meta">{{agAuthorization.sizeText}}</text>
+            </view>
+            <text class="f-btn danger" data-kind="authorization" bindtap="removeAgencyFile">删除</text>
+          </view>
+          <view wx:else class="uc-acts" bindtap="chooseAgencyFile" data-kind="authorization">
+            <view class="up-btn">＋ 上传委托授权书</view>
+            <text class="uc-hint">仅平台可见</text>
+          </view>
+        </view>
+
+        <view class="ag-file">
+          <view class="af-hd">
+            <view class="ut">
+              <text class="uc-name">被委托人身份证<text class="req"> *</text></text>
+              <text class="uc-desc">正反面清晰，须与授权书上的被委托人一致</text>
+            </view>
+            <text class="state">{{agIdcard ? '已上传' : '必传'}}</text>
+          </view>
+          <view wx:if="{{agIdcard}}" class="f-item">
+            <image class="f-ico" src="/assets/icons/ic-file.png" mode="aspectFit" />
+            <view class="f-main">
+              <text class="f-name">{{agIdcard.name}}</text>
+              <text class="f-meta">{{agIdcard.sizeText}}</text>
+            </view>
+            <text class="f-btn danger" data-kind="idcard" bindtap="removeAgencyFile">删除</text>
+          </view>
+          <view wx:else class="uc-acts" bindtap="chooseAgencyFile" data-kind="idcard">
+            <view class="up-btn">＋ 上传被委托人身份证</view>
+            <text class="uc-hint">仅平台可见</text>
+          </view>
+        </view>
+
+        <view class="field">
+          <text class="f-label">授权书联系人电话<text class="req">*</text></text>
+          <input type="text" maxlength="20" placeholder="须与委托授权书上一致"
+            value="{{agencyForm.authPhone}}" data-key="authPhone" bindinput="onAgencyInput"
+            bindblur="onAgencyPhoneBlur" />
+          <view class="tip">仅平台可见，成交前不会透露给任何公司。</view>
+        </view>
+
+        <view class="ag-file">
+          <view class="af-hd">
+            <view class="ut">
+              <text class="uc-name">{{agencyType === 'buy' ? '资金 / 验资证明' : '货源 / 产权证明'}}<text wx:if="{{agencyType === 'sell' && feeLarge}}" class="req"> *</text></text>
+              <text class="uc-desc">{{agencyType === 'buy' ? '银行流水、验资报告或授信证明（选填）' : (feeLarge ? '采购合同、发票或设备产权证明（1000 万元以上必传）' : '采购合同、发票或设备产权证明（选填）')}}</text>
+            </view>
+            <text class="state">{{agProof ? '已上传' : (agencyType === 'sell' && feeLarge ? '必传' : '选填')}}</text>
+          </view>
+          <view wx:if="{{agProof}}" class="f-item">
+            <image class="f-ico" src="/assets/icons/ic-file.png" mode="aspectFit" />
+            <view class="f-main">
+              <text class="f-name">{{agProof.name}}</text>
+              <text class="f-meta">{{agProof.sizeText}}</text>
+            </view>
+            <text class="f-btn danger" data-kind="proof" bindtap="removeAgencyFile">删除</text>
+          </view>
+          <view wx:else class="uc-acts" bindtap="chooseAgencyFile" data-kind="proof">
+            <view class="up-btn">＋ 上传证明</view>
+            <text class="uc-hint">{{agencyType === 'sell' && feeLarge ? '1000 万元以上必传' : '选填，上传后可加快核验'}}</text>
+          </view>
+        </view>
+
+        <view class="ag-file">
+          <view class="af-hd">
+            <view class="ut">
+              <text class="uc-name">其他补充材料<text class="opt">选填</text></text>
+              <text class="uc-desc">场地照片、设备清单等，最多 3 张</text>
+            </view>
+            <text class="state">{{agOther.length}} / 3</text>
+          </view>
+          <view wx:if="{{agOther.length}}" class="f-list">
+            <view wx:for="{{agOther}}" wx:key="key" class="f-item">
+              <image class="f-ico" src="/assets/icons/ic-file.png" mode="aspectFit" />
+              <view class="f-main">
+                <text class="f-name">{{item.name}}</text>
+                <text class="f-meta">{{item.sizeText}}</text>
+              </view>
+              <text class="f-btn danger" data-kind="other" data-i="{{index}}" bindtap="removeAgencyFile">删除</text>
+            </view>
+          </view>
+          <view wx:if="{{agOther.length < 3}}" class="uc-acts" bindtap="chooseAgencyFile" data-kind="other">
+            <view class="up-btn">＋ 补充材料</view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 1000 万元及以上代采：补充采购意向函（资料核验） -->
+      <view wx:if="{{feeLarge && agencyType === 'buy'}}" class="form-sec">
+        <view class="sh">
+          <text class="st">大额资料核验</text>
+          <text class="sd">需补充意向函</text>
+        </view>
+        <view class="tip">采购金额达到 1000 万元，需补充采购意向函；服务费按成交金额 0.5% 收取、上不封顶（成交后支付）。资料仅平台可见，成交前不会透露给任何公司。</view>
+
+        <view wx:if="{{agencyType === 'buy'}}" class="ag-file">
+          <view class="af-hd">
+            <view class="ut">
+              <text class="uc-name">采购意向函<text class="req"> *</text></text>
+              <text class="uc-desc">加盖公章，注明采购型号与预算</text>
+            </view>
+            <text class="state">{{agLoi ? '已上传' : '必传'}}</text>
+          </view>
+          <view wx:if="{{agLoi}}" class="f-item">
+            <image class="f-ico" src="/assets/icons/ic-file.png" mode="aspectFit" />
+            <view class="f-main">
+              <text class="f-name">{{agLoi.name}}</text>
+              <text class="f-meta">{{agLoi.sizeText}}</text>
+            </view>
+            <text class="f-btn danger" data-kind="loi" bindtap="removeAgencyFile">删除</text>
+          </view>
+          <view wx:else class="uc-acts" bindtap="chooseAgencyFile" data-kind="loi">
+            <view class="up-btn">＋ 上传采购意向函</view>
+            <text class="uc-hint">仅平台可见</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="form-sec">
+        <view class="sh">
+          <text class="st">平台服务费</text>
+          <text class="sd">{{feeLarge ? '资料核验 · 成交后支付' : '成交后支付'}}</text>
+        </view>
+
+        <view class="fee-box">
+          <view class="fee-row">
+            <text class="fee-k">{{agencyRent ? '首月租金合计' : '交易金额'}}</text>
+            <text class="fee-v">¥ {{feeAmountText}}</text>
+          </view>
+          <view class="fee-row">
+            <text class="fee-k">计费规则</text>
+            <text class="fee-v">{{feeRule}}</text>
+          </view>
+          <view class="fee-row total">
+            <text class="fee-k">服务费（{{agencyRent ? '委托方 50% · 成交后支付' : '成交后支付'}}）</text>
+            <text class="fee-num">¥ {{feeText}}</text>
+          </view>
+        </view>
+        <view class="tip">{{feeNote}}</view>
+
+        <view class="agree-row" bindtap="toggleAgencyAgree">
+          <view class="cb {{agencyAgree ? 'on' : ''}}">{{agencyAgree ? '✓' : ''}}</view>
+          <text class="agree-txt">已阅读并同意平台服务费规则与{{agencyType === 'buy' ? '代采' : '代售'}}委托流程</text>
+        </view>
+      </view>
+
+      <view class="submit-bar safe-bottom">
+        <view class="submit-row">
+          <button class="btn primary block" bindtap="submitAgency">{{agencySubmitText}}</button>
+        </view>
+        <view class="submit-tip">{{agencySubmitTip}}</view>
+      </view>
+    </view>
+  </block>
+
+  <!-- 表单页 -->
+  <block wx:if="{{type}}">
+    <view class="form-wrap">
+      <!-- 返回入口：编辑模式回「我发布的」，新建回类型选择 -->
+      <view wx:if="{{editing}}" class="form-back" bindtap="backToMine">
+        <image class="fb-ico" src="/assets/icons/ic-back.png" mode="aspectFit" />
+        <text class="fb-txt">返回我发布的</text>
+      </view>
+      <view wx:else class="form-back" bindtap="goBack">
+        <image class="fb-ico" src="/assets/icons/ic-back.png" mode="aspectFit" />
+        <text class="fb-txt">返回发布类型选择</text>
+      </view>
+
+      <view wx:if="{{editing}}" class="callout brand edit-tip">
+        <view class="ttl">正在编辑：{{editKind === 'demand' ? '求购需求' : '商品'}} · 当前状态 {{editStatus || '—'}}</view>
+        保存后立即生效，状态保持不变（不会因为编辑重新进入待审核，也不会自动下架）；平台仍可按规则调整状态或下架。
+      </view>
+
+      <!-- 基本信息 -->
+      <view class="form-sec">
+        <view class="sh">
+          <text class="st">基本信息</text>
+          <text class="sd">标题可自己写，设备按层级选</text>
+        </view>
+
+        <view class="field">
+          <text class="f-label">交易方式<text class="req">*</text></text>
+          <view class="chip-group">
+            <view wx:for="{{modeOptions}}" wx:key="*this"
+                  class="chip {{mode === item ? 'on' : ''}}"
+                  data-mode="{{item}}" bindtap="switchMode">
+              {{item}}
+            </view>
+          </view>
+          <view class="tip">
+            <block wx:if="{{type === 'sell'}}">
+              出售＝一次性转让设备，按「元 / 台」报价；出租＝按租期把设备租出去，租金按「元 / 台 / 月」计。
+            </block>
+            <block wx:else>
+              求购＝一次性采购设备，按「元 / 台」给预算；租赁＝按租期承租设备，租金按「元 / 台 / 月」计。
+            </block>
+          </view>
+        </view>
+
+        <view class="field">
+          <text class="f-label">标题<text class="req">*</text></text>
+          <input type="text" value="{{form.title}}" data-key="title" bindinput="onInput"
+                 placeholder="{{isRent ? '如：H100 80G SXM 整机出租，6 个月起租' : '如：H100 80G SXM 全新现货'}}"/>
+        </view>
+
+        <!-- 设备只能从平台预设型号库选择：商机按「型号 + 成色 + 数量」精确匹配 -->
+        <view class="field">
+          <text class="f-label">{{type === 'buy' ? '设备型号' : '设备'}}<text class="req">*</text></text>
+
+          <!-- 单框搜索：输入型号 / 品牌即匹配，点结果直接显示在同一框里 -->
+          <view class="dev-search">
+            <input class="dev-search-input" type="text" value="{{deviceKeyword}}"
+                   placeholder="搜索型号 / 品牌，如 H100、800G、DDR5、RTX 4070"
+                   confirm-type="search" bindinput="onDeviceSearch" bindfocus="focusDeviceSearch" />
+            <view wx:if="{{deviceKeyword}}" class="dev-search-clear" bindtap="clearDeviceSearch">清空</view>
+          </view>
+          <view wx:if="{{deviceSearchOpen}}" class="dev-results">
+            <view wx:for="{{deviceResults}}" wx:key="k" class="dev-result"
+                  data-i="{{index}}" bindtap="pickDeviceSearch">
+              <text class="dr-name">{{item.model}}</text>
+              <text class="dr-path">{{item.path}}</text>
+            </view>
+            <view wx:if="{{!deviceResults.length}}" class="dev-empty">没有匹配的设备，换个关键词试试</view>
+          </view>
+          <view wx:if="{{form.devicePath}}" class="dev-path">{{form.devicePath}}</view>
+          <view class="tip">
+            设备必须从平台预设型号库选择，标题可以自己写；输入型号 / 品牌即可搜索（支持乱序多词、连写不带空格），点搜索结果直接选中，空输入框点开可浏览型号。
+            <text wx:if="{{type === 'buy'}}">商机按「型号 + 成色 + 数量」匹配，选到型号才能收到精准商机。</text>
+          </view>
+        </view>
+
+        <!-- 成色：全新 / 二手；二手再选几成新（租赁不涉及） -->
+        <view class="field" wx:if="{{!isRent}}">
+          <text class="f-label">{{type === 'buy' ? '成色要求' : '成色'}}<text class="req">*</text></text>
+          <view class="chip-group">
+            <view class="chip {{condType === 'new' ? 'on' : ''}}" data-v="new" bindtap="pickCondType">全新</view>
+            <view class="chip {{condType === 'used' ? 'on' : ''}}" data-v="used" bindtap="pickCondType">二手</view>
+          </view>
+          <view wx:if="{{condType === 'used'}}" class="chip-group sub-chips">
+            <view wx:for="{{condLevels}}" wx:key="*this"
+                  class="chip sm {{condLevel === item ? 'on' : ''}}"
+                  data-v="{{item}}" bindtap="pickCondLevel">{{item}}</view>
+          </view>
+        </view>
+
+        <view class="field">
+          <text class="f-label">{{type === 'buy' ? (isRent ? '租赁数量（台）' : '求购数量（台）') : (isRent ? '可租数量（台）' : '可售数量（台）')}}<text class="req">*</text></text>
+          <input type="number" value="{{form.qty}}" data-key="qty" bindinput="onInput" placeholder="如 8"/>
+          <view wx:if="{{type === 'buy'}}" class="tip">直接填写你确定的需求量，无需设置起订量；起订量只由供给方在发布商品时设置。</view>
+        </view>
+
+        <view class="field" wx:if="{{type === 'sell'}}">
+          <text class="f-label">{{isRent ? '起租数量（台）' : '起订量（台）'}}<text class="req">*</text></text>
+          <input type="number" value="{{form.minQty}}" data-key="minQty" bindinput="onInput" placeholder="如 1"/>
+          <view class="tip">买家 / 承租方单次最少下单的数量，不能大于{{isRent ? '可租' : '可售'}}数量。</view>
+        </view>
+
+        <!-- 同步库存：只有出售商品可参与商机匹配 -->
+        <view wx:if="{{type === 'sell' && !isRent}}" class="sw-row">
+          <view class="sw-main">
+            <text class="sw-t">同步到我的库存</text>
+            <text class="sw-d">开启后只把这条真实货源加入匹配；没有库存就不会收到对应商机。</text>
+          </view>
+          <switch checked="{{syncStock}}" color="#4F46E5" bindchange="toggleSyncStock"/>
+        </view>
+      </view>
+
+      <!-- 价格 / 租金 -->
+      <view class="form-sec">
+        <view class="sh">
+          <text class="st">{{isRent ? (type === 'buy' ? '预算与租期要求' : '租金与租期') : (type === 'buy' ? '预算与交付' : '价格与成交')}}</text>
+        </view>
+
+        <view class="field">
+          <text class="f-label">计价币种<text class="req">*</text></text>
+          <picker range="{{currencyLabels}}" value="{{currencyIndex}}" bindchange="pickCurrency">
+            <view class="f-input f-picker">{{currencyLabels[currencyIndex]}}<text class="f-arrow">›</text></view>
+          </picker>
+          <view class="tip">价格、预算、租金均以此币种计价；发布后不可修改。</view>
+        </view>
+
+        <!-- 价格方式：固定单价 / 价格区间 / 现场沟通 -->
+        <view class="field">
+          <text class="f-label">价格方式<text class="req">*</text></text>
+          <view class="chip-group">
+            <view class="chip {{form.priceMode === 'fixed' ? 'on' : ''}}" data-mode="fixed" bindtap="pickPriceMode">固定单价</view>
+            <view class="chip {{form.priceMode === 'range' ? 'on' : ''}}" data-mode="range" bindtap="pickPriceMode">价格区间</view>
+            <view class="chip {{form.priceMode === 'nego' ? 'on' : ''}}" data-mode="nego" bindtap="pickPriceMode">现场沟通</view>
+          </view>
+          <view class="tip">{{form.priceMode === 'nego' ? '不公开金额，对方咨询时在会话中沟通价格。' : (form.priceMode === 'range' ? '给出可接受的价格区间，对方按区间内的价格报价。' : '填写一口价，价格固定不议价。')}}</view>
+        </view>
+
+        <view class="field" wx:if="{{form.priceMode === 'range'}}">
+          <text class="f-label">{{isRent ? '最低月租金' : '最低单价'}}<text class="req">*</text></text>
+          <input type="text" value="{{form.price}}" data-key="price" bindinput="onInput" placeholder="请输入最低价"/>
+        </view>
+        <view class="field" wx:if="{{form.priceMode === 'range'}}">
+          <text class="f-label">{{isRent ? '最高月租金' : '最高单价'}}<text class="req">*</text></text>
+          <input type="text" value="{{form.priceMax}}" data-key="priceMax" bindinput="onInput" placeholder="需高于最低价"/>
+        </view>
+        <view class="field" wx:if="{{form.priceMode === 'fixed'}}">
+          <text class="f-label">{{type === 'buy' ? (isRent ? '月租金预算' : '预算单价') : (isRent ? '月租金' : '出售单价')}}<text class="req">*</text></text>
+          <input type="text" value="{{form.price}}" data-key="price" bindinput="onInput" placeholder="请输入金额"/>
+        </view>
+
+        <view class="field" wx:if="{{isRent}}">
+          <text class="f-label">租期<text class="req">*</text></text>
+          <view class="chip-group">
+            <view wx:for="{{groups.rentTerm}}" wx:key="v"
+                  class="chip {{item.on ? 'on' : ''}}"
+                  data-key="rentTerm" data-val="{{item.v}}" bindtap="pickChip">{{item.v}}</view>
+          </view>
+          <view class="tip">可同时给出多个可选租期，承租方按所选租期报价；租期越长单价可议空间越大。</view>
+        </view>
+
+        <view class="field" wx:if="{{isRent}}">
+          <text class="f-label">是否闭口<text class="req">*</text></text>
+          <view class="chip-group">
+            <view wx:for="{{groups.closed}}" wx:key="v"
+                  class="chip {{item.on ? 'on' : ''}}"
+                  data-key="closed" data-val="{{item.v}}" bindtap="pickChip">{{item.v}}</view>
+          </view>
+          <view class="tip">闭口价＝租金固定不可谈；开口价＝租金可在基准价上协商调整。</view>
+        </view>
+
+        <view class="field" wx:if="{{isRent}}">
+          <text class="f-label">押金<text class="req">*</text></text>
+          <view class="chip-group">
+            <view wx:for="{{groups.deposit}}" wx:key="v"
+                  class="chip {{item.on ? 'on' : ''}}"
+                  data-key="deposit" data-val="{{item.v}}" bindtap="pickChip">{{item.v}}</view>
+          </view>
+        </view>
+
+        <view class="field" wx:if="{{isRent}}">
+          <text class="f-label">租金支付<text class="req">*</text></text>
+          <view class="chip-group">
+            <view wx:for="{{groups.pay}}" wx:key="v"
+                  class="chip {{item.on ? 'on' : ''}}"
+                  data-key="pay" data-val="{{item.v}}" bindtap="pickChip">{{item.v}}</view>
+          </view>
+        </view>
+
+        <view class="field">
+          <text class="f-label">{{type === 'buy' ? '期望供给' : (isRent ? '供给状态' : '供给类型')}}<text class="req">*</text></text>
+          <view class="chip-group">
+            <view wx:for="{{groups.supply}}" wx:key="v"
+                  class="chip {{item.on ? 'on' : ''}}"
+                  data-key="supply" data-val="{{item.v}}" bindtap="pickChip">{{item.v}}</view>
+          </view>
+          <view class="tip" wx:if="{{isRent}}">现货＝设备已在机房可即刻起租；期货＝需排期后起租，需写明可起租时间。</view>
+        </view>
+
+        <view class="field">
+          <text class="f-label">税费<text class="req">*</text></text>
+          <view class="chip-group">
+            <view wx:for="{{groups.tax}}" wx:key="v"
+                  class="chip {{item.on ? 'on' : ''}}"
+                  data-key="tax" data-val="{{item.v}}" bindtap="pickChip">{{item.v}}</view>
+          </view>
+        </view>
+
+        <view class="field" wx:if="{{!isRent}}">
+          <text class="f-label">{{type === 'buy' ? '交付城市' : '交易地/发货地'}}<text class="req">*</text></text>
+          <view class="geo-row">
+            <picker class="pick-wrap" mode="selector" range="{{provinces}}" bindchange="pickProvince">
+              <view class="pick-btn {{form.province ? '' : 'placeholder'}}">
+                <text class="pb-t">{{form.province || '省 / 自治区 / 直辖市'}}</text>
+                <text class="pb-a">›</text>
+              </view>
+            </picker>
+            <picker class="pick-wrap" mode="selector" range="{{cities}}" bindchange="pickCity"
+                    disabled="{{!form.province}}">
+              <view class="pick-btn {{form.city ? '' : 'placeholder'}} {{form.province ? '' : 'disabled'}}">
+                <text class="pb-t">{{form.city || (form.province ? '城市' : '先选省份')}}</text>
+                <text class="pb-a">›</text>
+              </view>
+            </picker>
+          </view>
+          <view class="geo-row" style="margin-top:12rpx">
+            <view class="btn sm" bindtap="useLocation">定位自动填写</view>
+          </view>
+          <view class="tip">按省 / 直辖市 → 地级市逐级选择，覆盖全国 34 个省级行政区；也可以点「定位自动填写」，拒绝授权不影响手动选择。</view>
+        </view>
+
+        <view class="field">
+          <text class="f-label">{{isRent ? '可起租时间' : (type === 'buy' ? '期望交付时间' : '可交付时间')}}<text class="req">*</text></text>
+          <view class="chip-group">
+            <view wx:for="{{groups.deliver}}" wx:key="v"
+                  class="chip {{item.on ? 'on' : ''}}"
+                  data-key="deliver" data-val="{{item.v}}" bindtap="pickChip">{{item.v}}</view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 主体信息：从「我的 · 我的信息」带入，公开范围在本页只读展示，可跳回修改 -->
+      <view class="form-sec">
+        <view class="sh">
+          <text class="st">主体信息</text>
+          <text class="sd">按「我的信息」中的设置展示</text>
+        </view>
+
+        <view class="subj-card" wx:if="{{profileSubject}}">
+          <view class="subj-hd">
+            <text class="subj-nm">{{profileSubject}}</text>
+            <text class="subj-tag">{{profileKindLabel}}{{profileSubjectType ? ' · ' + profileSubjectType : ''}}</text>
+          </view>
+          <view class="subj-row" style="align-items:flex-start">
+            <text class="subj-k">公开范围</text>
+            <text class="subj-v {{subjectExposure === 'open' ? 'ok' : 'warn'}}">{{profileExposureLabel}}</text>
+          </view>
+          <view class="subj-row">
+            <text class="subj-k">资质</text>
+            <text class="subj-v {{profileQualDone >= profileQualTotal ? 'ok' : 'warn'}}">{{profileQualDone >= profileQualTotal ? '已提交 ' + profileQualDone + ' 项' : '待补充 ' + (profileQualTotal - profileQualDone) + ' 项'}}</text>
+          </view>
+          <view class="subj-link" bindtap="goProfile">修改我的信息 ›</view>
+        </view>
+
+        <view class="subj-empty" wx:else>
+          <view class="se-t">还没有设置主体信息</view>
+          <view class="se-d">发布前请先到「我的 · 我的信息」选择企业 / 个人主体并上传资质，返回本页会自动带入。</view>
+          <button class="btn primary sm" bindtap="goProfile">去填写主体信息</button>
+        </view>
+
+        <view class="tip" wx:if="{{subjectExposure === 'open'}}">公开主体信息：商品 / 需求可进入商机池，展示主体名称与核验标识；联系电话仍默认不公开。</view>
+        <view class="tip" wx:else>不公开主体：商品 / 需求照常展示，但不显示主体信息，也不能进入商机池。可点上方「修改我的信息」调整。</view>
+
+        <view class="field">
+          <text class="f-label">联系人手机号<text class="opt">选填</text></text>
+          <input type="number" maxlength="20" value="{{form.phone}}" data-key="phone" bindinput="onInput" bindblur="onInput"
+                 placeholder="11 位手机号，可留空"/>
+          <view class="tip">平台坐席优先使用「我的信息」中已绑定的手机号；此处填写仅作补充，不会展示给交易对方。</view>
+        </view>
+
+        <!-- 私密发布＝匿名公开：内容照常展示，发布者头像与主页入口隐藏 -->
+        <view class="field">
+          <view class="sw-row">
+            <view class="sw-main">
+              <text class="sw-t">私密发布（匿名）</text>
+              <text class="sw-d">{{privatePublish ? '内容照常公开，但不显示发布人，也无法进入你的主页' : '公开展示，显示你公开的主体信息'}}</text>
+            </view>
+            <switch checked="{{privatePublish}}" color="#4F46E5" bindchange="togglePrivate"/>
+          </view>
+          <view class="tip">
+            <block wx:if="{{privatePublish}}">
+              私密发布：{{type === 'sell' ? '商品仍会出现在首页、货架、实时货盘与搜索结果中，但头像显示「匿」、不显示主体信息，别人也点不进你的主页；你的主页里也不会出现这条商品。只有你在站内对话中主动说明，对方才知道是你发布的。' : '需求仍会出现在首页与需求列表中，但头像显示「匿」、不显示主体信息，别人也点不进你的主页；你的主页里也不会出现这条需求。只有你在站内对话中主动说明，对方才知道是你发布的。'}}
+            </block>
+            <block wx:else>
+              {{type === 'sell' ? '公开后商品会进入首页货架公开展示，并显示你的公开主体信息。' : '公开后需求会进入商机池与公开列表展示，并显示你的公开主体信息。'}}
+            </block>
+          </view>
+        </view>
+
+        <!-- 发布到：只有「公开主体」才能进商机池；私密发布固定仅普通 -->
+        <view class="field">
+          <text class="f-label">发布到<text class="req">*</text></text>
+          <view class="ch-group">
+            <view class="ch-opt {{channel === 'normal' ? 'on' : ''}} {{privatePublish ? 'disabled' : ''}}"
+                  data-v="normal" bindtap="pickChannel">仅普通发布</view>
+            <view class="ch-opt {{channel === 'pool' ? 'on' : ''}} {{(profileOpen && !privatePublish) ? '' : 'disabled'}}"
+                  data-v="pool" bindtap="pickChannel">仅商机</view>
+            <view class="ch-opt {{channel === 'both' ? 'on' : ''}} {{(profileOpen && !privatePublish) ? '' : 'disabled'}}"
+                  data-v="both" bindtap="pickChannel">二者都发</view>
+          </view>
+          <view class="ch-note" wx:if="{{privatePublish}}">私密发布只能普通发布：内容进入公开列表，但不会进入商机池；关闭上方开关后可选择渠道。</view>
+          <view class="ch-note warn" wx:elif="{{!profileOpen}}">当前为不公开主体：只能普通发布，不能进入商机池；可点上方「修改我的信息」改为公开主体。</view>
+          <view class="ch-note" wx:elif="{{channel === 'normal'}}">{{type === 'sell' ? '仅普通发布：商品只在首页商品池展示，所有用户都能看到，并可在平台内与你发起私聊。' : '仅普通发布：需求只在需求列表展示，所有用户都能看到，并可在平台内与你发起私聊。'}}</view>
+          <view class="ch-note" wx:elif="{{channel === 'pool'}}">仅商机：只在商机池按型号匹配展示，只有付费的商机会员能看到；意向更精准，成交意向度更高。</view>
+          <view class="ch-note" wx:else>二者都发：普通用户可在{{type === 'sell' ? '首页商品池' : '需求列表'}}看到并在平台内发起私聊；商机会员还会在商机池匹配到你，你公开手机号时可直接联系本人。</view>
+        </view>
+      </view>
+
+      <!-- 图片与视频 -->
+      <view class="form-sec">
+        <view class="sh">
+          <text class="st">图片与视频</text>
+          <text class="sd">选填 · 最多 5 张图 + 3 段视频</text>
+        </view>
+
+        <view class="callout warn media-tip">
+          <view class="ttl">上传后更容易匹配到合适的交易对象</view>
+          {{type === 'buy' ? '需求方可上传主体营业执照、最新验资视频、资金证明等材料。' : '供给方可上传最新拍摄的带水印设备实拍图 / 视频，含整机、铭牌、序列号更佳。'}}选填，不上传也可以发布；上传后平台坐席对接时更有依据。
+        </view>
+
+        <view class="media-badges">
+          <text class="chip warn">仅平台内查看</text>
+          <text class="chip warn">账号水印</text>
+          <text class="chip warn">加密存储</text>
+          <text class="chip">防盗链</text>
+        </view>
+
+        <!-- 图片上传卡片 -->
+        <view class="upload-card">
+          <view class="uc-hd">
+            <image class="up-ico" src="/assets/icons/ic-plus-circle.png" mode="aspectFit" />
+            <view class="ut">
+              <text class="uc-name">{{type === 'buy' ? '资质与参考图' : '设备实拍图'}}</text>
+              <text class="uc-desc">{{type === 'buy' ? '营业执照、验资截屏等' : '带水印的整机 / 铭牌实拍'}}</text>
+            </view>
+            <text class="state">{{imgList.length ? imgList.length + ' / 5 张' : '未上传'}}</text>
+          </view>
+
+          <view wx:if="{{imgList.length}}" class="f-list">
+            <view wx:for="{{imgList}}" wx:key="key" class="f-item">
+              <image class="f-ico" src="/assets/icons/ic-file.png" mode="aspectFit" />
+              <view class="f-main">
+                <text class="f-name">{{item.name}}</text>
+                <text class="f-meta">{{item.sizeText}}</text>
+              </view>
+              <view class="f-acts">
+                <text class="f-btn" data-kind="image" data-i="{{index}}" bindtap="renameMedia">命名</text>
+                <text class="f-btn danger" data-kind="image" data-i="{{index}}" bindtap="removeMedia">删除</text>
+              </view>
+            </view>
+          </view>
+
+          <view class="uc-acts" bindtap="uploadImage">
+            <view class="up-btn">＋ 上传图片</view>
+            <text class="uc-hint">JPG / PNG / WEBP · 单张 ≤ 10MB</text>
+          </view>
+          <view class="uc-sec">
+            <text>私有存储</text><text>·</text>
+            <text>鉴权链接</text><text>·</text>
+            <text>动态水印</text>
+          </view>
+        </view>
+
+        <!-- 视频上传卡片 -->
+        <view class="upload-card">
+          <view class="uc-hd">
+            <image class="up-ico" src="/assets/icons/ic-plus-circle.png" mode="aspectFit" />
+            <view class="ut">
+              <text class="uc-name">{{type === 'buy' ? '验资 / 说明视频' : '设备实拍视频'}}</text>
+              <text class="uc-desc">{{type === 'buy' ? '最新验资视频、场地方介绍' : '展示开机、铭牌与设备状态'}}</text>
+            </view>
+            <text class="state">{{videoList.length ? videoList.length + ' / 3 段' : '未上传'}}</text>
+          </view>
+
+          <view wx:if="{{videoList.length}}" class="f-list">
+            <view wx:for="{{videoList}}" wx:key="key" class="f-item">
+              <image class="f-ico" src="/assets/icons/ic-file.png" mode="aspectFit" />
+              <view class="f-main">
+                <text class="f-name">{{item.name}}</text>
+                <text class="f-meta">{{item.sizeText}}</text>
+              </view>
+              <view class="f-acts">
+                <text class="f-btn" data-kind="video" data-i="{{index}}" bindtap="renameMedia">命名</text>
+                <text class="f-btn danger" data-kind="video" data-i="{{index}}" bindtap="removeMedia">删除</text>
+              </view>
+            </view>
+          </view>
+
+          <view class="uc-acts" bindtap="uploadVideo">
+            <view class="up-btn">＋ 上传视频</view>
+            <text class="uc-hint">MP4 / MOV / M4V · 单段 ≤ 50MB</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 更多要求：默认收起；条件与交易流程不预设，用户自己添加 -->
+      <view class="form-sec more-sec">
+        <view class="more-toggle" bindtap="toggleMore">
+          <view class="mt-main">
+            <text class="mt-t">{{moreOpen ? '收起更多要求' : '＋ 添加更多要求'}}</text>
+            <text class="mt-d">条件设置、交易流程、验收与说明（选填）</text>
+          </view>
+          <text class="mt-a">{{moreOpen ? '收起' : '展开'}}</text>
+        </view>
+
+        <block wx:if="{{moreOpen}}">
+          <!-- 需求验收方式：现场压测 / 第三方报告，可多选 -->
+          <view class="field" wx:if="{{type === 'buy'}}">
+            <text class="f-label">验收方式<text class="opt">选填</text></text>
+            <view class="chip-group">
+              <view wx:for="{{acceptOpts}}" wx:key="v"
+                    class="chip {{item.on ? 'on' : ''}}"
+                    data-v="{{item.v}}" bindtap="pickAccept">{{item.v}}</view>
+            </view>
+            <view class="tip">可选「现场压测」或「第三方报告」；会展示在需求详情，供给方确认能配合后再联系你。</view>
+          </view>
+
+          <!-- 条件设置：全部选填 -->
+          <view class="sub-hd">
+            <text class="sub-t">条件设置</text>
+            <text class="sub-d">对方必须满足 / 可协商</text>
+          </view>
+
+          <view class="field">
+            <text class="f-label">{{mustTitle}}<text class="opt">选填</text></text>
+            <view class="chip-group">
+              <view wx:for="{{mustOpts}}" wx:key="v"
+                    class="chip {{item.on ? 'on' : ''}}"
+                    data-kind="must" data-v="{{item.v}}" bindtap="pickCond">{{item.v}}</view>
+            </view>
+            <view class="cond-add">
+              <input value="{{mustInput}}" data-kind="must" bindinput="onCondInput"
+                     placeholder="没有合适的？自己加一条必须条件" maxlength="30"/>
+              <view class="add-btn" data-kind="must" bindtap="addCond">＋ 添加</view>
+            </view>
+            <view class="tip">选填。勾选的必须条件对方需逐项确认，有任意一项不满足就无法开始对话；不选则不限制。</view>
+          </view>
+
+          <view class="field">
+            <text class="f-label">{{negoTitle}}<text class="opt">可多选</text></text>
+            <view class="chip-group">
+              <view wx:for="{{negoOpts}}" wx:key="v"
+                    class="chip {{item.on ? 'on' : ''}}"
+                    data-kind="nego" data-v="{{item.v}}" bindtap="pickCond">{{item.v}}</view>
+            </view>
+            <view class="cond-add">
+              <input value="{{negoInput}}" data-kind="nego" bindinput="onCondInput"
+                     placeholder="没有合适的？自己加一条可沟通条件" maxlength="30"/>
+              <view class="add-btn" data-kind="nego" bindtap="addCond">＋ 添加</view>
+            </view>
+            <view class="tip">可协商条件不拦截对话，会带进会话由双方自行协商；不选也可以。</view>
+          </view>
+
+          <!-- 交易流程：不预设，全部由发布者自己加 -->
+          <view class="sub-hd">
+            <text class="sub-t">交易流程</text>
+            <text class="sub-d">不预设，可自行添加与排序</text>
+          </view>
+
+          <view wx:if="{{flow.length}}" class="flow-edit-list">
+            <view wx:for="{{flow}}" wx:key="id" class="flow-edit">
+              <view class="fe-idx">{{index + 1}}</view>
+              <view class="fe-main">
+                <input class="fe-name" value="{{item.n}}" data-i="{{index}}" data-k="n"
+                       bindinput="onStepInput" placeholder="步骤名称" maxlength="20"/>
+                <input class="fe-desc" value="{{item.d}}" data-i="{{index}}" data-k="d"
+                       bindinput="onStepInput" placeholder="步骤说明（选填）" maxlength="40"/>
+              </view>
+              <view class="fe-acts">
+                <text class="fe-btn {{index === 0 ? 'off' : ''}}" data-i="{{index}}" data-dir="up" bindtap="moveStep">↑</text>
+                <text class="fe-btn {{index === flow.length - 1 ? 'off' : ''}}" data-i="{{index}}" data-dir="down" bindtap="moveStep">↓</text>
+                <text class="fe-btn danger" data-i="{{index}}" bindtap="removeStep">✕</text>
+              </view>
+            </view>
+          </view>
+          <view wx:else class="empty-line">还没有步骤，需要时在下方添加；不设置也可以直接发布。</view>
+
+          <view class="cond-add step-add">
+            <input value="{{stepName}}" data-k="name" bindinput="onStepDraft" placeholder="新步骤名称" maxlength="20"/>
+            <input value="{{stepDesc}}" data-k="desc" bindinput="onStepDraft" placeholder="说明（选填）" maxlength="40"/>
+            <view class="add-btn" bindtap="addStep">＋ 添加步骤</view>
+          </view>
+
+          <!-- 商品展示信息：详情页展示的验收标准 / 可承接数量 / 交易说明 -->
+          <block wx:if="{{type === 'sell'}}">
+            <view class="sub-hd">
+              <text class="sub-t">商品说明</text>
+              <text class="sub-d">会展示在商品详情</text>
+            </view>
+            <view class="field">
+              <text class="f-label">验收标准<text class="opt">选填</text></text>
+              <input type="text" value="{{form.accept}}" data-key="accept" bindinput="onInput"
+                     placeholder="如：现场压测 24 小时 + 序列号核对，或提供第三方检测报告"/>
+            </view>
+            <view class="field">
+              <text class="f-label">可承接数量<text class="opt">选填</text></text>
+              <input type="text" value="{{form.limit}}" data-key="limit" bindinput="onInput"
+                     placeholder="如：单批次最多 32 台，可分批发货"/>
+            </view>
+            <view class="field">
+              <text class="f-label">交易说明<text class="opt">选填</text></text>
+              <textarea class="ta" value="{{form.note}}" data-key="note" bindinput="onInput" maxlength="300"
+                        placeholder="补充发票、质保、发货、验机等说明，最多 300 字"></textarea>
+            </view>
+            <view class="field">
+              <text class="f-label">接单要求<text class="opt">选填</text></text>
+              <textarea class="ta" value="{{form.requirements}}" data-key="requirements" bindinput="onInput" maxlength="300"
+                        placeholder="如：需提供营业执照与用途说明，支持先验后付"></textarea>
+            </view>
+          </block>
+        </block>
+      </view>
+
+      <!-- 底部提交：编辑模式只有「保存修改」，不存草稿、不改状态 -->
+      <view class="submit-bar safe-bottom">
+        <view class="submit-row">
+          <button wx:if="{{!editing}}" class="btn block" bindtap="saveDraft">存草稿</button>
+          <button class="btn primary block" bindtap="submit" disabled="{{editLoading}}">{{editing ? '保存修改' : '发布上架'}}</button>
+        </view>
+        <view class="submit-tip">{{editing ? '保存后立即生效，状态不变；平台仍可调整状态或下架。材料全程加密，仅平台内可见并叠加账号水印。' : '发布后直接上架可见，平台后续可调整状态或下架；材料全程加密，仅平台内可见并叠加账号水印。'}}</view>
+      </view>
+    </view>
+  </block>
+</view>

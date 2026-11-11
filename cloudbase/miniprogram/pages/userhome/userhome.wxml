@@ -1,0 +1,99 @@
+<view class="uh-page">
+
+  <!-- 头部：头像 + 名称 + 关注 -->
+  <view class="uh-hero">
+    <view class="uh-av">{{avatar}}</view>
+    <view class="uh-main">
+      <view class="uh-nm">{{nick || '平台用户'}}</view>
+      <view class="uh-sub" wx:if="{{!hidden}}">
+        {{ownerSubject || nick}}<text wx:if="{{city}}"> · {{city}}</text>
+      </view>
+      <view class="uh-sub" wx:else>该用户未公开主体信息</view>
+      <view class="uh-tags">
+        <text wx:if="{{member}}" class="uh-tag member">商机会员</text>
+        <text class="uh-tag brand">{{hidden ? '未公开主体' : '已公开主体'}}</text>
+        <text wx:if="{{city}}" class="uh-tag">{{city}}</text>
+        <text wx:if="{{items.length}}" class="uh-tag">在架 {{items.length}} 条</text>
+      </view>
+    </view>
+    <view class="uh-follow {{following ? 'on' : ''}}" bindtap="toggleFollow">{{following ? '已关注' : '关注'}}</view>
+  </view>
+
+  <!-- 主体与联系方式：只在对方公开时展示 -->
+  <view wx:if="{{!hidden}}" class="uh-card">
+    <view class="uh-chd">对方公开的主体信息</view>
+    <view class="uh-row"><text class="uh-k">主体名称</text><text class="uh-v">{{ownerSubject || '未填写'}}</text></view>
+    <view class="uh-row"><text class="uh-k">所在城市</text><text class="uh-v">{{city || '未填写'}}</text></view>
+    <view wx:if="{{contactName}}" class="uh-row"><text class="uh-k">联系人</text><text class="uh-v">{{contactName}}</text></view>
+    <view wx:if="{{phonePublic && phone}}" class="uh-row" bindtap="callPhone">
+      <text class="uh-k">联系电话</text>
+      <text class="uh-v strong">{{phone}}</text>
+      <text class="uh-copy" catchtap="copyPhone">复制</text>
+    </view>
+    <view wx:elif="{{memberOnlyContact}}" class="uh-row" bindtap="goBiz">
+      <text class="uh-k">联系电话</text>
+      <text class="uh-v">{{phoneMasked}} · 商机会员可查看</text>
+      <text class="uh-copy">开通</text>
+    </view>
+    <view wx:elif="{{phoneMasked}}" class="uh-row">
+      <text class="uh-k">联系电话</text><text class="uh-v">{{phoneMasked}}（未公开完整号码）</text>
+    </view>
+    <view class="uh-tip">对方公开的信息可直接查看；联系电话仅用于真实交易沟通，请勿用于骚扰或转卖。</view>
+  </view>
+
+  <view wx:else class="uh-card">
+    <view class="uh-chd">暂未公开主体</view>
+    <view class="uh-tip">对方未在设置中公开主体名称与联系方式，公众可见的在架内容与资讯仍可查看。你仍可以关注对方，或回到会话直接发私信沟通。</view>
+  </view>
+
+  <!-- 在架内容 -->
+  <view class="uh-block">
+    <view class="uh-bhd">
+      <text class="uh-bt">在架内容</text>
+      <text class="uh-br">{{items.length ? items.length + ' 条' : ''}}</text>
+    </view>
+
+    <view wx:if="{{loading}}" class="uh-empty">加载中…</view>
+    <view wx:elif="{{error}}" class="uh-empty" bindtap="retry">{{error}}，点击重试</view>
+    <block wx:else>
+      <view wx:for="{{items}}" wx:key="id" class="uh-item" data-id="{{item.id}}" data-type="{{item.type}}" bindtap="openItem">
+        <view class="uh-item-hd">
+          <text class="uh-item-tag {{item.type === 'demand' ? 'demand' : ''}}">{{item.type === 'demand' ? '需求' : (item.tradeMode || '货源')}}</text>
+          <text class="uh-item-tt">{{item.title || item.cat || '未命名'}}</text>
+        </view>
+        <view class="uh-item-ft">
+          <text class="uh-item-meta">{{item.cat}}{{item.city ? ' · ' + item.city : ''}}</text>
+          <text class="uh-item-price">{{item.priceText}}</text>
+        </view>
+      </view>
+      <view wx:if="{{!items.length}}" class="uh-empty">{{news.length ? '暂无公开的在架内容' : '对方暂无公开发布的货源、需求或资讯'}}</view>
+    </block>
+  </view>
+
+  <!-- 作者发布的资讯 -->
+  <view wx:if="{{news.length}}" class="uh-block">
+    <view class="uh-bhd">
+      <text class="uh-bt">TA 的资讯</text>
+      <text class="uh-br">{{news.length}} 篇</text>
+    </view>
+    <view wx:for="{{news}}" wx:key="id" class="uh-news" data-id="{{item.id}}" bindtap="openNewsItem">
+      <view class="uh-news-tt">{{item.title || '未命名资讯'}}</view>
+      <view wx:if="{{item.summary}}" class="uh-news-sm">{{item.summary}}</view>
+      <view class="uh-news-ft">
+        <text>{{item.cat || '资讯'}}</text>
+        <text wx:if="{{item.published}}">{{item.published}}</text>
+        <text>{{item.views}} 次浏览</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 举报：先在表单里写清情况，提交后进入管理端风险工单 -->
+  <view class="uh-report" bindtap="report">举报该用户</view>
+
+  <!-- 底部：私信 -->
+  <view class="uh-bar">
+    <button class="uh-btn ghost" bindtap="toggleFollow">{{following ? '已关注' : '关注'}}</button>
+    <button class="uh-btn primary" bindtap="sendMessage">发私信</button>
+  </view>
+
+</view>

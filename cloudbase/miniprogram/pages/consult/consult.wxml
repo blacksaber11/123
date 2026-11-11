@@ -1,0 +1,233 @@
+<!-- 标的已下架 / 不存在：显示失效态，绝不渲染空表单 -->
+<view wx:if="{{missing && !product}}" class="empty">
+  <view class="big">404</view>
+  <view class="ttl">{{isDemand ? '需求已关闭或不存在' : '商品已下架或不存在'}}</view>
+  <view class="ds">链接可能已失效，请回到首页重新选择。</view>
+  <view class="acts">
+    <button class="btn ghost" bindtap="back">返回</button>
+  </view>
+</view>
+
+<!-- 加载中：本地无演示数据、云端结果未到时不留白屏 -->
+<view wx:if="{{!product && !missing}}" class="loading">加载中…</view>
+
+<view wx:if="{{product}}" class="consult-page">
+
+  <!-- 顶部说明 -->
+  <view class="callout brand top-callout">{{topTip}}</view>
+
+  <!-- 标的信息（只读） -->
+  <view class="block">
+    <view class="block-hd">
+      <text class="bt">{{isDemand ? '正在响应的需求' : (isRent ? '正在承租的设备' : '正在咨询的商品')}}</text>
+      <text class="r">规格只读，无需填写</text>
+    </view>
+    <view class="price-row">
+      <view class="p price-sm">{{product.priceText}}<text class="p-unit">{{product.priceUnit}}</text></view>
+      <view class="pn">
+        <block wx:if="{{isDemand}}">
+          <text class="br-line">{{product.tax}} · {{product.cond}}</text>
+          <text class="br-line">{{product.city}} · {{product.deliver}}</text>
+        </block>
+        <block wx:elif="{{isRent}}">
+          <text class="br-line">租期 {{product.term}} · {{product.closed}}</text>
+          <text class="br-line">{{product.taxShort}} · {{product.supply}} · {{product.city}}</text>
+        </block>
+        <block wx:else>
+          <text class="br-line">{{product.cond}} · {{product.taxShort}}</text>
+          <text class="br-line">{{product.supply}} · {{product.city}}</text>
+        </block>
+      </view>
+    </view>
+
+    <view class="spec-lines">
+      <view class="spec-line"><text class="sl-k">设备类型</text><text class="sl-v">{{product.cat}}</text></view>
+      <view class="spec-line"><text class="sl-k">品牌</text><text class="sl-v">{{product.brand}}</text></view>
+      <view class="spec-line"><text class="sl-k">型号</text><text class="sl-v">{{product.model}}</text></view>
+      <view class="spec-line">
+        <text class="sl-k">{{isDemand ? '需求数量' : (isRent ? '可租数量' : '可售数量')}}</text>
+        <text class="sl-v">{{product.qty}} 台</text>
+      </view>
+    </view>
+
+    <view class="callout warn" style="margin-top: 20rpx">
+      <view class="ttl">{{isDemand ? '需求方的响应要求' : (isRent ? '出租方的承租方要求' : '货主的接单要求')}}</view>
+      <text class="br-line">{{product.requirements}}</text>
+      <text class="br-line">本页无需上传材料，如{{isDemand ? '需求方' : '货主'}}另有要求，平台坐席会在电话确认时与你核对。</text>
+    </view>
+  </view>
+
+  <!-- 租赁限制条款 -->
+  <view wx:if="{{isRent && product.rentLimits.length}}" class="block">
+    <view class="block-hd">
+      <text class="bt">租赁限制条款</text>
+      <text class="r">须全部接受</text>
+    </view>
+    <view class="cond-list">
+      <view wx:for="{{product.rentLimits}}" wx:key="*this" class="ci">
+        <text class="ci-ico ok">●</text>
+        <text class="ci-name">{{item}}</text>
+      </view>
+    </view>
+    <view class="callout" style="margin-top: 20rpx">条款在下方表单中逐条确认，全部接受才能提交。</view>
+  </view>
+
+  <!-- 对方必须条件：逐项自己确认 -->
+  <view class="form-sec">
+    <view class="sh">
+      <text class="st">{{isDemand ? '需求方的必须条件' : (isRent ? '出租方的必须条件' : '货主的必须条件')}}</text>
+      <text class="sd">已确认满足 {{condMet}} / {{condTotal}} 项</text>
+    </view>
+    <view class="callout {{condPass ? 'brand' : 'warn'}}" style="margin-bottom: 20rpx">
+      <block wx:if="{{condPass}}">你已确认满足全部必须条件，可提交{{isDemand ? '响应' : '咨询'}}，平台将按「平台核对」推进。</block>
+      <block wx:else>请逐项对照自己的实际情况选择「满足 / 不满足」。还有 {{condUnmet}} 项未确认或未满足，全部满足才能{{isDemand ? '提交响应' : '提交咨询'}}。</block>
+    </view>
+    <view class="cond-list">
+      <view wx:for="{{mustList}}" wx:key="t" class="ci">
+        <text class="ci-ico {{item.state === 'yes' ? 'ok' : ''}}{{item.state === 'no' ? 'bad' : ''}}">{{item.state === 'yes' ? '✓' : (item.state === 'no' ? '✕' : '○')}}</text>
+        <view class="ci-body">
+          <view class="ci-name">{{item.t}}</view>
+          <view wx:if="{{item.state === 'no'}}" class="ci-desc">你不满足该项，无法提交本次{{isDemand ? '响应' : '咨询'}}</view>
+          <view wx:elif="{{item.state === ''}}" class="ci-desc">未确认</view>
+        </view>
+        <view class="ci-confirm">
+          <view class="cc-btn {{item.state === 'yes' ? 'on' : ''}}" data-i="{{index}}" data-val="yes" bindtap="setCond">满足</view>
+          <view class="cc-btn {{item.state === 'no' ? 'on bad' : ''}}" data-i="{{index}}" data-val="no" bindtap="setCond">不满足</view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 对方可沟通条件 -->
+  <view wx:if="{{negoList.length}}" class="form-sec">
+    <view class="sh">
+      <text class="st">{{isDemand ? '需求方的可沟通条件' : (isRent ? '出租方的可沟通条件' : '货主的可沟通条件')}}</text>
+      <text class="sd">可协商，不拦截提交</text>
+    </view>
+    <view class="chip-group">
+      <text wx:for="{{negoList}}" wx:key="*this" class="chip">{{item}}</text>
+    </view>
+    <view class="callout" style="margin-top: 20rpx">这些条件可在建群后协商，不影响本次提交；如需说明，可写在下方「补充说明」中。</view>
+  </view>
+
+  <!-- 表单分区 -->
+  <view wx:for="{{sections}}" wx:for-item="sec" wx:for-index="gi" wx:key="title" class="form-sec">
+    <view class="sh">
+      <text class="st">{{sec.title}}</text>
+      <text class="sd">{{sec.note}}</text>
+    </view>
+    <!-- 主体信息保密提示：填写前展示 -->
+    <view wx:if="{{sec.tip}}" class="callout brand sec-tip">
+      <view class="ttl">主体信息保密提示</view>
+      <text>{{sec.tip}}</text>
+    </view>
+    <view wx:for="{{sec.fields}}" wx:for-item="f" wx:for-index="fi" wx:key="key" class="field">
+      <view class="f-label">
+        <text>{{f.label}}</text>
+        <text wx:if="{{f.req}}" class="req">*</text>
+        <text wx:elif="{{f.type === 'info'}}" class="opt">微信授权</text>
+        <text wx:else class="opt">选填</text>
+      </view>
+      <block wx:if="{{f.type === 'chips'}}">
+        <view class="chip-group">
+          <view wx:for="{{f.opts}}" wx:for-item="o" wx:for-index="oi" wx:key="label"
+                class="chip {{o.on ? 'on' : ''}}"
+                data-gi="{{gi}}" data-fi="{{fi}}" data-oi="{{oi}}" bindtap="toggleChip">{{o.label}}</view>
+        </view>
+      </block>
+      <view wx:elif="{{f.type === 'info'}}" class="f-info">{{f.value}}</view>
+      <textarea wx:elif="{{f.type === 'textarea'}}" value="{{f.value}}"
+                data-gi="{{gi}}" data-fi="{{fi}}" bindinput="onFieldInput"
+                placeholder="{{f.ph}}" maxlength="200" auto-height/>
+      <input wx:elif="{{f.type === 'number'}}" type="number" value="{{f.value}}"
+             data-gi="{{gi}}" data-fi="{{fi}}" bindinput="onFieldInput" placeholder="{{f.ph}}"/>
+      <input wx:elif="{{f.type === 'phone'}}" type="number" maxlength="20" value="{{f.value}}"
+             data-gi="{{gi}}" data-fi="{{fi}}" bindinput="onFieldInput" bindblur="onFieldInput" placeholder="{{f.ph}}"/>
+      <input wx:else type="text" value="{{f.value}}"
+             data-gi="{{gi}}" data-fi="{{fi}}" bindinput="onFieldInput" placeholder="{{f.ph}}"/>
+      <view wx:if="{{f.tip}}" class="tip">{{f.tip}}</view>
+    </view>
+  </view>
+
+  <!-- 交易流程 -->
+  <view class="form-sec">
+    <view class="sh">
+      <text class="st">{{isDemand ? '响应流程' : (isRent ? '租赁流程' : '购买流程')}}</text>
+      <text class="sd">{{isDemand ? '需求方设定' : '发布方设定'}}</text>
+    </view>
+    <view class="flow-list">
+      <view wx:for="{{flow}}" wx:key="n" class="flow-item">
+        <view class="fi-idx">{{index + 1}}</view>
+        <view class="fi-content">
+          <view class="fi-name">{{item.n}}</view>
+          <view wx:if="{{item.d}}" class="fi-desc">{{item.d}}</view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 补充材料 -->
+  <view class="form-sec">
+    <view class="sh">
+      <text class="st">补充材料</text>
+      <text class="sd">选填 · 可后补</text>
+    </view>
+    <view class="callout" style="margin-bottom: 20rpx">
+      采购意向函、主体资质、资金证明等材料无需在上游环节上传，可先提交后续由平台坐席收取。若主动上传，材料端侧加密后存入私有空间；图片与视频仅你与平台可见，预览时会叠加你的账号与昵称水印。
+    </view>
+
+    <!-- 图片：最多 5 张，单张不超过 10MB -->
+    <view class="up-hd">
+      <text class="up-t">图片</text>
+      <text class="up-c">{{imgList.length}} / 5</text>
+    </view>
+    <view class="upload-grid">
+      <view wx:for="{{imgList}}" wx:key="key" class="upload-item">
+        <image src="{{item.path}}" mode="aspectFill" show-menu-by-longpress="false"/>
+        <text class="up-wm">{{item.wm}}</text>
+        <view class="up-name">{{item.name}}</view>
+        <view class="up-ops">
+          <text class="up-btn" data-kind="image" data-i="{{index}}" bindtap="renameFile">命名</text>
+          <text class="up-btn danger" data-kind="image" data-i="{{index}}" bindtap="removeFile">删除</text>
+        </view>
+      </view>
+      <view wx:if="{{imgList.length < 5}}" class="upload-add" bindtap="chooseImage">
+        <image class="add-ico" src="/assets/icons/ic-plus-circle.png" mode="aspectFit" />
+        <text class="add-txt">上传图片</text>
+      </view>
+    </view>
+
+    <!-- 视频：最多 3 段，单段不超过 50MB -->
+    <view class="up-hd">
+      <text class="up-t">视频</text>
+      <text class="up-c">{{videoList.length}} / 3</text>
+    </view>
+    <view class="upload-grid">
+      <view wx:for="{{videoList}}" wx:key="key" class="upload-item video">
+        <video src="{{item.path}}" object-fit="cover" show-menu-by-longpress="false"/>
+        <text class="up-wm">{{item.wm}}</text>
+        <view class="up-name">{{item.name}}</view>
+        <view class="up-ops">
+          <text class="up-btn" data-kind="video" data-i="{{index}}" bindtap="renameFile">命名</text>
+          <text class="up-btn danger" data-kind="video" data-i="{{index}}" bindtap="removeFile">删除</text>
+        </view>
+      </view>
+      <view wx:if="{{videoList.length < 3}}" class="upload-add" bindtap="chooseVideo">
+        <image class="add-ico" src="/assets/icons/ic-plus-circle.png" mode="aspectFit" />
+        <text class="add-txt">上传视频</text>
+      </view>
+    </view>
+    <view class="sm">上传后可点「命名」自己起名（如：营业执照 / 验资视频），坐席一眼能认出是哪份材料。单张图片不超过 10MB，单段视频不超过 50MB。</view>
+  </view>
+
+  <!-- 底部提交 -->
+  <view class="submit-bar safe-bottom">
+    <view class="sb-info">
+      <view class="sb-tip">已填写 {{filled}} / {{total}} 项</view>
+      <view class="sb-note">{{isDemand ? '不直接联系需求方 · 全程保密' : '不直接联系货主 · 全程保密'}}</view>
+    </view>
+    <button class="btn primary" bindtap="submit" disabled="{{isMine || !condPass}}">
+      {{isMine ? (isDemand ? '不能响应自己的需求' : '不能咨询自己的发布') : (condPass ? (isDemand ? '提交响应' : '提交咨询') : '尚有 ' + condUnmet + ' 项条件未满足')}}
+    </button>
+  </view>
+</view>

@@ -1,0 +1,405 @@
+<view class="home">
+  <!-- 固定头部：Tab 切换 + 搜索栏 -->
+  <view class="home-hd">
+    <!-- 资讯视图不再显示「资讯圈」标签，头部直接是搜索栏 -->
+    <view wx:if="{{tab !== 'news'}}" class="seg-tabs">
+      <block wx:if="{{tab === 'market'}}">
+        <view class="seg on">实时货盘</view>
+      </block>
+      <block wx:else>
+        <view class="seg {{tab === 'sell' ? 'on' : ''}}" data-tab="sell" bindtap="switchTab">在售货源</view>
+        <view class="seg {{tab === 'buy' ? 'on' : ''}}" data-tab="buy" bindtap="switchTab">求购需求</view>
+      </block>
+    </view>
+
+    <view class="searchbar">
+      <view class="search-field">
+        <image class="s-ico" src="/assets/icons/ic-search.png" mode="aspectFit" />
+        <input class="s-input" value="{{search}}" bindinput="onSearch" confirm-type="search"
+               placeholder="{{tab === 'sell' ? '搜型号 / 品牌 / 城市，如 H100 80G 深圳' : (tab === 'buy' ? '搜型号 / 品牌 / 城市，如 A100 北京' : (tab === 'news' ? '搜资讯标题 / 品类 / 发布城市' : '搜产品：型号 / 品类 / 城市'))}}"/>
+        <text wx:if="{{search}}" class="s-clear" bindtap="clearSearch">✕</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 首页工具入口：测算 / 实时货盘 / 我的库存 / 商机 -->
+  <view wx:if="{{tab === 'sell' || tab === 'buy'}}" class="home-tools">
+    <view class="ht-item" bindtap="openTools">
+      <view class="ht-ico"><image class="ht-img" src="/assets/icons/ht-calc.png" mode="aspectFit" /></view>
+      <view class="ht-tt">算力工具</view>
+      <view class="ht-ds">4 个测算工具</view>
+    </view>
+    <view class="ht-item" data-tab="market" bindtap="switchTab">
+      <view class="ht-ico"><image class="ht-img" src="/assets/icons/ht-board.png" mode="aspectFit" /></view>
+      <view class="ht-tt">实时货盘</view>
+      <view class="ht-ds">买卖价对比</view>
+    </view>
+    <view class="ht-item" bindtap="goStock">
+      <view class="ht-ico"><image class="ht-img" src="/assets/icons/ht-stock.png" mode="aspectFit" /></view>
+      <view class="ht-tt">我的库存</view>
+      <view class="ht-ds">自动匹配商机</view>
+    </view>
+    <view class="ht-item" bindtap="goBiz">
+      <view class="ht-ico"><image class="ht-img" src="/assets/icons/ht-biz.png" mode="aspectFit" /></view>
+      <view class="ht-tt">商机</view>
+      <view class="ht-ds">99 元 / 月</view>
+      <view wx:if="{{bizBadge}}" class="ht-badge">{{bizBadge > 99 ? '99+' : bizBadge}}</view>
+    </view>
+  </view>
+
+  <!-- 排序 + 筛选条 -->
+  <view wx:if="{{tab !== 'market'}}" class="sortbar">
+    <scroll-view scroll-x="true" class="sort-scroll" enhanced show-scrollbar="{{false}}">
+      <view class="sort-items">
+        <view wx:for="{{sortOptions}}" wx:key="*this"
+              class="s-item {{sort === item ? 'on' : ''}}"
+              data-sort="{{item}}" bindtap="changeSort">
+          {{item}}
+        </view>
+      </view>
+    </scroll-view>
+    <view wx:if="{{tab === 'sell' || tab === 'buy'}}" class="filter-btn {{activeCount ? 'active' : ''}}" bindtap="openFilter">
+      <text>⚙ 筛选</text>
+      <text wx:if="{{activeCount}}" class="badge">{{activeCount}}</text>
+    </view>
+  </view>
+
+  <!-- 已选筛选条件 -->
+  <view wx:if="{{activeChips.length}}" class="active-filters">
+    <view wx:for="{{activeChips}}" wx:key="label" class="af"
+          data-k="{{item.key}}" data-v="{{item.v}}" bindtap="removeChip">
+      <text class="af-k">{{item.label}}</text><text class="af-x">✕</text>
+    </view>
+    <view class="af-clear" bindtap="clearFilter">清空</view>
+  </view>
+
+  <!-- 资讯圈筛选：全国 / 同城 / 选择城市，按发布地址过滤。
+       城市名较长时筛选条可横向滚动，「＋ 发布资讯」固定在右侧，避免被挤出屏幕 -->
+  <view wx:if="{{tab === 'news'}}" class="news-scope">
+    <scroll-view scroll-x="true" class="ns-scroll" enhanced show-scrollbar="{{false}}">
+      <view class="ns-chips">
+        <view class="ns-chip {{newsScope === 'all' ? 'on' : ''}}" data-scope="all" bindtap="switchNewsScope">全国</view>
+        <view class="ns-chip {{newsScope === 'city' ? 'on' : ''}}" data-scope="city" bindtap="switchNewsScope">同城 · {{newsLocalCity}}</view>
+        <view class="ns-chip {{newsScope === 'pick' ? 'on' : ''}}" data-scope="pick" bindtap="switchNewsScope">{{newsScope === 'pick' && newsCity ? newsCity : '选择城市'}} ▾</view>
+      </view>
+    </scroll-view>
+    <view class="ns-pub" bindtap="openNewsPub">＋ 发布资讯</view>
+  </view>
+  <view wx:if="{{tab === 'news'}}" class="news-stat">按发布地址筛选 · {{newsStats.city}} · 共 {{items.length}} 条</view>
+
+  <!-- 列表 -->
+  <view class="feed">
+    <block wx:if="{{tab === 'sell'}}">
+      <view wx:for="{{items}}" wx:key="id" class="gcard" data-id="{{item.id}}" bindtap="openDetail">
+        <view class="top">
+          <view class="avatar {{item.anon ? 'anon' : ''}}" data-key="{{item.ownerKey}}" data-nick="{{item.ownerSubject || item.ownerText}}" catchtap="openOwner">{{item.ownerShort}}</view>
+          <text class="top-info">{{item.ownerText}} · {{item.city}} · {{item.published}}</text>
+          <view class="top-right">
+            <text class="pill-tag {{item.isRent ? 'rent' : ''}}">{{item.tradeMode}}</text>
+            <view class="fav-btn {{item.fav ? 'on' : ''}}" data-id="{{item.id}}" catchtap="toggleFav">{{item.fav ? '★' : '☆'}}</view>
+          </view>
+        </view>
+        <view class="title">{{item.title}}</view>
+        <view class="chips">
+          <text class="chip">{{item.cat}}</text>
+          <text wx:if="{{!item.isRent}}" class="chip">{{item.cond}}</text>
+          <text class="chip">{{item.taxShort}}</text>
+          <text class="chip">{{item.supply}}</text>
+        </view>
+        <view class="mid">
+          <view class="thumb {{item.isRent ? 'rent' : ''}}">
+            <image wx:if="{{item.cover}}" class="thumb-img" src="{{item.cover}}" mode="aspectFill" lazy-load />
+            <view wx:else class="thumb-in">
+              <text class="ti-model">{{item.model}}</text>
+              <text class="ti-qty">{{item.isRent ? '可租 ' + item.qty + ' 台' : item.qty + ' 台'}}</text>
+            </view>
+          </view>
+          <view class="meta">
+            <view class="price">{{item.priceText}}<text class="p-unit">{{item.priceUnit}}</text></view>
+            <view class="sub">{{item.subText}}</view>
+            <view class="sub">{{item.brand}} · {{item.city}} · {{item.isRent ? '起租 ' + item.minQty + ' 台' : '起订 ' + item.minQty + ' 台'}}</view>
+          </view>
+        </view>
+        <view class="chips tag-chips">
+          <text wx:for="{{item.tags}}" wx:for-item="tag" wx:key="*this" class="chip brand">{{tag}}</text>
+        </view>
+        <view class="foot">
+          <text>浏览 {{item.views}}</text>
+          <text wx:if="{{item.favCount}}">收藏 {{item.favCount}}</text>
+          <view class="r">已上传 {{item.checklistDone}} / {{item.checklistTotal}} 项</view>
+        </view>
+      </view>
+    </block>
+
+    <!-- 实时货盘：在售商品与用户报价聚合；代采 / 代售只在商机池展示 -->
+    <block wx:elif="{{tab === 'market'}}">
+      <view class="q-stats">
+        <view class="qs-l">
+          <view class="qs-t">实时货盘 {{boardStats.count}} 个产品</view>
+          <view class="qs-d">更新于 {{boardStats.updatedAt || '—'}} · 卖价综合在售商品与用户报价；代采 / 代售只在商机池展示</view>
+        </view>
+        <button class="btn sm primary" bindtap="openPaste">补充报价</button>
+      </view>
+
+      <scroll-view scroll-x="true" class="board-cats" enhanced show-scrollbar="{{false}}">
+        <view class="board-cats-in">
+          <view wx:for="{{boardCats}}" wx:key="*this"
+                class="bc-chip {{boardCat === item ? 'on' : ''}}"
+                data-v="{{item}}" bindtap="pickBoardCat">{{item}}</view>
+        </view>
+      </scroll-view>
+
+      <view wx:for="{{items}}" wx:key="id" class="b-card">
+        <view class="b-top">
+          <view class="q-cat">{{item.cat}}</view>
+          <view class="b-spread">{{item.spreadText}}<text wx:if="{{item.spreadPct}}" class="b-pct">{{item.spreadPct}}%</text></view>
+        </view>
+        <view class="b-model">{{item.model}}</view>
+        <view class="b-prices">
+          <view class="bp buy">
+            <view class="bp-k">买方预算</view>
+            <view class="bp-v">{{item.buyText}}</view>
+            <view class="bp-sub">{{item.buyCount || 0}} 台求购预算</view>
+          </view>
+          <view class="bp sell">
+            <view class="bp-k">卖方报价</view>
+            <view class="bp-v">{{item.sellText}}</view>
+            <view class="bp-sub">{{item.sellCount || 0}} 台在售 / 报价参考</view>
+          </view>
+        </view>
+        <view wx:if="{{item.priceLevelText}}" class="b-level">
+          <view class="b-level-main">
+            <text class="b-level-k">平台参考价</text>
+            <text class="b-level-v">{{item.priceLevelText}}</text>
+          </view>
+          <text class="b-level-s">{{item.priceRangeText}} · 置信度 {{item.confidenceText}}{{item.sourceText ? ' · ' + item.sourceText : ''}}</text>
+        </view>
+        <view class="b-meta">{{item.city}} · 更新 {{item.updated}}</view>
+        <view class="b-foot">
+          <text class="q-note">仅展示价格与城市，委托方身份不公开</text>
+          <button class="btn sm primary" data-target="{{item.model}}" catchtap="openDaicai">委托代采</button>
+        </view>
+      </view>
+    </block>
+
+    <!-- 资讯圈：官方资讯 + 用户发布，按发布地址筛选 -->
+    <block wx:elif="{{tab === 'news'}}">
+      <view wx:for="{{items}}" wx:key="id" class="n-card" data-id="{{item.id}}" bindtap="openNews">
+        <view class="n-top">
+          <view class="n-avatar {{item.official ? 'off' : ''}}" data-key="{{item.authorKey}}" data-nick="{{item.author}}" catchtap="openOwner">{{item.official ? '官' : '用'}}</view>
+          <view class="n-src">
+            <view class="n-author">{{item.official ? '官方资讯 · ' + (item.author || '平台运营') : (item.author || '用户发布')}}</view>
+            <view class="n-sub">{{item.city}} · {{item.published}}<text wx:if="{{item.selfStatus}}"> · {{item.selfStatus}}{{item.selfReason ? '：' + item.selfReason : ''}}</text></view>
+          </view>
+          <view class="n-cat">{{item.cat}}</view>
+        </view>
+        <view class="n-title">{{item.title}}</view>
+        <view class="n-sum">{{item.summary}}</view>
+        <view class="n-foot">
+          <text>{{item.views || 0}} 次浏览</text>
+          <text class="n-addr">发布地：{{item.city}}</text>
+        </view>
+      </view>
+    </block>
+
+    <block wx:else>
+      <view wx:for="{{items}}" wx:key="id" class="gcard demand" data-id="{{item.id}}" bindtap="openDetail">
+        <view class="top">
+          <view class="avatar demand-av {{item.anon ? 'anon' : ''}}" data-key="{{item.ownerKey}}" data-nick="{{item.ownerSubject || item.publisher}}" catchtap="openOwner">{{item.anon ? '匿' : '需'}}</view>
+          <text class="top-info">{{item.contact}} · {{item.city}} · {{item.published}}</text>
+          <view class="top-right">
+            <text class="pill-tag {{item.isRent ? 'rent' : 'buy'}}">{{item.tradeMode}}</text>
+            <view class="fav-btn {{item.fav ? 'on' : ''}}" data-id="{{item.id}}" catchtap="toggleFav">{{item.fav ? '★' : '☆'}}</view>
+          </view>
+        </view>
+        <view class="title">{{item.title}}</view>
+        <view class="chips">
+          <text class="chip">{{item.cat}}</text>
+          <text class="chip">{{item.model}}</text>
+          <text class="chip">需 {{item.qty}} 台</text>
+          <text class="chip">{{item.city}}</text>
+        </view>
+        <view class="mid">
+          <view class="thumb demand">
+            <image wx:if="{{item.cover}}" class="thumb-img" src="{{item.cover}}" mode="aspectFill" lazy-load />
+            <view wx:else class="thumb-in">
+              <text class="ti-model">{{item.model}}</text>
+              <text class="ti-qty">{{item.isRent ? '需租 ' + item.qty + ' 台' : '需 ' + item.qty + ' 台'}}</text>
+            </view>
+          </view>
+          <view class="meta">
+            <view class="price demand-price">{{item.budgetText}}</view>
+            <view class="sub">{{item.tax}}</view>
+            <view class="sub">{{item.isRent ? ('租期：' + item.termText + ' · ' + item.closed) : ('成色：' + item.cond + ' · 验收：' + item.accept)}}</view>
+          </view>
+        </view>
+        <view class="chips tag-chips">
+          <text wx:for="{{item.tags}}" wx:for-item="tag" wx:key="*this" class="chip brand">{{tag}}</text>
+        </view>
+        <view class="foot">
+          <text>浏览 {{item.views}}</text>
+          <text wx:if="{{item.favCount}}">收藏 {{item.favCount}}</text>
+          <text>需求状态：{{item.status}}</text>
+          <view class="r">{{item.publisher}}</view>
+        </view>
+      </view>
+    </block>
+
+    <view wx:if="{{!loading && items.length === 0}}" class="empty">
+      <image class="big-img" src="/assets/icons/empty-inbox.png" mode="aspectFit" />
+      <view class="ttl">{{tab === 'market' ? '实时货盘暂无价格参考' : (tab === 'news' ? '这个范围内还没有资讯' : '当前条件下没有匹配' + (tab === 'sell' ? '货源' : '需求'))}}</view>
+      <view class="ds">{{tab === 'market' ? '在售商品与用户报价会进入货盘参考；代采 / 代售委托只在商机池展示。' : (tab === 'news' ? '可以切换到全国，或自己发布一条资讯。' : '可以放宽条件，或发布' + (tab === 'sell' ? '求购需求' : '商品') + '等待对方来找你。')}}</view>
+      <view class="acts">
+        <button wx:if="{{tab === 'sell' || tab === 'buy'}}" class="btn sm" bindtap="clearFilter">清空筛选条件</button>
+        <button wx:if="{{tab === 'market'}}" class="btn sm primary" bindtap="openPaste">补充报价</button>
+        <button wx:if="{{tab === 'news'}}" class="btn sm primary" bindtap="openNewsPub">发布资讯</button>
+        <button wx:if="{{tab === 'sell' || tab === 'buy'}}" class="btn sm primary" bindtap="goPublish">{{tab === 'sell' ? '发布需求' : '发布商品'}}</button>
+      </view>
+    </view>
+
+    <view wx:if="{{loading}}" class="loading">加载中…</view>
+  </view>
+
+  <!-- 筛选面板 -->
+  <view wx:if="{{filterOpen}}" class="filter-mask" bindtap="closeFilter"></view>
+  <view wx:if="{{filterOpen}}" class="filter-sheet">
+    <view class="fs-hd">
+      <view class="fs-tt">{{tab === 'sell' ? '筛选在售货源' : '筛选求购需求'}}</view>
+      <view class="fs-sub">两个 Tab 条件各自保存</view>
+      <view class="fs-x" bindtap="closeFilter">✕</view>
+    </view>
+    <scroll-view scroll-y="true" class="fs-bd">
+      <block wx:for="{{filterGroups}}" wx:key="key">
+        <view wx:if="{{item.key !== 'city'}}" class="fgroup">
+          <view class="fg-hd">
+            <text class="n">{{item.label}}</text>
+            <text class="hint">多选</text>
+          </view>
+          <view class="fopts">
+            <view wx:for="{{item.opts}}" wx:for-item="opt" wx:key="v"
+                  class="fopt {{opt.on ? 'on' : ''}}"
+                  data-k="{{item.key}}" data-v="{{opt.v}}" bindtap="toggleFilter">{{opt.v}}</view>
+          </view>
+        </view>
+      </block>
+
+      <!-- 城市：大区 → 城市两级菜单，可跨大区多选 -->
+      <view class="fgroup fgroup-city">
+        <view class="fg-hd">
+          <text class="n">{{tab === 'sell' ? '交易地/发货地' : '交付城市'}}</text>
+          <text class="hint">可跨大区多选{{citySelCount ? ' · 已选 ' + citySelCount + ' 个' : ''}}</text>
+        </view>
+        <view class="city-picker">
+          <scroll-view scroll-y="true" class="cp-left">
+            <view wx:for="{{cityProvs}}" wx:key="p"
+                  class="cp-prov {{item.active ? 'on' : ''}}"
+                  data-i="{{index}}" bindtap="switchCityProv">
+              <text class="cp-name">{{item.p}}</text>
+              <text wx:if="{{item.count}}" class="cp-dot">{{item.count}}</text>
+            </view>
+          </scroll-view>
+          <scroll-view scroll-y="true" class="cp-right">
+            <view class="cp-cities">
+              <view wx:for="{{cityOpts}}" wx:key="v"
+                    class="cp-city {{item.on ? 'on' : ''}}"
+                    data-v="{{item.v}}" bindtap="toggleCity">{{item.v}}</view>
+            </view>
+          </scroll-view>
+        </view>
+      </view>
+      <view class="fs-count">当前条件匹配 {{items.length}} 条</view>
+    </scroll-view>
+    <view class="fs-ft safe-bottom">
+      <button class="btn" bindtap="resetFilter">重置</button>
+      <button class="btn primary" bindtap="closeFilter">查看 {{items.length}} 条结果</button>
+    </view>
+  </view>
+
+  <!-- 粘贴发布报价（内存商轻路径）：长文本 → 解析预览 → 确认发布 -->
+  <view wx:if="{{pasteOpen}}" class="filter-mask" bindtap="closePaste"></view>
+  <view wx:if="{{pasteOpen}}" class="filter-sheet tall{{kbH ? ' kb' : ''}}" style="{{kbH ? 'bottom:' + kbH + 'px' : ''}}">
+    <view class="fs-hd">
+      <view class="fs-tt">粘贴发布报价</view>
+      <view class="fs-sub">复制群里的报价文字，一行一条；发布后补充到实时货盘卖方报价</view>
+      <view class="fs-x" bindtap="closePaste">✕</view>
+    </view>
+    <scroll-view scroll-y="true" class="fs-bd">
+      <textarea class="pa-ta" value="{{pasteText}}" maxlength="2000" bindinput="onPasteInput" adjust-position="{{false}}"
+                placeholder="示例：&#10;DDR5 64G 6400 金百达 ¥1850 200根 杭州&#10;H100 SXM 22万 8张 上海"></textarea>
+      <view class="pa-count">{{pasteText.length || 0}} / 2000 字</view>
+      <view class="pa-hint">解析不到的字段会留空，可在预览里逐条确认、删掉不想要的。</view>
+      <button class="btn sm pa-parse" bindtap="parsePaste">解析预览</button>
+      <view wx:if="{{pastePreview.length}}" class="pv-list">
+        <view class="pv-head">解析出 {{pastePreview.length}} 条报价，发布后 24 小时自动过期</view>
+        <view wx:for="{{pastePreview}}" wx:key="id" class="pv-item">
+          <view class="pv-l">
+            <view class="pv-model">{{item.model}}</view>
+            <view class="pv-sub">{{item.priceText}} / {{item.unit}} · {{item.qty}}{{item.unit}} · {{item.city}}</view>
+          </view>
+          <view class="pv-x" data-i="{{index}}" bindtap="removePreview">✕</view>
+        </view>
+      </view>
+    </scroll-view>
+    <view class="fs-ft safe-bottom">
+      <button class="btn" bindtap="closePaste">取消</button>
+      <button class="btn primary" bindtap="confirmPaste">发布 {{pastePreview.length || 0}} 条</button>
+    </view>
+  </view>
+
+  <!-- 资讯城市筛选 -->
+  <view wx:if="{{newsSheet}}" class="filter-mask" bindtap="closeNewsSheet"></view>
+  <view wx:if="{{newsSheet}}" class="filter-sheet tall">
+    <view class="fs-hd">
+      <view class="fs-tt">选择资讯城市</view>
+      <view class="fs-sub">按资讯的发布地址筛选</view>
+      <view class="fs-x" bindtap="closeNewsSheet">✕</view>
+    </view>
+    <scroll-view scroll-y="true" class="fs-bd">
+      <view class="nc-grid">
+        <view wx:for="{{newsCityOptions}}" wx:key="*this"
+              class="nc-city {{newsCity === item ? 'on' : ''}}"
+              data-v="{{item}}" bindtap="pickNewsCity">{{item}}</view>
+      </view>
+    </scroll-view>
+  </view>
+
+  <!-- 发布资讯：官方之外的用户内容入口 -->
+  <view wx:if="{{newsPubOpen}}" class="filter-mask" bindtap="closeNewsPub"></view>
+  <view wx:if="{{newsPubOpen}}" class="filter-sheet news-sheet"
+        style="{{kbH ? 'bottom:' + kbH + 'px;height:calc(100vh - ' + kbH + 'px)' : ''}}">
+    <view class="fs-hd">
+      <view class="fs-tt">发布资讯</view>
+      <view class="fs-sub">供需、行情、避坑都可以发；发布后立即展示，含违禁词自动驳回</view>
+      <view class="fs-x" bindtap="closeNewsPub">✕</view>
+    </view>
+    <scroll-view scroll-y="true" class="fs-bd">
+      <view class="dc-group">
+        <view class="dc-label">标题</view>
+        <input class="dc-input" value="{{newsPub.title}}" data-f="title" bindinput="onNewsPubInput" maxlength="60"
+               adjust-position="{{false}}" placeholder="如：深圳求购 A100 80G 20 张"/>
+      </view>
+      <view class="dc-group">
+        <view class="dc-label">内容</view>
+        <textarea class="pa-ta" value="{{newsPub.content}}" data-f="content" maxlength="2000" adjust-position="{{false}}"
+                  bindinput="onNewsPubInput" placeholder="写清数量、预算、交付时间等（可直接留联系方式）"></textarea>
+      </view>
+      <view class="dc-group">
+        <view class="dc-label">发布城市（读取本机定位，不可修改）</view>
+        <view class="dc-static">{{newsLocalCity}} · 定位城市</view>
+      </view>
+      <view class="dc-group">
+        <view class="dc-label">私密发布</view>
+        <view class="dc-static news-priv-row">
+          <text class="news-priv-t">{{newsPrivate ? '不显示发布人，不进你的主页' : '公开：显示发布人，可从资讯进入你的主页'}}</text>
+          <switch checked="{{newsPrivate}}" color="#4F46E5" bindchange="toggleNewsPrivate"/>
+        </view>
+      </view>
+      <view class="pa-hint">{{newsPrivate ? '私密发布：资讯仍会出现在资讯圈，但不会显示发布人，也不会出现在你的主页，别人无法通过它进入你的主页。' : '公开后资讯会显示发布人，别人可以从资讯进入你的主页。'}}</view>
+      <view class="pa-hint">资讯按发布地址归档：同城用户可在「同城」看到，其他城市用户切到该城市也能看到。</view>
+    </scroll-view>
+    <view class="fs-ft safe-bottom">
+      <button class="btn" bindtap="closeNewsPub">取消</button>
+      <button class="btn primary" bindtap="submitNews" disabled="{{newsSubmitting}}">{{newsSubmitting ? '提交中…' : '发布'}}</button>
+    </view>
+  </view>
+</view>

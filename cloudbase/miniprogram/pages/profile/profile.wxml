@@ -1,0 +1,147 @@
+<view class="pf-page">
+
+  <!-- 发布前置提示：从发布页「去完善」进入时，列出仍未填写的必填项 -->
+  <view wx:if="{{profileMissing.length}}" class="pf-alert">
+    <view class="pf-alert-t">请补齐以下信息：{{missingText}}</view>
+    <view class="pf-alert-d">发布商品、需求、库存或代采代售委托前需填写完整，职位可留空</view>
+  </view>
+
+  <!-- 个人信息头部 -->
+  <view class="pf-hero">
+    <view class="pf-av">{{avatarText}}</view>
+    <view class="pf-hd">
+      <view class="nm">{{nick || '未设置昵称'}}</view>
+      <view class="sb">{{subject || '未填写主体'}} · {{subjectKind === 'person' ? '个人主体' : ('企业主体' + (subjectType ? ' / ' + subjectType : ''))}}</view>
+      <view class="pf-tags">
+        <text class="chip">{{phoneMasked || '未授权手机号'}}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 主体信息保密提示：填写前展示 -->
+  <view class="callout brand pf-note">
+    <view class="ttl">主体信息保密提示</view>
+    <text>{{subjectNotice}}</text>
+  </view>
+  <view class="pf-doc">
+    <text class="pfd-l" bindtap="openPrivacy">《隐私政策》</text>
+    <text class="pfd-s">·</text>
+    <text class="pfd-l" bindtap="openTerms">《用户协议》</text>
+  </view>
+
+  <!-- 基本信息 -->
+  <view class="block">
+    <view class="block-hd">
+      <text class="bt">基本信息</text>
+      <text class="r">昵称、手机号可直接使用微信授权信息</text>
+    </view>
+    <view class="pf-form">
+      <view class="pf-f">
+        <text class="pf-l">昵称</text>
+        <input class="pf-i" type="nickname" value="{{nick}}" placeholder="点击使用微信昵称" bindinput="onInput" data-key="nick"/>
+      </view>
+      <view class="pf-f {{focusKey === 'phone' ? 'focus' : ''}}" id="pf-field-phone">
+        <text class="pf-l">手机号</text>
+        <view class="pf-phone">
+          <text class="pf-pv">{{phoneMasked || '未授权微信手机号'}}</text>
+          <button class="btn sm" open-type="getPhoneNumber" bindgetphonenumber="getPhone">{{phoneMasked ? '重新授权' : '微信授权'}}</button>
+        </view>
+      </view>
+      <view class="pf-f {{focusKey === 'realname' ? 'focus' : ''}}" id="pf-field-realname">
+        <text class="pf-l">联系人姓名</text>
+        <input class="pf-i" value="{{realname}}" placeholder="{{realnameMasked ? '已登记 ' + realnameMasked : '请输入真实姓名'}}" maxlength="20" bindinput="onInput" data-key="realname"/>
+      </view>
+      <view class="pf-f">
+        <text class="pf-l">职位 / 身份</text>
+        <input class="pf-i" value="{{position}}" placeholder="选填，如 采购经理 / 技术负责人" maxlength="20" bindinput="onInput" data-key="position"/>
+      </view>
+      <view class="pf-f pf-f-col {{focusKey === 'subjectKind' ? 'focus' : ''}}" id="pf-field-subjectKind">
+        <text class="pf-l">主体类别</text>
+        <view class="pf-kinds">
+          <view wx:for="{{subjectKinds}}" wx:key="key" class="pf-kind {{subjectKind === item.key ? 'on' : ''}}" data-key="{{item.key}}" bindtap="pickSubjectKind">
+            <text class="k">{{item.label}}</text>
+            <text class="d">{{item.desc}}</text>
+          </view>
+        </view>
+      </view>
+      <view class="pf-f {{focusKey === 'subjectType' ? 'focus' : ''}}" id="pf-field-subjectType" wx:if="{{subjectKind === 'company'}}">
+        <text class="pf-l">主体类型</text>
+        <picker mode="selector" range="{{subjectTypes}}" bindchange="pickSubjectType">
+          <view class="pf-pick">
+            <text class="pf-pt {{subjectType ? '' : 'placeholder'}}">{{subjectType || '请选择'}}</text>
+            <text class="pf-pa">›</text>
+          </view>
+        </picker>
+      </view>
+      <view class="pf-f {{focusKey === 'subject' ? 'focus' : ''}}" id="pf-field-subject">
+        <text class="pf-l">主体名称</text>
+        <input class="pf-i" value="{{subject}}" placeholder="企业全称 / 个人姓名" bindinput="onInput" data-key="subject"/>
+      </view>
+      <view class="pf-f">
+        <text class="pf-l">所在城市</text>
+        <view style="display:flex;align-items:center;gap:12rpx">
+          <picker style="flex:1;min-width:0" mode="multiSelector" range="{{cityCols}}" value="{{cityIndex}}" bindcolumnchange="cityColumnChange" bindchange="pickCity">
+            <view class="pf-pick">
+              <text class="pf-pt {{city ? '' : 'placeholder'}}">{{city || '请选择省 / 市'}}</text>
+              <text class="pf-pa">›</text>
+            </view>
+          </picker>
+          <view class="btn sm" style="flex:none" bindtap="useLocation">定位</view>
+        </view>
+      </view>
+      <view class="pf-f pf-f-col">
+        <view class="pf-sub-hd">信息公开</view>
+        <text class="pf-sub-d">发布商品 / 需求时按这里的设置展示，发布页可查看当前状态并跳回本页修改。</text>
+        <view class="pf-kinds">
+          <view class="pf-kind {{exposure === 'open' ? 'on' : ''}}" data-v="open" bindtap="pickExposure">
+            <text class="k">公开主体信息</text>
+            <text class="d">展示主体名称与核验标识，可进入商机池</text>
+          </view>
+          <view class="pf-kind {{exposure === 'hidden' ? 'on' : ''}}" data-v="hidden" bindtap="pickExposure">
+            <text class="k">不公开主体</text>
+            <text class="d">内容照常展示，但不显示主体，也不能进入商机池</text>
+          </view>
+        </view>
+      </view>
+      <view class="pf-f" wx:if="{{exposure === 'open'}}">
+        <text class="pf-l">展示手机号</text>
+        <view class="pf-phone">
+          <text class="pf-pv">{{hasPhone ? (phonePublic ? '公开 ' + phoneMasked : '默认不公开') : '授权手机号后可开启'}}</text>
+          <switch checked="{{phonePublic}}" color="#4F46E5" disabled="{{!hasPhone}}" bindchange="togglePhonePublic"/>
+        </view>
+      </view>
+    </view>
+    <view class="pf-acts">
+      <button class="btn primary block" bindtap="save">保存个人信息</button>
+    </view>
+  </view>
+
+  <!-- 资质信息 -->
+  <view class="block">
+    <view class="block-hd">
+      <text class="bt">资质信息</text>
+      <text class="r">已提交 {{qualDone}} / {{quals.length}} 项</text>
+    </view>
+    <view class="callout brand" style="margin-bottom: 20rpx">
+      <block wx:if="{{subjectKind === 'person'}}">个人主体只需上传本人身份证一项：仅你与平台可见，端侧加密后存入私有空间，查看时叠加账号与昵称水印。</block>
+      <block wx:else>企业主体需营业执照与法定代表人身份证两项：仅你与平台可见，端侧加密后存入私有空间，查看时叠加账号与昵称水印。</block>
+    </view>
+    <view class="item-list">
+      <view wx:for="{{quals}}" wx:key="k">
+        <view class="item-row">
+          <text class="nm">{{item.k}}</text>
+          <text class="st {{item.ok ? 'ok' : 'no'}}">{{item.v}}</text>
+          <button class="btn sm qual-btn" data-k="{{item.k}}" bindtap="uploadQual">{{item.ok ? '重新提交' : '去提交'}}</button>
+        </view>
+        <view wx:if="{{item.reason}}" class="small" style="color: #D92D20; padding: 0 0 16rpx 4rpx; line-height: 1.6">
+          未通过原因：{{item.reason}}
+        </view>
+      </view>
+    </view>
+
+    <view class="pf-acts">
+      <button class="btn primary block" bindtap="save">保存资质信息</button>
+    </view>
+  </view>
+
+</view>

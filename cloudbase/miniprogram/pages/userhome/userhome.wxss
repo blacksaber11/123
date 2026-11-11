@@ -1,0 +1,294 @@
+/* 对方主页：头部 + 主体信息卡 + 在架内容 + 底部私信栏 */
+.uh-page {
+  min-height: 100vh;
+  padding: 0 24rpx 180rpx;
+  padding-bottom: calc(180rpx + env(safe-area-inset-bottom));
+  background: var(--line-2);
+  box-sizing: border-box;
+}
+
+/* 头部：深色渐变，和抖音式主页一致，突出头像与关注 */
+.uh-hero {
+  margin: 0 -24rpx;
+  padding: 48rpx 32rpx 56rpx;
+  background: linear-gradient(135deg, #312e81 0%, #4f46e5 60%, #6366f1 100%);
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+}
+.uh-av {
+  flex: none;
+  width: 128rpx;
+  height: 128rpx;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  border: 2rpx solid rgba(255, 255, 255, 0.5);
+  color: #fff;
+  font-size: 48rpx;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.uh-main {
+  flex: 1;
+  min-width: 0;
+}
+.uh-nm {
+  font-size: 34rpx;
+  font-weight: 600;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.uh-sub {
+  margin-top: 6rpx;
+  font-size: 24rpx;
+  color: rgba(255, 255, 255, 0.78);
+}
+.uh-tags {
+  margin-top: 12rpx;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+}
+.uh-tag {
+  font-size: 20rpx;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999rpx;
+  padding: 4rpx 14rpx;
+}
+.uh-tag.brand {
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--brand);
+  font-weight: 600;
+}
+/* 商机会员：主页头部直接可见，与消息列表 / 会话顶部同一标识 */
+.uh-tag.member {
+  background: #ffd66b;
+  color: #7a4a00;
+  font-weight: 600;
+}
+.uh-follow {
+  flex: none;
+  align-self: flex-start;
+  padding: 12rpx 30rpx;
+  border-radius: 999rpx;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--brand);
+  background: #fff;
+}
+.uh-follow.on {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.2);
+  border: 1rpx solid rgba(255, 255, 255, 0.55);
+}
+
+/* 信息卡 */
+.uh-card {
+  margin-top: -24rpx;
+  position: relative;
+  padding: 24rpx;
+  border-radius: 20rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+}
+.uh-chd {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 8rpx;
+}
+.uh-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 14rpx 0;
+  border-bottom: 1rpx solid var(--line);
+  font-size: 26rpx;
+}
+.uh-row:last-of-type {
+  border-bottom: none;
+}
+.uh-k {
+  flex: none;
+  width: 140rpx;
+  color: var(--muted);
+}
+.uh-v {
+  flex: 1;
+  color: var(--ink-2);
+  word-break: break-all;
+}
+.uh-v.strong {
+  color: var(--brand);
+  font-weight: 600;
+}
+.uh-copy {
+  flex: none;
+  font-size: 22rpx;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: 999rpx;
+  padding: 4rpx 16rpx;
+}
+.uh-tip {
+  margin-top: 12rpx;
+  font-size: 22rpx;
+  line-height: 34rpx;
+  color: var(--muted);
+}
+
+/* 在架内容 */
+.uh-block {
+  margin-top: 24rpx;
+}
+.uh-bhd {
+  display: flex;
+  align-items: center;
+  padding: 8rpx 4rpx 16rpx;
+}
+.uh-bt {
+  flex: 1;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.uh-br {
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.uh-item {
+  margin-bottom: 16rpx;
+  padding: 22rpx 24rpx;
+  border-radius: 18rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+}
+.uh-item-hd {
+  display: flex;
+  align-items: flex-start;
+  gap: 12rpx;
+}
+.uh-item-tag {
+  flex: none;
+  margin-top: 2rpx;
+  font-size: 20rpx;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: 8rpx;
+  padding: 4rpx 12rpx;
+}
+.uh-item-tag.demand {
+  color: #b45309;
+  background: #fff7ed;
+}
+.uh-item-tt {
+  flex: 1;
+  font-size: 27rpx;
+  line-height: 38rpx;
+  color: var(--ink);
+}
+.uh-item-ft {
+  margin-top: 12rpx;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+.uh-item-meta {
+  flex: 1;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.uh-item-price {
+  flex: none;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--brand);
+}
+.uh-empty {
+  padding: 60rpx 0;
+  text-align: center;
+  font-size: 24rpx;
+  color: var(--muted);
+}
+
+/* 底部操作栏 */
+.uh-report {
+  margin-top: 24rpx;
+  text-align: center;
+  font-size: 22rpx;
+  color: var(--muted);
+  text-decoration: underline;
+}
+
+.uh-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  gap: 16rpx;
+  padding: 16rpx 24rpx;
+  padding-bottom: calc(16rpx + env(safe-area-inset-bottom));
+  background: #fff;
+  border-top: 1rpx solid var(--line);
+}
+.uh-btn {
+  flex: 1;
+  height: 84rpx;
+  line-height: 84rpx;
+  padding: 0;
+  margin: 0;
+  border-radius: 999rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+}
+.uh-btn::after {
+  border: none;
+}
+.uh-btn.ghost {
+  flex: 0 0 220rpx;
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+.uh-btn.primary {
+  color: #fff;
+  background: var(--brand);
+}
+
+/* 作者资讯列表：标题 + 开头 + 浏览量，点开看全文 */
+.uh-news {
+  padding: 24rpx 28rpx;
+  border-bottom: 1rpx solid var(--line);
+  background: #fff;
+}
+.uh-news:last-child {
+  border-bottom: none;
+}
+.uh-news-tt {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.45;
+}
+.uh-news-sm {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  color: var(--muted);
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.uh-news-ft {
+  margin-top: 12rpx;
+  display: flex;
+  gap: 20rpx;
+  font-size: 22rpx;
+  color: var(--muted);
+}
