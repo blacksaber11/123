@@ -8,7 +8,8 @@
 
   <!-- 个人信息头部 -->
   <view class="pf-hero">
-    <view class="pf-av">{{avatarText}}</view>
+    <image wx:if="{{avatar}}" class="pf-av pf-av-img" src="{{avatar}}" mode="aspectFill" bindtap="pickAvatarUpload" />
+    <view wx:else class="pf-av" bindtap="pickAvatarUpload">{{avatarText}}</view>
     <view class="pf-hd">
       <view class="nm">{{nick || '未设置昵称'}}</view>
       <view class="sb">{{subject || '未填写主体'}} · {{subjectKind === 'person' ? '个人主体' : ('企业主体' + (subjectType ? ' / ' + subjectType : ''))}}</view>
@@ -33,9 +34,18 @@
   <view class="block">
     <view class="block-hd">
       <text class="bt">基本信息</text>
-      <text class="r">昵称、手机号可直接使用微信授权信息</text>
+      <text class="r">头像、昵称、手机号可直接使用微信授权信息</text>
     </view>
     <view class="pf-form">
+      <view class="pf-f pf-f-av">
+        <text class="pf-l">头像</text>
+        <view class="pf-av-row">
+          <image wx:if="{{avatar}}" class="pf-av-thumb" src="{{avatar}}" mode="aspectFill" bindtap="pickAvatarUpload" />
+          <view wx:else class="pf-av-thumb ph" bindtap="pickAvatarUpload">{{avatarText}}</view>
+          <button class="btn sm" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar">微信头像</button>
+          <button class="btn sm ghost" bindtap="pickAvatarUpload">上传图片</button>
+        </view>
+      </view>
       <view class="pf-f">
         <text class="pf-l">昵称</text>
         <input class="pf-i" type="nickname" value="{{nick}}" placeholder="点击使用微信昵称" bindinput="onInput" data-key="nick"/>

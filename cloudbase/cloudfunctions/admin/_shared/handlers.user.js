@@ -1211,6 +1211,8 @@ function createUserHandlers(deps) {
     'profile.save': async (data, ctx) => {
       const user = await mustUser(ctx)
       const nick = data.nick === undefined ? undefined : str(data.nick, { field: '昵称', max: 24 })
+      /* 头像：微信头像授权 / 本地上传后得到的地址，登录时没设置也可以在个人信息里补 */
+      const avatar = data.avatar === undefined ? undefined : str(data.avatar, { field: '头像', max: 512 })
       const subject = str(data.subject, { field: '主体名称', max: 60 })
       const subjectType = data.subjectType ? enumOf(data.subjectType, SUBJECT_TYPES, '主体类型') : ''
       const subjectKind = data.subjectKind
@@ -1231,6 +1233,8 @@ function createUserHandlers(deps) {
 
       const userPatch = {}
       if (nick !== undefined) userPatch.nick = nick
+      /* 只覆盖非空值：其它字段保存时不传 avatar，不能把已有头像清掉 */
+      if (avatar) userPatch.avatar = avatar
       if (realname) {
         /* 联系人姓名按敏感字段加密落库，明文只留在本次响应里给本人 */
         Object.assign(userPatch, encryptFields({

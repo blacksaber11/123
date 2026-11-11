@@ -35,6 +35,43 @@
   justify-content: center;
   flex: none;
 }
+/* 已上传头像：图片铺满圆形块，点击可更换 */
+.pf-av-img {
+  object-fit: cover;
+  background: #F2F4F7;
+}
+/* 基本信息里的头像行：缩略图 + 微信授权 / 本地上传 */
+.pf-av-row {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  flex-wrap: wrap;
+}
+.pf-av-thumb {
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 20rpx;
+  flex: none;
+  background: var(--brand-soft);
+}
+.pf-av-thumb.ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--brand);
+  font-size: 26rpx;
+  font-weight: 700;
+}
+.pf-av-row .btn {
+  margin: 0;
+  min-width: 0;
+  height: 60rpx;
+  line-height: 60rpx;
+  padding: 0 20rpx;
+  font-size: 24rpx;
+}
 .pf-hd {
   flex: 1;
   min-width: 0;

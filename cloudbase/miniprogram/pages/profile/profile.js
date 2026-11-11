@@ -81,6 +81,8 @@ Page({
     user: null,
     subjectNotice: SUBJECT_NOTICE,
     avatarText: '算',
+    /* 头像地址：登录没设置过的用户也可以在这里补传 */
+    avatar: '',
     nick: '',
     phoneMasked: '',
     hasPhone: false,
@@ -228,6 +230,7 @@ Page({
     this.setData({
       user: u,
       avatarText: (nick || '算').slice(0, 1),
+      avatar: p.avatar || u.avatar || '',
       nick,
       /* 手机号明文不回显、不手填：只展示微信授权后的脱敏值 */
       phoneMasked: p.phoneMasked || u.phoneMasked || '',
@@ -345,6 +348,56 @@ Page({
     })
   },
 
+  /* 微信头像授权：用官方头像按钮拿当前微信头像，直接传上来 */
+  onChooseAvatar(e) {
+    const src = String((e && e.detail && e.detail.avatarUrl) || '')
+    if (src) this.uploadAvatar(src)
+  },
+
+  /* 自己上传：相册 / 拍照，压缩后再传 */
+  pickAvatarUpload() {
+    const onPick = (res) => {
+      const file = (res && res.tempFiles && res.tempFiles[0]) || {}
+      const path = file.tempFilePath || (res && res.tempFilePaths && res.tempFilePaths[0]) || ''
+      if (path) this.uploadAvatar(path)
+    }
+    if (typeof wx.chooseMedia === 'function') {
+      wx.chooseMedia({
+        count: 1,
+        mediaType: ['image'],
+        sizeType: ['compressed'],
+        sourceType: ['album', 'camera'],
+        success: onPick
+      })
+    } else {
+      wx.chooseImage({
+        count: 1,
+        sizeType: ['compressed'],
+        sourceType: ['album', 'camera'],
+        success: onPick
+      })
+    }
+  },
+
+  uploadAvatar(filePath) {
+    const uid = (this.data.user && this.data.user.uid) || (readUser() || {}).uid || 'u'
+    const ext = (String(filePath).split('.').pop() || 'jpg').replace(/[^a-z0-9]/gi, '').slice(0, 5) || 'jpg'
+    wx.showLoading({ title: '上传中' })
+    uploadFile(filePath, { cloudPath: `avatar/${uid}-${Date.now()}.${ext}` })
+      .then((fileId) => {
+        wx.hideLoading()
+        if (!fileId) throw new Error('upload failed')
+        this.dirty = true
+        this.syncLeaveGuard()
+        this.setData({ avatar: fileId })
+        wx.showToast({ title: '头像已上传，保存后生效', icon: 'none' })
+      })
+      .catch(() => {
+        wx.hideLoading()
+        wx.showToast({ title: '头像上传失败，请重试', icon: 'none' })
+      })
+  },
+
   async save() {
     if (this.data.saving) return
     this.setData({ saving: true })
@@ -352,6 +405,7 @@ Page({
       /* 云函数返回 { ok:true } 但缺 data 时 result 为 undefined，这里兜底成空对象 */
       const result = (await request('user', 'profile.save', {
         nick: this.data.nick,
+        avatar: this.data.avatar,
         realname: this.data.realname,
         subject: this.data.subject,
         subjectKind: this.data.subjectKind,
@@ -367,6 +421,7 @@ Page({
       }, { silent: true })) || {}
       writeUser(Object.assign({}, readUser() || {}, {
         nick: result.nick,
+        avatar: result.avatar || this.data.avatar,
         hasPhone: result.hasPhone,
         phoneMasked: result.phoneMasked,
         realnameMasked: result.realnameMasked,
@@ -381,6 +436,7 @@ Page({
       this.setData({
         profile: result,
         avatarText: (result.nick || '算').slice(0, 1),
+        avatar: result.avatar || this.data.avatar,
         phoneMasked: result.phoneMasked || this.data.phoneMasked,
         hasPhone: result.hasPhone === true || this.data.hasPhone,
         realname: result.realname || this.data.realname,
@@ -406,6 +462,7 @@ Page({
       // 云函数未部署（如游客模式）时回落到本地缓存，保证信息能保存并即时生效
       writeUser(Object.assign({}, readUser() || {}, {
         nick: this.data.nick,
+        avatar: this.data.avatar,
         /* 本地只留脱敏姓名，不落明文 */
         realnameMasked: this.data.realname ? this.data.realname.slice(0, 1) + '**' : '',
         subject: this.data.subject,
