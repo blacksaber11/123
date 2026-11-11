@@ -1893,7 +1893,7 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
   await call(userRouter, 'auth.login', { nick: '委托方' }, AGENT)
   await call(userRouter, 'profile.save', { nick: '委托方', phone: '13900002222', realname: '赵敏', exposure: 'open' }, AGENT)
   await call(userRouter, 'auth.login', { nick: '库存方' }, SEEKER)
-  await call(userRouter, 'profile.save', { nick: '库存方', phone: '13700003333', realname: '钱进' }, SEEKER)
+  await call(userRouter, 'profile.save', { nick: '库存方', phone: '13700003333', realname: '钱进', exposure: 'open' }, SEEKER)
   await call(userRouter, 'auth.login', { nick: '无库存' }, POOR)
   await call(userRouter, 'profile.save', { nick: '无库存', phone: '13600004444', realname: '孙空' }, POOR)
 
@@ -2678,9 +2678,9 @@ section('25. 运营洞察：浏览量、风险池、在线人数与榜单')
   await call(userRouter, 'auth.login', { nick: '浏览者一' }, V1)
   await call(userRouter, 'profile.save', { nick: '浏览者一', phone: '13500001111', realname: '甲一', exposure: 'open' }, V1)
   await call(userRouter, 'auth.login', { nick: '浏览者二' }, V2)
-  await call(userRouter, 'profile.save', { nick: '浏览者二', phone: '13500002222', realname: '乙二' }, V2)
+  await call(userRouter, 'profile.save', { nick: '浏览者二', phone: '13500002222', realname: '乙二', exposure: 'open' }, V2)
   await call(userRouter, 'auth.login', { nick: '浏览者三' }, V3)
-  await call(userRouter, 'profile.save', { nick: '浏览者三', phone: '13500003333', realname: '丙三' }, V3)
+  await call(userRouter, 'profile.save', { nick: '浏览者三', phone: '13500003333', realname: '丙三', exposure: 'open' }, V3)
 
   /* 供浏览量与榜单使用的在售商品 */
   const viewProduct = await call(userRouter, 'product.publish', {
@@ -2859,7 +2859,7 @@ section('25. 运营洞察：浏览量、风险池、在线人数与榜单')
   const V5 = { openid: 'o_ins_v5', ip: '10.30.0.5' }
   for (const buyer of [V4, V5]) {
     await call(userRouter, 'auth.login', { nick: '并发领取用户' }, buyer)
-    await call(userRouter, 'profile.save', { nick: '并发领取用户', realname: '并发领取用户' }, buyer)
+    await call(userRouter, 'profile.save', { nick: '并发领取用户', realname: '并发领取用户', exposure: 'open' }, buyer)
     await call(userRouter, 'stock.save', { cat: 'GPU 服务器', model: 'A100 40G', qty: 4, price: 90000, city: '上海' }, buyer)
     await call(adminRouter, 'biz.grant', { uid: buyer.openid }, { token: csTokenIns })
   }
@@ -3372,6 +3372,9 @@ section('28. 商机池：主体可见门槛 / 会员分层 / 发布方开关')
   ok(outPub.ok && (await repo.get('demands', outPub.data.id)).bizPool === false, '发布方可关闭「进入商机池」', outPub.message)
 
   await call(userRouter, 'auth.login', { nick: '商机查看者' }, SEEK)
+  await call(userRouter, 'profile.save', {
+    nick: '商机查看者', realname: '商机查看者', phone: '13900006002', exposure: 'open'
+  }, SEEK)
   await call(userRouter, 'stock.save', {
     cat: 'GPU 服务器', brand: 'NVIDIA', model: 'H200 141G', qty: 15, price: 250000, city: '深圳'
   }, SEEK)
@@ -3408,21 +3411,16 @@ section('28. 商机池：主体可见门槛 / 会员分层 / 发布方开关')
   ok(badgeBefore.ok && badgeBefore.data.claimed === 0, '「我的商机」角标统计已领取条数：领取前为 0')
   const claimPool = await call(userRouter, 'biz.claim', { targetType: 'demand', demandId: poolPub.data.id }, SEEK)
   ok(claimPool.ok, '商机会员可领取匹配的商机', claimPool.message)
-  /* 领取即通知双方：领取方收到领取成功，发布方收到「被领取」提醒 */
+  /* 商机被领取不再提醒：提醒只发生在「发布新商机」时，领取后由对方主动发消息才产生聊天提醒 */
   const claimNotices = await repo.find('outbox', {
     'payload.targetType': 'biz', 'payload.targetId': poolPub.data.id
   }, { limit: 10 })
-  const claimTo = claimNotices.map((n) => n.payload && n.payload.uid)
-  ok(claimTo.indexOf(SEEK.openid) >= 0 && claimTo.indexOf(PUB2.openid) >= 0,
-    '领取商机后领取方与发布方都收到站内消息', claimTo.join(' / '))
-  const ownerNotice = claimNotices.filter((n) => n.payload && n.payload.uid === PUB2.openid)[0]
-  ok(!!ownerNotice && ownerNotice.payload.title === '你的商机被领取',
-    '发布方收到「你的商机被领取」提醒')
+  ok(claimNotices.length === 0, '领取商机不再给领取方 / 发布方发站内提醒')
   await call(userRouter, 'biz.claim', { targetType: 'demand', demandId: poolPub.data.id }, SEEK)
   const claimNoticesAgain = await repo.find('outbox', {
     'payload.targetType': 'biz', 'payload.targetId': poolPub.data.id
   }, { limit: 10 })
-  ok(claimNoticesAgain.length === claimNotices.length, '重复领取不重复发站内消息')
+  ok(claimNoticesAgain.length === 0, '重复领取同样不产生提醒')
   const badgeAfter = await call(userRouter, 'biz.badge', {}, SEEK)
   ok(badgeAfter.ok && badgeAfter.data.claimed === 1,
     '领取后「我的商机」角标为已领取 1 条（不是可领取条数）',
@@ -3434,6 +3432,86 @@ section('28. 商机池：主体可见门槛 / 会员分层 / 发布方开关')
 
   const claimOut = await call(userRouter, 'biz.claim', { targetType: 'demand', demandId: outPub.data.id }, SEEK)
   ok(!claimOut.ok && claimOut.code === 'NOT_FOUND', '未进入商机池的需求不可领取')
+
+  /* 发布即提醒：新需求进池时，匹配会员与发布者各收到一条站内信，同一条商机只提醒一次 */
+  const poolPub2 = await call(userRouter, 'demand.publish', {
+    tradeMode: TRADE_MODES.BUY, title: '求购 12 台 H200', cat: 'GPU 服务器', brand: 'NVIDIA', model: 'H200 141G',
+    qty: 12, budget: 258000, city: '深圳', supply: '现货', cond: '全新', tax: ['含税'], bizPool: true
+  }, PUB2)
+  ok(poolPub2.ok, '发布新需求进入商机池', poolPub2.message)
+  const seekNotice = await repo.find('outbox', {
+    'payload.targetType': 'biz', 'payload.targetId': poolPub2.data.id, 'payload.uid': SEEK.openid
+  }, { limit: 10 })
+  ok(seekNotice.length === 1, '匹配的商机会员收到一条「有新的商机可查看」提醒',
+    `count=${seekNotice.length}`)
+  const pubNotice = await repo.find('outbox', {
+    'payload.targetType': 'biz', 'payload.targetId': poolPub2.data.id, 'payload.uid': PUB2.openid
+  }, { limit: 10 })
+  ok(pubNotice.length === 1, '发布者收到一条汇总提醒（同一条商机只提醒一次）',
+    `count=${pubNotice.length}`)
+  /* 未开通会员的匹配方不打扰：同一时段另一位有货但未开通会员的账号不应收到提醒 */
+  const NOMEM = { openid: 'o_pool_nomem', ip: '10.60.0.3' }
+  await call(userRouter, 'auth.login', { nick: '未开通会员的货源方' }, NOMEM)
+  await call(userRouter, 'profile.save', {
+    nick: '未开通会员的货源方', realname: '未开通会员', phone: '13900006003', exposure: 'open'
+  }, NOMEM)
+  await call(userRouter, 'stock.save', {
+    cat: 'GPU 服务器', brand: 'NVIDIA', model: 'H200 141G', qty: 30, price: 252000, city: '深圳'
+  }, NOMEM)
+  CLOCK += 61 * 60 * 1000
+  const poolPub3 = await call(userRouter, 'demand.publish', {
+    tradeMode: TRADE_MODES.BUY, title: '求购 8 台 H200', cat: 'GPU 服务器', brand: 'NVIDIA', model: 'H200 141G',
+    qty: 8, budget: 256000, city: '深圳', supply: '现货', cond: '全新', tax: ['含税'], bizPool: true
+  }, PUB2)
+  ok(poolPub3.ok, '再次发布新需求进入商机池', poolPub3.message)
+  const nomemNotice = await repo.find('outbox', {
+    'payload.targetType': 'biz', 'payload.targetId': poolPub3.data.id, 'payload.uid': NOMEM.openid
+  }, { limit: 10 })
+  ok(nomemNotice.length === 0, '未开通商机会员的货源方不接收新商机提醒')
+  const seekNotice3 = await repo.find('outbox', {
+    'payload.targetType': 'biz', 'payload.targetId': poolPub3.data.id, 'payload.uid': SEEK.openid
+  }, { limit: 10 })
+  ok(seekNotice3.length === 1, '新商机按条提醒：会员对每个新商机各收到一条')
+
+  /* 提示力度：三档预设 + 维度微调，直接决定「什么算匹配」 */
+  const prefDefault = await call(userRouter, 'biz.prefs', {}, SEEK)
+  ok(prefDefault.ok && prefDefault.data.prefs.level === 'standard', '提示力度默认为标准档')
+  ok((prefDefault.data.prefPresets || []).length === 3, '下发宽松 / 标准 / 严格三档预设')
+  const prefStrict = await call(userRouter, 'biz.prefs', { save: true, level: 'strict' }, SEEK)
+  ok(prefStrict.ok && prefStrict.data.prefs.level === 'strict' &&
+    prefStrict.data.prefs.brand === 'same' && prefStrict.data.prefs.qty === 'exceed',
+    '可保存严格档：只接指定品牌，且库存量要覆盖需求量', prefStrict.message)
+  CLOCK += 24 * 60 * 60 * 1000
+  const bigDemand = await call(userRouter, 'demand.publish', {
+    tradeMode: TRADE_MODES.BUY, title: '求购 20 台 H200', cat: 'GPU 服务器', brand: 'NVIDIA', model: 'H200 141G',
+    qty: 20, budget: 260000, city: '深圳', supply: '现货', cond: '全新', tax: ['含税'], bizPool: true
+  }, PUB2)
+  ok(bigDemand.ok, '发布超出库存量的需求', bigDemand.message)
+  const strictNotice = await repo.find('outbox', {
+    'payload.targetType': 'biz', 'payload.targetId': bigDemand.data.id, 'payload.uid': SEEK.openid
+  }, { limit: 10 })
+  ok(strictNotice.length === 0, '严格档：库存量不足需求量时不提醒')
+  const prefLoose = await call(userRouter, 'biz.prefs', { save: true, level: 'loose' }, SEEK)
+  ok(prefLoose.ok && prefLoose.data.prefs.level === 'loose' &&
+    prefLoose.data.prefs.qty === 'any' && prefLoose.data.prefs.model === 'series',
+    '可切换宽松档：同系列即可，数量不限', prefLoose.message)
+  CLOCK += 61 * 60 * 1000
+  const bigDemand2 = await call(userRouter, 'demand.publish', {
+    tradeMode: TRADE_MODES.BUY, title: '求购 30 台 H200', cat: 'GPU 服务器', brand: 'NVIDIA', model: 'H200 141G',
+    qty: 30, budget: 260000, city: '深圳', supply: '现货', cond: '全新', tax: ['含税'], bizPool: true
+  }, PUB2)
+  ok(bigDemand2.ok, '再次发布超出库存量的需求', bigDemand2.message)
+  const looseNotice = await repo.find('outbox', {
+    'payload.targetType': 'biz', 'payload.targetId': bigDemand2.data.id, 'payload.uid': SEEK.openid
+  }, { limit: 10 })
+  ok(looseNotice.length === 1, '宽松档：数量不满足也提醒')
+  const prefCustom = await call(userRouter, 'biz.prefs', {
+    save: true, brand: 'same', model: 'series', qty: 'any', cap: 'any'
+  }, SEEK)
+  ok(prefCustom.ok && prefCustom.data.prefs.level === 'custom' &&
+    prefCustom.data.prefs.brand === 'same' && prefCustom.data.prefs.model === 'series',
+    '非预设组合按维度微调，落为自定义档', prefCustom.message)
+  await call(userRouter, 'biz.prefs', { save: true, level: 'standard' }, SEEK)
 }
 
 /* ============================================================

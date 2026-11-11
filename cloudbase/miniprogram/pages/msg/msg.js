@@ -162,6 +162,41 @@ Page({
     }
   },
 
+  /* 返回手势 / 安卓物理返回：会话打开时先回到消息列表，不直接退出小程序 */
+  onBackPress() {
+    if (this.data.chatOpen) {
+      this.closeChat()
+      return true
+    }
+    return false
+  },
+
+  /*
+   * iOS 右滑返回：页面已禁用系统侧滑（避免在 tabBar 根页直接退出小程序），
+   * 这里自己识别「左边缘起手 + 向右滑」来关闭会话，回到上一级消息列表。
+   */
+  onChatTouchStart(e) {
+    const t = (e.touches && e.touches[0]) || {}
+    const x = Number(t.clientX) || 0
+    this.chatSwipe = { x, y: Number(t.clientY) || 0, active: x <= 32, done: false }
+  },
+
+  onChatTouchMove(e) {
+    const s = this.chatSwipe
+    if (!s || !s.active || s.done) return
+    const t = (e.touches && e.touches[0]) || {}
+    const dx = (Number(t.clientX) || 0) - s.x
+    const dy = Math.abs((Number(t.clientY) || 0) - s.y)
+    if (dx > 72 && dx > dy * 1.6) {
+      s.done = true
+      this.closeChat()
+    }
+  },
+
+  onChatTouchEnd() {
+    this.chatSwipe = null
+  },
+
   /* 消息页可见时每 5 秒拉一次：有人发消息不用手动刷新也能看到 */
   startPoll() {
     this.stopPoll()

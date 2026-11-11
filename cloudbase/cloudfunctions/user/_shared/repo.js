@@ -20,7 +20,7 @@ const { AppError, CODES } = require('./errors')
 const COLLECTIONS = Object.freeze([
   'users', 'profiles', 'products', 'demands', 'leads', 'blocked', 'rules',
   'sessions', 'counters', 'audit', 'outbox', 'files', 'accounts', 'stocks',
-  'agencies', 'quotes', 'news', 'bizAccess', 'bizClaims', 'bizMarks',
+  'agencies', 'quotes', 'news', 'bizAccess', 'bizClaims', 'bizMarks', 'bizPrefs',
   'onlineUsers', 'searchLogs', 'favorites', 'follows', 'behaviorEvents',
   /* settings：平台级配置（咨询单审批排序权重等）；catalog：平台维护的产品型号 */
   'settings', 'catalog',

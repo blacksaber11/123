@@ -64,7 +64,8 @@
 
   function wireGo(root) {
     root.querySelectorAll('[data-go]').forEach(function (btn) {
-      btn.onclick = function () { C.navigate(btn.getAttribute('data-go')) }
+      const tab = btn.getAttribute('data-go-tab')
+      btn.onclick = function () { C.navigate(btn.getAttribute('data-go'), tab ? { tab: tab } : null) }
     })
   }
 
@@ -1600,7 +1601,7 @@
         ['待处理合计', wbPill(todoTotal), '<span class="small" style="color:var(--ink-3)">委托 / 咨询 / 留言 / 举报 / 风控</span>'],
         ['咨询单', num(todoVal('leads', leads.total)), '<button class="btn xs ghost" data-go="leads">去处理</button>'],
         ['用户留言', num(todoVal('unread', msgUnread)), '<button class="btn xs ghost" data-go="messages">去回复</button>'],
-        ['举报反馈', num(todoVal('reports', 0)), '<button class="btn xs ghost" data-go="risk">去查看</button>'],
+        ['举报反馈', num(todoVal('reports', 0)), '<button class="btn xs ghost" data-go="risk" data-go-tab="reports">去查看</button>'],
         ['风控待处理', num(todoVal('risk', 0)), '<button class="btn xs ghost" data-go="risk">去处置</button>']
       ]) +
       (failed.length
@@ -1666,7 +1667,7 @@
             title: '<span class="todo-strong">' + esc(it.kind === 'report' ? '举报' : '风控') + '</span>' +
               '<span class="todo-sep">·</span>' + esc(it.title),
             meta: it.meta,
-            actions: '<button class="btn xs" data-go="risk">' + (it.kind === 'report' ? '去处理' : '去处置') + '</button>'
+            actions: '<button class="btn xs" data-go="risk"' + (it.kind === 'report' ? ' data-go-tab="reports"' : '') + '>' + (it.kind === 'report' ? '去处理' : '去处置') + '</button>'
           })
         }
       }) +
@@ -1903,10 +1904,10 @@
     const mine = (wb && wb.mine) || {}
     const who = (state.account && state.account.name) || '客服'
     const todoDefs = [
-      ['用户留言', 'unread', 'messages', '用户直接发给平台的消息，按未读优先回复', '去回复'],
-      ['咨询单', 'leads', 'leads', '待领取 / 待处理的代采代售咨询', '去处理'],
-      ['举报反馈', 'reports', 'risk', '用户提交的举报、投诉与意见建议', '去查看'],
-      ['风控待处理', 'risk', 'risk', '规则命中的风险单，需人工核实处置', '去处置']
+      ['用户留言', 'unread', 'messages', '用户直接发给平台的消息，按未读优先回复', '去回复', ''],
+      ['咨询单', 'leads', 'leads', '待领取 / 待处理的代采代售咨询', '去处理', ''],
+      ['举报反馈', 'reports', 'risk', '用户提交的举报、投诉与意见建议', '去查看', 'reports'],
+      ['风控待处理', 'risk', 'risk', '规则命中的风险单，需人工核实处置', '去处置', '']
     ]
     const pending = todoDefs.reduce(function (s, d) { return s + wbNum(todos[d[1]]) }, 0)
     view.innerHTML = '<div class="page-head"><div><h2 class="title">' + wbHello() + '，' + esc(who) + '</h2>' +
@@ -1918,7 +1919,8 @@
         return '<div class="todo-item"><div class="todo-item-main">' +
           '<div class="todo-item-title">' + esc(d[0]) + ' ' + wbPill(todos[d[1]]) + '</div>' +
           '<div class="todo-item-meta"><span class="todo-tag">' + esc(d[3]) + '</span></div></div>' +
-          '<div class="todo-item-actions"><button class="btn xs primary" data-go="' + d[2] + '">' + esc(d[4]) + '</button></div></div>'
+          '<div class="todo-item-actions"><button class="btn xs primary" data-go="' + d[2] + '"' +
+            (d[5] ? ' data-go-tab="' + d[5] + '"' : '') + '>' + esc(d[4]) + '</button></div></div>'
       }).join('') +
       '</div></section>' +
       '<section class="card" style="margin-top:16px"><div class="card-head"><h3>我的作业量</h3><div class="grow"></div>' +
@@ -3368,8 +3370,9 @@
     return { value: k, label: REPORT_TARGET_TEXT[k] }
   })
 
-  Pages.risk = async function (view) {
-    let tab = 'cases'
+  Pages.risk = async function (view, ctx) {
+    /* 支持从工作台的「举报反馈」直接落到举报 tab（navigate('risk', { tab: 'reports' })） */
+    let tab = (ctx && ctx.query && ctx.query.tab) === 'reports' && C.can('report.list') ? 'reports' : 'cases'
     let stateCase = { type: '', status: '待处理', level: '', keyword: '', page: 1, limit: 12 }
     let stateReport = { status: '', type: '', targetType: '', q: '', page: 1, limit: 20 }
     let scanning = false
@@ -3377,12 +3380,12 @@
     view.innerHTML = pageHead('风险提示', '规则自动命中风险商品、咨询、对话与用户，涉黄 / 涉暴 / 涉政敏感词须人工查看处置',
       '<button class="btn" id="r-scan">' + icon('refresh') + '<span>重新扫描</span></button>') +
       '<div class="seg" id="r-tabs">' +
-      '<button data-tab="cases" class="on">风险单</button>' +
-      '<button data-tab="pool">内容风险池</button>' +
-      '<button data-tab="social">收藏关注</button>' +
-      (C.can('behavior.list') ? '<button data-tab="security">安全监测</button>' : '') +
-      (C.can('blocked.list') ? '<button data-tab="blocked">已拦截</button>' : '') +
-      (C.can('report.list') ? '<button data-tab="reports">举报反馈</button>' : '') + '</div>' +
+      '<button data-tab="cases" class="' + (tab === 'cases' ? 'on' : '') + '">风险单</button>' +
+      '<button data-tab="pool" class="' + (tab === 'pool' ? 'on' : '') + '">内容风险池</button>' +
+      '<button data-tab="social" class="' + (tab === 'social' ? 'on' : '') + '">收藏关注</button>' +
+      (C.can('behavior.list') ? '<button data-tab="security" class="' + (tab === 'security' ? 'on' : '') + '">安全监测</button>' : '') +
+      (C.can('blocked.list') ? '<button data-tab="blocked" class="' + (tab === 'blocked' ? 'on' : '') + '">已拦截</button>' : '') +
+      (C.can('report.list') ? '<button data-tab="reports" class="' + (tab === 'reports' ? 'on' : '') + '">举报反馈</button>' : '') + '</div>' +
       '<div id="r-body" style="margin-top:16px"></div>'
 
     const body = view.querySelector('#r-body')

@@ -23,6 +23,39 @@ const withTerm = (plans) => (Array.isArray(plans) ? plans : []).map((p) => Objec
 }))
 const LOCAL_PLANS = withTerm(biz.PLANS)
 
+/* 提示力度：三档预设与后端 BIZ_PREF_PRESETS 同口径，离线预览时也能用 */
+const PREF_PRESETS = {
+  loose: { level: 'loose', brand: 'any', model: 'series', qty: 'any', cap: 'any' },
+  standard: { level: 'standard', brand: 'any', model: 'core', qty: 'meet', cap: 'same' },
+  strict: { level: 'strict', brand: 'same', model: 'exact', qty: 'exceed', cap: 'same' }
+}
+const PREF_LEVELS = [
+  { key: 'loose', name: '宽松', desc: '同系列即可，数量和容量不限，看到的商机最多' },
+  { key: 'standard', name: '标准', desc: '同核心型号、容量一致，数量达到起订量（默认）' },
+  { key: 'strict', name: '严格', desc: '只接指定品牌、型号完全一致，且库存量要覆盖需求量' }
+]
+const PREF_DIMS = [
+  { key: 'brand', name: '品牌', options: [{ key: 'any', label: '不限品牌' }, { key: 'same', label: '只接指定品牌' }] },
+  {
+    key: 'model',
+    name: '型号',
+    options: [{ key: 'series', label: '同系列即可' }, { key: 'core', label: '同核心型号' }, { key: 'exact', label: '型号完全一致' }]
+  },
+  {
+    key: 'qty',
+    name: '数量',
+    options: [{ key: 'any', label: '数量不限' }, { key: 'meet', label: '达到起订量' }, { key: 'exceed', label: '库存量覆盖需求' }]
+  },
+  {
+    key: 'cap',
+    name: '容量',
+    options: [{ key: 'any', label: '容量不限' }, { key: 'fit', label: '不低于需求' }, { key: 'same', label: '容量相同' }]
+  }
+]
+const prefNameOf = (level) => ((PREF_LEVELS.filter((l) => l.key === level)[0] || {}).name || '自定义')
+/* 维度当前选中值冗余到 options 外层，避免 WXML 里做对象动态取值 */
+const dimsWithValue = (prefs) => PREF_DIMS.map((d) => Object.assign({}, d, { value: (prefs && prefs[d.key]) || '' }))
+
 Page({
   data: {
     plan: biz.PLAN.label,
@@ -54,7 +87,14 @@ Page({
     /* 分享落地：从分享卡片进来时只展示被分享的那一条 */
     focusId: '',
     /* 我的商机：从「我的」页进入时只展示我领取过的商机，不展示榜单与统计 */
-    mineMode: false
+    mineMode: false,
+    /* 提示力度：三档预设 + 品牌 / 型号 / 数量 / 容量四维微调 */
+    prefs: Object.assign({}, PREF_PRESETS.standard),
+    prefLevels: PREF_LEVELS,
+    prefDims: dimsWithValue(PREF_PRESETS.standard),
+    prefLevelName: prefNameOf('standard'),
+    prefOpen: false,
+    prefSaving: false
   },
 
   onLoad(options) {
@@ -213,10 +253,14 @@ Page({
       open: pool.filter((o) => !o.claimed && !o.unsatisfied).length,
       stock: { sku: Number(res.stockCount) || 0, qty: 0 }
     }
+    const prefs = res.prefs && typeof res.prefs === 'object' ? res.prefs : this.data.prefs
     this.setData({
       remote: true,
       loadFailed: false,
       unlocked: !!res.unlocked,
+      prefs,
+      prefLevelName: prefNameOf(prefs.level),
+      prefDims: dimsWithValue(prefs),
       expireText: res.expireText || '',
       daysLeft: Number(res.daysLeft) || 0,
       plan: (selectedPlan && selectedPlan.label) || (res.plan && res.plan.label) || this.data.plan,
@@ -349,6 +393,63 @@ Page({
 
   closeSheet() {
     this.setData({ sheetOpen: false })
+  },
+
+  /* 提示力度设置：三档预设一键切换，也可按维度微调后保存 */
+  openPref() {
+    this.setData({ prefOpen: true })
+  },
+
+  closePref() {
+    this.setData({ prefOpen: false })
+  },
+
+  pickPrefLevel(e) {
+    const key = e.currentTarget.dataset.key
+    const preset = PREF_PRESETS[key]
+    if (!preset) return
+    this.setData({ prefs: Object.assign({}, preset), prefDims: dimsWithValue(preset) })
+  },
+
+  pickPrefDim(e) {
+    const ds = e.currentTarget.dataset
+    if (!ds.dim || !ds.key) return
+    const prefs = Object.assign({}, this.data.prefs)
+    prefs[ds.dim] = ds.key
+    prefs.level = 'custom'
+    this.setData({ prefs, prefDims: dimsWithValue(prefs) })
+  },
+
+  async savePref() {
+    if (this.data.prefSaving) return
+    this.setData({ prefSaving: true })
+    const payload = Object.assign({ save: true }, this.data.prefs)
+    try {
+      if (this.remote || guard.boundToAccount()) {
+        const res = await request('user', 'biz.prefs', payload, { silent: true })
+        const prefs = (res && res.prefs) || this.data.prefs
+        this.setData({
+          prefs,
+          prefLevelName: prefNameOf(prefs.level),
+          prefDims: dimsWithValue(prefs),
+          prefOpen: false
+        })
+        wx.showToast({ title: '已保存，正在按新力度重新匹配', icon: 'none' })
+        this.refresh()
+        return
+      }
+      /* 未登录预览：只改本地展示，不落库 */
+      this.setData({
+        prefOpen: false,
+        prefLevelName: prefNameOf(this.data.prefs.level),
+        prefDims: dimsWithValue(this.data.prefs)
+      })
+      wx.showToast({ title: '演示：提示力度已切换', icon: 'none' })
+    } catch (err) {
+      wx.showToast({ title: String((err && err.message) || '保存失败，请稍后重试'), icon: 'none' })
+    } finally {
+      this.setData({ prefSaving: false })
+    }
   },
 
   noop() {},

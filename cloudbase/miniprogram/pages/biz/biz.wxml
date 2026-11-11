@@ -3,7 +3,10 @@
   <view class="bz-hero">
     <view class="bz-hd">
       <view class="bz-tt">{{mineMode ? '我的商机' : '商机'}}</view>
-      <view wx:if="{{!mineMode}}" class="bz-badge">{{plan}}</view>
+      <view class="bz-hd-r">
+        <text wx:if="{{!mineMode}}" class="bz-pref" bindtap="openPref">提示力度 · {{prefLevelName}}</text>
+        <view wx:if="{{!mineMode}}" class="bz-badge">{{plan}}</view>
+      </view>
     </view>
     <view class="bz-ds">{{mineMode ? '只显示你已领取的商机，可随时回看联系方式并直接发起站内对话' : '已发布需求 + 平台核验后的代采 / 代售委托，按你的库存自动匹配；委托类由平台代为对接'}}</view>
     <view wx:if="{{!mineMode}}" class="bz-stats">
@@ -336,5 +339,38 @@
     <view class="ms-note">微信支付，付款后自动延长会员时长；开通后本页立即显示商机价格与匹配详情，需求类可领取联系方式。</view>
     <button wx:if="{{remote}}" class="btn primary block" bindtap="applyUnlock" loading="{{paying}}" disabled="{{paying}}">{{unlocked ? '确认续费' : '确认开通'}}{{selectedPlan ? ' · ¥' + selectedPlan.price : ''}}</button>
     <view wx:if="{{!remote}}" class="ms-demo" bindtap="demoActivate">原型演示：模拟客服已开通</view>
+  </view>
+
+  <!-- 提示力度设置：三档预设 + 品牌 / 型号 / 数量 / 容量微调 -->
+  <view wx:if="{{prefOpen}}" class="m-mask" bindtap="closePref"></view>
+  <view wx:if="{{prefOpen}}" class="m-sheet">
+    <view class="ms-hd">
+      <text>商机提示力度</text>
+      <text class="ms-x" bindtap="closePref">✕</text>
+    </view>
+    <view class="pf-ds">力度越宽松，匹配到的商机越多；越严格，只推完全对得上的。保存后立即按新力度重新匹配。</view>
+    <view class="pf-levels">
+      <view wx:for="{{prefLevels}}" wx:key="key"
+            class="pf-level {{prefs.level === item.key ? 'on' : ''}}"
+            data-key="{{item.key}}" bindtap="pickPrefLevel">
+        <text class="pf-name">{{item.name}}</text>
+        <text class="pf-desc">{{item.desc}}</text>
+      </view>
+    </view>
+    <view class="pf-dims">
+      <view wx:for="{{prefDims}}" wx:key="key" class="pf-dim">
+        <view class="pf-dim-hd">
+          <text class="pf-dim-t">{{item.name}}</text>
+          <text class="pf-dim-tag">可单独微调</text>
+        </view>
+        <view class="pf-opts">
+          <text wx:for="{{item.options}}" wx:for-item="opt" wx:key="key"
+                class="pf-opt {{item.value === opt.key ? 'on' : ''}}"
+                data-dim="{{item.key}}" data-key="{{opt.key}}" bindtap="pickPrefDim">{{opt.label}}</text>
+        </view>
+      </view>
+    </view>
+    <view class="pf-note">例：只要 B300、数量少一点也能接 → 选「宽松」；只要超微品牌且库存量必须覆盖需求 → 选「严格」；4T 也能接受 3T → 把「容量」调成「容量不限」。</view>
+    <button class="btn primary block pf-save" bindtap="savePref" loading="{{prefSaving}}" disabled="{{prefSaving}}">保存并重新匹配</button>
   </view>
 </view>

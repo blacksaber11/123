@@ -16,6 +16,7 @@
     pages: [],
     actions: [],
     page: '',
+    pageQuery: null,
     busy: false
   }
 
@@ -890,9 +891,11 @@
     navCountTimer = setInterval(loadNavCounts, 60000)
   }
 
-  function navigate(key) {
+  function navigate(key, query) {
     if (!navConf(key) || !canPage(navConf(key).page)) { toast('当前账号无权访问该页面', 'err'); return }
     state.page = key
+    /* 跨页定位参数：例如从工作台「举报反馈」直接落到风险提示的举报 tab */
+    state.pageQuery = query && typeof query === 'object' ? Object.assign({}, query) : null
     const hash = '#/' + key
     if (location.hash !== hash) history.replaceState(null, '', hash)
     closeDrawer()
@@ -921,7 +924,7 @@
     view.innerHTML = loadingBlock('正在加载' + conf.label)
     if (!fn) { view.innerHTML = emptyState('页面未注册', conf.label + ' 模块尚未加载'); return }
     try {
-      await fn(view, { refresh: () => renderPage(true) })
+      await fn(view, { refresh: () => renderPage(true), query: state.pageQuery || {} })
       if (seq !== renderSeq) return
       if (showToast) toast('已刷新', 'ok')
       loadNavCounts()

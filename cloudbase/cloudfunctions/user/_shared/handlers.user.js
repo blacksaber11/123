@@ -53,6 +53,7 @@ const {
 const { encryptFields, decryptFieldOf, masked } = require('./secrets')
 const { appendAudit } = require('./audit')
 const { buildProduct, buildDemand, judgeTier, blockedLifecycle, mustForDemand, normalizeMedia } = require('./domain')
+const { notifyNewBizMatch } = require('./market')
 const { detectRisk, normalizeModel } = require('./insights')
 const { chatKindOf, mediaState, chatCutoff, DAY_MS } = require('./chatmedia')
 
@@ -272,6 +273,8 @@ function createUserHandlers(deps) {
   const { repo, keys } = deps
   /* 微信订阅消息推送由云函数注入；本地测试 / 未配置环境变量时为 undefined */
   const notify = deps.notify
+  /* 商机提醒：发布新商机时给双方各发一次站内信 + 微信订阅消息 */
+  const subscribe = deps.subscribe
   /* 微信手机号快捷验证换号能力由运行环境注入（云开发 / ECS 各一套） */
   const exchangePhone = deps.exchangePhone
   const now = typeof deps.now === 'function' ? deps.now : () => Date.now()
@@ -388,6 +391,19 @@ function createUserHandlers(deps) {
     const exposure = String((profile && profile.exposure) || '').trim()
     if (exposure !== EXPOSURES.OPEN) {
       throw new AppError(CODES.VALIDATION, '只有「公开主体」才能进入商机池，请先在个人信息的公开范围中选择公开主体，或关闭「进入商机池」')
+    }
+  }
+
+  /**
+   * 发布即提醒：正式发布且进入商机池的内容，给发布者与匹配会员各发一次提醒。
+   * 草稿、保密内容、普通渠道都不提醒；提醒失败不影响发布结果。
+   */
+  async function notifyBizPool(kind, doc, at) {
+    if (!doc || doc.bizPool !== true) return
+    try {
+      await notifyNewBizMatch(repo, subscribe, { kind, doc, at })
+    } catch (err) {
+      /* 提醒失败不影响发布本身 */
     }
   }
 
@@ -1478,6 +1494,8 @@ function createUserHandlers(deps) {
         if (!isDraft && data.syncStock === true && patch.tradeMode === '出售') {
           stockSynced = await syncStockFromProduct(patch, uid, at)
         }
+        /* 正式发布进商机池：给发布者与匹配会员各发一次提醒 */
+        if (!isDraft) await notifyBizPool('product', patch, at)
         return {
           id: existing.id,
           tradeMode: doc.tradeMode,
@@ -1507,6 +1525,7 @@ function createUserHandlers(deps) {
       if (!isDraft && data.syncStock === true && doc.tradeMode === '出售') {
         stockSynced = await syncStockFromProduct(doc, uid, at)
       }
+      if (!isDraft) await notifyBizPool('product', doc, at)
       return {
         id: doc.id,
         tradeMode: doc.tradeMode,
@@ -1536,6 +1555,19 @@ function createUserHandlers(deps) {
       /* 草稿字段可能不全：先按宽松口径取回已存内容，再走完整校验 */
       const payload = productPayloadOf(product)
       const checked = buildProduct(payload, uid, now(), { relaxed: false })
+      /* 草稿期间若把主体改为非公开，转正式发布时自动退出商机池（普通发布不受影响） */
+      checked.channel = product.channel || checked.channel
+      checked.bizPool = product.bizPool === true
+      if (checked.visibility === VISIBILITIES.PRIVATE) {
+        checked.channel = PUBLISH_CHANNELS.NORMAL
+        checked.bizPool = false
+      } else if (checked.channel !== PUBLISH_CHANNELS.NORMAL) {
+        const profile = await readProfile(uid)
+        if (String((profile && profile.exposure) || '') !== EXPOSURES.OPEN) {
+          checked.channel = PUBLISH_CHANNELS.NORMAL
+          checked.bizPool = false
+        }
+      }
       const at = now()
       const res = await repo.updateWhere(
         'products',
@@ -1543,6 +1575,8 @@ function createUserHandlers(deps) {
         {
           status: PRODUCT_STATUS.ON_SALE,
           visibility: checked.visibility,
+          channel: checked.channel,
+          bizPool: checked.bizPool,
           title: checked.title,
           cat: checked.cat,
           brand: checked.brand,
@@ -1577,6 +1611,7 @@ function createUserHandlers(deps) {
         }
       )
       if (!res || res.count === 0) throw new AppError(CODES.CONFLICT, '商品状态已被更新，请刷新后重试')
+      await notifyBizPool('product', Object.assign({}, product, checked, { id, status: PRODUCT_STATUS.ON_SALE }), at)
       try {
         await appendAudit(repo, {
           actorType: 'user',
@@ -1636,6 +1671,7 @@ function createUserHandlers(deps) {
         /* 草稿再次保存时未带可见范围：沿用原值，避免保密内容被改回公开 */
         if (data.visibility === undefined) patch.visibility = existing.visibility || VISIBILITIES.PUBLIC
         await repo.updateWhere('demands', { id: existing.id, status: existing.status }, patch)
+        if (!isDraft) await notifyBizPool('demand', patch, at)
         return {
           id: existing.id,
           tradeMode: doc.tradeMode,
@@ -1660,6 +1696,7 @@ function createUserHandlers(deps) {
       } catch (auditErr) {
         /* 发布已落库：留痕失败不能把请求变成失败，否则用户重发会造成重复发布 */
       }
+      if (!isDraft) await notifyBizPool('demand', doc, at)
       return {
         id: doc.id,
         tradeMode: doc.tradeMode,
@@ -1683,6 +1720,19 @@ function createUserHandlers(deps) {
       await assertProfileReady(uid)
       const payload = demandPayloadOf(demand)
       const checked = buildDemand(payload, uid, now(), { relaxed: false })
+      /* 草稿期间若把主体改为非公开，转正式发布时自动退出商机池（普通发布不受影响） */
+      checked.channel = demand.channel || checked.channel
+      checked.bizPool = demand.bizPool === true
+      if (checked.visibility === VISIBILITIES.PRIVATE) {
+        checked.channel = PUBLISH_CHANNELS.NORMAL
+        checked.bizPool = false
+      } else if (checked.channel !== PUBLISH_CHANNELS.NORMAL) {
+        const profile = await readProfile(uid)
+        if (String((profile && profile.exposure) || '') !== EXPOSURES.OPEN) {
+          checked.channel = PUBLISH_CHANNELS.NORMAL
+          checked.bizPool = false
+        }
+      }
       const at = now()
       const res = await repo.updateWhere(
         'demands',
@@ -1690,6 +1740,8 @@ function createUserHandlers(deps) {
         {
           status: DEMAND_STATUS.OPEN,
           visibility: checked.visibility,
+          channel: checked.channel,
+          bizPool: checked.bizPool,
           title: checked.title,
           cat: checked.cat,
           brand: checked.brand,
@@ -1720,6 +1772,7 @@ function createUserHandlers(deps) {
         }
       )
       if (!res || res.count === 0) throw new AppError(CODES.CONFLICT, '需求状态已被更新，请刷新后重试')
+      await notifyBizPool('demand', Object.assign({}, demand, checked, { id, status: DEMAND_STATUS.OPEN }), at)
       try {
         await appendAudit(repo, {
           actorType: 'user',

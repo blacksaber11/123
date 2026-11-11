@@ -847,3 +847,104 @@
   font-weight: 600;
   color: #d4380d;
 }
+
+/* 提示力度：概览右上角入口 + 设置弹层 */
+.bz-hd-r {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+.bz-pref {
+  font-size: 20rpx;
+  line-height: 44rpx;
+  padding: 0 16rpx;
+  border-radius: 22rpx;
+  background: rgba(255, 255, 255, .16);
+  color: #fff;
+}
+.pf-ds {
+  margin-top: 12rpx;
+  font-size: 22rpx;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.pf-levels {
+  display: flex;
+  gap: 14rpx;
+  margin-top: 16rpx;
+}
+.pf-level {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+  padding: 16rpx 14rpx;
+  border: 2rpx solid var(--line-2);
+  border-radius: 16rpx;
+  background: #fff;
+}
+.pf-level.on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+.pf-name {
+  font-size: 26rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+.pf-desc {
+  font-size: 19rpx;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.pf-dims {
+  margin-top: 18rpx;
+}
+.pf-dim {
+  margin-top: 14rpx;
+}
+.pf-dim-hd {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+.pf-dim-t {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.pf-dim-tag {
+  font-size: 18rpx;
+  color: var(--muted);
+}
+.pf-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  margin-top: 10rpx;
+}
+.pf-opt {
+  font-size: 21rpx;
+  padding: 8rpx 16rpx;
+  border-radius: 999rpx;
+  background: #f4f4f5;
+  color: var(--muted);
+}
+.pf-opt.on {
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 600;
+}
+.pf-note {
+  margin-top: 16rpx;
+  padding: 14rpx 16rpx;
+  border-radius: 12rpx;
+  background: var(--warn-soft);
+  border: 1rpx solid var(--warn-line);
+  font-size: 20rpx;
+  line-height: 1.6;
+  color: var(--warn);
+}
+.pf-save {
+  margin-top: 18rpx;
+}

@@ -329,6 +329,80 @@ function catalogSeriesOf(cat, model) {
 }
 
 /**
+ * 商机提示力度：把「品牌 / 型号 / 数量 / 容量」四个维度做成可调档位，
+ * 用户可以在商机页设置自己接单的口径，避免过松（一堆不相关）或过严（漏掉能做的单）。
+ *
+ * 预设三档（用户可在此基础上单独微调任一维度）：
+ * - 宽松 loose   ：同系列即可、数量与容量都不限（「只要是 B300 都要，少一点也行」）
+ * - 标准 standard：同核心型号、数量达到起订量、容量相同（默认，与历史口径一致）
+ * - 严格 strict  ：指定品牌、型号完全一致、库存量要覆盖需求量、容量相同（「只要超微且量要比需求大」）
+ *
+ * 维度取值：
+ * - brand: any 不限品牌 / same 只接指定品牌
+ * - model: series 同系列 / core 同核心型号 / exact 型号完全一致
+ * - qty  : any 数量不限 / meet 达到起订量 / exceed 库存量需覆盖需求量
+ * - cap  : any 容量不限 / same 容量相同 / fit 容量不低于需求（可接受容量更大的货）
+ */
+const BIZ_PREF_PRESETS = Object.freeze({
+  loose: Object.freeze({ level: 'loose', brand: 'any', model: 'series', qty: 'any', cap: 'any' }),
+  standard: Object.freeze({ level: 'standard', brand: 'any', model: 'core', qty: 'meet', cap: 'same' }),
+  strict: Object.freeze({ level: 'strict', brand: 'same', model: 'exact', qty: 'exceed', cap: 'same' })
+})
+const BIZ_PREF_DEFAULT = BIZ_PREF_PRESETS.standard
+const BIZ_PREF_ENUMS = Object.freeze({
+  brand: ['any', 'same'],
+  model: ['series', 'core', 'exact'],
+  qty: ['any', 'meet', 'exceed'],
+  cap: ['any', 'same', 'fit']
+})
+
+function bizPrefPick(value, options, fallback) {
+  const v = String(value == null ? '' : value).trim()
+  return options.indexOf(v) >= 0 ? v : fallback
+}
+
+function bizPrefSame(a, b) {
+  return a.brand === b.brand && a.model === b.model && a.qty === b.qty && a.cap === b.cap
+}
+
+/** 归一化提示力度：命中预设直接返回预设，否则按维度裁剪成自定义档（缺省回落到标准） */
+function normalizeBizPrefs(input) {
+  const src = input && typeof input === 'object' ? input : null
+  if (!src) return Object.assign({}, BIZ_PREF_DEFAULT)
+  const level = String(src.level == null ? '' : src.level).trim()
+  if (level && BIZ_PREF_PRESETS[level]) return Object.assign({}, BIZ_PREF_PRESETS[level])
+  const out = {
+    level: 'custom',
+    brand: bizPrefPick(src.brand, BIZ_PREF_ENUMS.brand, BIZ_PREF_DEFAULT.brand),
+    model: bizPrefPick(src.model, BIZ_PREF_ENUMS.model, BIZ_PREF_DEFAULT.model),
+    qty: bizPrefPick(src.qty, BIZ_PREF_ENUMS.qty, BIZ_PREF_DEFAULT.qty),
+    cap: bizPrefPick(src.cap, BIZ_PREF_ENUMS.cap, BIZ_PREF_DEFAULT.cap)
+  }
+  for (const key of Object.keys(BIZ_PREF_PRESETS)) {
+    const preset = BIZ_PREF_PRESETS[key]
+    if (bizPrefSame(out, preset)) return Object.assign({}, preset)
+  }
+  return out
+}
+
+/** 容量数值（GB）：支持 80G / 4T，用于提示力度里的容量档位比较 */
+function capacityGbOf(value) {
+  const text = String(value == null ? '' : value).toLowerCase()
+  const m = text.match(/(\d+(?:\.\d+)?)\s*(tb|t|gb|g)(?![a-z0-9])/)
+  if (!m) return 0
+  const num = Number(m[1])
+  if (!(num > 0)) return 0
+  return m[2] === 't' || m[2] === 'tb' ? Math.round(num * 1024) : Math.round(num)
+}
+
+/** 容量档位：any 不限 / fit 不低于需求量 / same 必须相同 */
+function bizCapAllowed(level, needGb, stockGb) {
+  if (level === 'any' || !needGb || !stockGb) return true
+  if (level === 'fit') return stockGb >= needGb
+  return stockGb === needGb
+}
+
+/**
  * 库存匹配：按「设备类型 + 核心型号 + 新二手 + 起订量」筛选，品牌与城市不参与。
  *
  * 1. 设备类型是硬条件：需求写明了设备类型，就不跨类型匹配
@@ -352,10 +426,18 @@ function stockMatch(stocks, cat, model, brand, opts) {
   const needCond = condFamily(need.cond)
   const needSeries = String(need.series || '').trim() || catalogSeriesOf(cat, model)
   const needCap = model ? capacityOf(model) : ''
+  const needCapGb = model ? capacityGbOf(model) : 0
+  const needBrand = String(brand == null ? '' : brand).trim().toLowerCase()
+  /* 提示力度：未设置时按「标准」档，保证与历史口径一致 */
+  const pref = normalizeBizPrefs(need.pref)
   const matched = []
   for (const stock of stocks || []) {
     /* 设备类型硬校验：有型号也不能跨品类命中 */
     if (cat && stock.cat && stock.cat !== cat) continue
+    /* 品牌档位：只接指定品牌时，双方都写了品牌才比对 */
+    if (pref.brand === 'same' && needBrand && stock.brand) {
+      if (String(stock.brand).trim().toLowerCase() !== needBrand) continue
+    }
     if (model) {
       const stockSeries = String(stock.series || '').trim() || catalogSeriesOf(stock.cat, stock.model)
       const seriesHit = !!(needSeries && stockSeries && needSeries === stockSeries)
@@ -365,7 +447,18 @@ function stockMatch(stocks, cat, model, brand, opts) {
       /* 同族兜底不能绕过容量：96G 与 72G 即便同系列也仍是不同规格 */
       const stockCap = capacityOf(stock.model)
       const capOk = !(needCap && stockCap && needCap !== stockCap)
-      if (!modelMatch(stock.model, model) && !(seriesHit && capOk && !coreComparable)) continue
+      const stockCapGb = capacityGbOf(stock.model)
+      if (pref.model === 'exact') {
+        /* 严格档：型号文本必须完全一致（忽略大小写与分隔符） */
+        if (normModel(stock.model) !== normModel(model)) continue
+      } else if (pref.model === 'series') {
+        /* 宽松档：同核心型号或同系列即可，容量交给容量档位判断 */
+        if (!modelMatch(stock.model, model) && !seriesHit) continue
+      } else if (!modelMatch(stock.model, model) && !(seriesHit && capOk && !coreComparable)) {
+        continue
+      }
+      /* 容量档位：同容量 / 不低于 / 不限（4T 需求接受 3T 时把容量调成「不限」） */
+      if (!bizCapAllowed(pref.cap, needCapGb, stockCapGb)) continue
     } else if (!cat) {
       /* 设备类型与型号都没填，无法判断是否匹配，直接跳过 */
       continue
@@ -373,8 +466,14 @@ function stockMatch(stocks, cat, model, brand, opts) {
     if (needCond && stock.cond && condFamily(stock.cond) !== needCond) continue
     /* 可用量低于起订量＝这单发不出去，不算有货 */
     if ((Number(stock.qty) || 0) < moqOf(stock)) continue
-    /* 对方需求量小于起订量＝这单接不下，同样不命中 */
-    if (needQty > 0 && moqOf(stock) > needQty) continue
+    if (pref.qty === 'exceed') {
+      /* 严格档：库存可用量必须覆盖对方需求量 */
+      if (needQty > 0 && (Number(stock.qty) || 0) < needQty) continue
+    } else if (pref.qty === 'meet') {
+      /* 标准档：对方需求量不小于起订量即可 */
+      if (needQty > 0 && moqOf(stock) > needQty) continue
+    }
+    /* 宽松档（any）不校验需求量，少量也提醒 */
     matched.push(stock)
   }
   const qty = matched.reduce((n, stock) => n + (Number(stock.qty) || 0), 0)
@@ -392,6 +491,172 @@ function stockMatch(stocks, cat, model, brand, opts) {
     qty,
     text: textOut
   }
+}
+
+/** 公开主体集合：只有「公开主体」才会收到 / 发出商机提醒，保证商机里对接双方都公开 */
+async function openSubjectSet(repo, ids) {
+  const list = Array.from(new Set((ids || []).map((id) => String(id || '')).filter(Boolean)))
+  const set = new Set()
+  if (!list.length) return set
+  const rows = await repo.find('profiles', { uid: { $in: list } }, { limit: list.length })
+  for (const row of rows || []) {
+    const uid = row.uid || row.id
+    if (uid && row.exposure === EXPOSURES.OPEN) set.add(uid)
+  }
+  return set
+}
+
+/**
+ * 发布即提醒：新需求 / 新货源进入商机池时，按对方「提示力度」找出匹配方，
+ * 给发布者与匹配方各发一条站内信（同一条内容只发一次，重复保存不重复打扰）。
+ *
+ * 口径：
+ * 1. 只有公开主体的发布内容才进入商机池，也只有公开主体的会员才会收到提醒；
+ * 2. 发布方收到一条汇总提醒，每个匹配到的会员各收到一条（B/C/D 都有货就分别提醒 B/C/D）；
+ * 3. 商机被领取时不发提醒，只有对方主动发起对话才会产生聊天消息；
+ * 4. 站内信 id 由「场景 + 内容 id + 收件人」确定，重复发布 / 领取不会重复打扰。
+ */
+async function notifyNewBizMatch(repo, subscribe, options) {
+  const opts = options || {}
+  const doc = opts.doc
+  const kind = opts.kind === 'product' ? 'product' : 'demand'
+  const at = Number(opts.at) || Date.now()
+  const publisher = String((doc && doc.ownerId) || '')
+  if (!repo || !doc || !doc.id || !publisher) return { matched: 0, notified: 0 }
+
+  const openPublishers = await openSubjectSet(repo, [publisher])
+  if (!openPublishers.has(publisher)) return { matched: 0, notified: 0 }
+  /* 只有开通了商机会员的发布者才需要汇总提醒 */
+  const publisherAccess = accessView(await repo.get('bizAccess', publisher), at)
+
+  const title = String(doc.title || doc.model || '商机')
+  /* 新需求：匹配「商机池里的在售商品」+「本人库存」；新货源：匹配商机池里的求购需求 */
+  const rows = kind === 'demand'
+    ? (await repo.find('products', {
+      status: '在售',
+      visibility: { $ne: VISIBILITIES.PRIVATE },
+      bizPool: true,
+      deleted: { $ne: true }
+    }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 200 })).concat(
+      await repo.find('stocks', { status: '在售', deleted: { $ne: true } }, { limit: 200 })
+    )
+    : await repo.find('demands', {
+      status: '求购中',
+      visibility: { $ne: VISIBILITIES.PRIVATE },
+      bizPool: true,
+      deleted: { $ne: true }
+    }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 200 })
+
+  const candidates = (rows || []).filter((row) => row.ownerId && row.ownerId !== publisher)
+  if (!candidates.length) return { matched: 0, notified: 0 }
+  const openOwners = await openSubjectSet(repo, candidates.map((row) => row.ownerId))
+
+  /* 按对方主体聚合：一个会员有多条库存 / 需求也只提醒一次 */
+  const byOwner = new Map()
+  for (const row of candidates) {
+    if (!openOwners.has(row.ownerId)) continue
+    if (!byOwner.has(row.ownerId)) byOwner.set(row.ownerId, [])
+    byOwner.get(row.ownerId).push(row)
+  }
+
+  let matchedOwners = 0
+  let notified = 0
+  for (const [ownerId, ownerRows] of byOwner) {
+    /* 没开通商机会员的会员看不到商机详情，不做无效提醒 */
+    const ownerAccess = accessView(await repo.get('bizAccess', ownerId), at)
+    if (!ownerAccess.unlocked) continue
+    const prefRow = await repo.get('bizPrefs', ownerId)
+    const pref = normalizeBizPrefs(prefRow)
+    let hit = false
+    if (kind === 'demand') {
+      hit = stockMatch(ownerRows, doc.cat, doc.model, doc.brand, {
+        qty: doc.qty, cond: doc.cond, series: doc.series, pref
+      }).ok
+    } else {
+      for (const demandRow of ownerRows) {
+        const rowHit = stockMatch([doc], demandRow.cat, demandRow.model, demandRow.brand, {
+          qty: demandRow.qty, cond: demandRow.cond, series: demandRow.series, pref
+        }).ok
+        if (rowHit) { hit = true; break }
+      }
+    }
+    if (!hit) continue
+    matchedOwners += 1
+    const body = kind === 'demand'
+      ? `「${title}」与你的库存匹配，可在商机页查看`
+      : `「${title}」与你的求购需求匹配，可在商机页查看`
+    const sent = await pushBizPublishNotice(repo, subscribe, {
+      uid: ownerId,
+      key: `${kind}:${doc.id}`,
+      title: '有新的商机可查看',
+      body,
+      targetId: doc.id,
+      at
+    })
+    if (sent) notified += 1
+  }
+
+  /* 发布者本人也要提示一次：未开通会员时文案引导开通，会员直接进商机页查看 */
+  if (matchedOwners > 0) {
+    const verb = kind === 'demand' ? '家货源' : '位买家'
+    const summary = publisherAccess.unlocked
+      ? `已有 ${matchedOwners} ${verb}与「${title}」匹配，可在商机页查看`
+      : `已有 ${matchedOwners} ${verb}与「${title}」匹配，开通商机会员即可查看`
+    await pushBizPublishNotice(repo, subscribe, {
+      uid: publisher,
+      key: `publisher:${kind}:${doc.id}`,
+      title: publisherAccess.unlocked ? '有新的商机匹配' : '有新的商机匹配，开通会员查看',
+      body: summary,
+      targetId: doc.id,
+      at
+    })
+  }
+  return { matched: matchedOwners, notified }
+}
+
+/** 商机提醒幂等写入：同一条内容对同一个人只发一次站内信 + 一次微信订阅提醒 */
+async function pushBizPublishNotice(repo, subscribe, options) {
+  const opts = options || {}
+  const uid = String(opts.uid || '')
+  if (!uid) return false
+  const id = 'M' + sha256Hex(`biz-new|${opts.key || ''}|${uid}`).slice(0, 24)
+  const existed = await repo.get('outbox', id)
+  if (existed) return false
+  try {
+    await repo.insert('outbox', {
+      id,
+      type: 'system.notice',
+      payload: {
+        uid,
+        channel: 'system',
+        from: 'system',
+        title: opts.title || '有新的商机可查看',
+        body: opts.body || '',
+        reason: '',
+        targetType: 'biz',
+        targetId: String(opts.targetId || '')
+      },
+      status: 'pending',
+      createdAt: Number(opts.at) || Date.now()
+    })
+  } catch (err) {
+    /* 并发下唯一 id 冲突视为已提醒过，不重复打扰 */
+    if (err && err.code === CODES.CONFLICT) return false
+    throw err
+  }
+  if (subscribe && typeof subscribe.biz === 'function') {
+    try {
+      await subscribe.biz(uid, {
+        title: opts.title || '有新的商机可查看',
+        body: opts.body || '',
+        page: 'pages/biz/biz',
+        at: Number(opts.at) || Date.now()
+      })
+    } catch (err) {
+      /* 订阅消息失败不影响站内信 */
+    }
+  }
+  return true
 }
 
 /** 联系方式不再拦截：用户可直接在委托信息、资讯、材料名称里留电话 / 微信号 */
@@ -2987,6 +3252,9 @@ function createMarketUserHandlers(deps) {
       const view = accessView(access, at)
       const unlocked = view.unlocked
       const stocks = await ownStocks(uid)
+      /* 提示力度：决定商机检索的严格程度，未设置时按标准档 */
+      const prefRow = await repo.get('bizPrefs', uid)
+      const prefs = normalizeBizPrefs(prefRow)
       const claims = await ownClaims(uid)
       /* 用户标记「不满足」的商机：保留在列表的「不满足」分类里，但不再计入可领取与角标 */
       const markRows = await repo.find('bizMarks', { uid, marked: true }, { limit: 500 })
@@ -3088,7 +3356,8 @@ function createMarketUserHandlers(deps) {
           qty: demand.qty,
           city: demand.city,
           cond: demand.cond,
-          series: demand.series
+          series: demand.series,
+          pref: prefs
         })
         /* 只展示我的库存能对上的需求，其余商机不出现 */
         if (!match.ok) continue
@@ -3132,7 +3401,8 @@ function createMarketUserHandlers(deps) {
         const match = stockMatch(stocks, agency.itemCat || '', agency.item, agency.brand, {
           qty: agency.qty,
           city: agency.city,
-          series: agency.series
+          series: agency.series,
+          pref: prefs
         })
         /* 商机池只展示库存能对上的委托，避免无关用户看到 */
         if (!match.ok) continue
@@ -3167,7 +3437,8 @@ function createMarketUserHandlers(deps) {
             qty: demand.qty,
             city: demand.city,
             cond: demand.cond,
-            series: demand.series
+            series: demand.series,
+            pref: prefs
           })
           if (match.ok) {
             hit = { demand, match }
@@ -3303,8 +3574,46 @@ function createMarketUserHandlers(deps) {
         demandCount: myDemands.length,
         plans,
         planKey: view.planKey || 'month',
+        prefs,
+        prefPresets: ['loose', 'standard', 'strict'].map((key) => Object.assign({}, BIZ_PREF_PRESETS[key])),
         hint: unlocked ? '' : '开通商机后可查看联系方式并领取商机'
       })
+    },
+
+    /**
+     * 商机提示力度：读取 / 保存当前用户的口径。
+     * 只影响「什么算匹配」，不改库存本身；宽松档会多提醒，严格档只提醒高确定性商机。
+     */
+    'biz.prefs': async (data, ctx) => {
+      const uid = ctx.openid
+      await mustUser(ctx)
+      const at = now()
+      if (data && data.save === true) {
+        const next = normalizeBizPrefs(data)
+        const doc = Object.assign({ id: uid, uid }, next, { updatedAt: at })
+        const existing = await repo.get('bizPrefs', uid)
+        if (existing) {
+          await repo.updateWhere('bizPrefs', { id: uid }, doc)
+        } else {
+          try {
+            await repo.insert('bizPrefs', doc)
+          } catch (err) {
+            if (!err || err.code !== CODES.CONFLICT) throw err
+            await repo.updateWhere('bizPrefs', { id: uid }, doc)
+          }
+        }
+        return {
+          prefs: next,
+          at,
+          prefPresets: ['loose', 'standard', 'strict'].map((key) => Object.assign({}, BIZ_PREF_PRESETS[key]))
+        }
+      }
+      const row = await repo.get('bizPrefs', uid)
+      return {
+        prefs: normalizeBizPrefs(row),
+        at: Number(row && row.updatedAt) || 0,
+        prefPresets: ['loose', 'standard', 'strict'].map((key) => Object.assign({}, BIZ_PREF_PRESETS[key]))
+      }
     },
 
     /**
@@ -3318,6 +3627,8 @@ function createMarketUserHandlers(deps) {
       const at = now()
       const access = accessView(await ownAccess(uid), at)
       const stocks = await ownStocks(uid)
+      const prefRow = await repo.get('bizPrefs', uid)
+      const prefs = normalizeBizPrefs(prefRow)
       const claims = await ownClaims(uid)
       /* 标记「不满足」的商机不再计入角标提醒，但仍在商机列表里可查看 */
       const markRows = await repo.find('bizMarks', { uid, marked: true }, { limit: 500 })
@@ -3346,7 +3657,8 @@ function createMarketUserHandlers(deps) {
           qty: demand.qty,
           city: demand.city,
           cond: demand.cond,
-          series: demand.series
+          series: demand.series,
+          pref: prefs
         })
         if (match.ok) count += 1
       })
@@ -3363,7 +3675,8 @@ function createMarketUserHandlers(deps) {
           const match = stockMatch(stocks, agency.itemCat || '', agency.item, agency.brand, {
             qty: agency.qty,
             city: agency.city,
-            series: agency.series
+            series: agency.series,
+            pref: prefs
           })
           if (match.ok) count += 1
         })
@@ -3394,31 +3707,14 @@ function createMarketUserHandlers(deps) {
             qty: demand.qty,
             city: demand.city,
             cond: demand.cond,
-            series: demand.series
+            series: demand.series,
+            pref: prefs
           }).ok)
           if (hit) count += 1
         })
       }
-      /* 新商机提醒：比上次多时推一条微信提醒；一次订阅授权只推一条，不重复刷屏 */
-      if (subscribe && count > 0) {
-        try {
-          const me = await repo.get('users', uid)
-          const last = Number(me && me.bizMatchCount) || 0
-          if (count > last) {
-            await subscribe.biz(uid, {
-              title: '有新的商机匹配',
-              body: `当前 ${count} 条商机与你的库存 / 需求匹配，点开查看`,
-              page: 'pages/biz/biz',
-              at
-            })
-          }
-          if (count !== last) {
-            await repo.updateWhere('users', { id: uid }, { bizMatchCount: count, bizMatchAt: at })
-          }
-        } catch (err) {
-          /* 提醒失败不影响角标 */
-        }
-      }
+      /* 新商机提醒统一由「发布即提醒」触发（需求 / 货源发布时给双方各发一次），
+         角标这里只负责计数，不再重复推订阅消息，避免同一条商机打扰两次 */
       /* 已领取条数：以仍然存在的商机为准（已结束 / 已下架的领取记录仍保留在「我的商机」，删除的不计入） */
       let claimedCount = 0
       if (claims.size) {
@@ -3469,6 +3765,8 @@ function createMarketUserHandlers(deps) {
       const claimId = 'bc' + sha256Hex(`${uid}:${targetType}:${targetId}`).slice(0, 24)
       const existing = await repo.get('bizClaims', claimId)
       const stocks = await ownStocks(uid)
+      /* 提示力度：与商机列表保持同一口径，列表能看到的才能领取 */
+      const prefs = normalizeBizPrefs(await repo.get('bizPrefs', uid))
 
       let contact = null
       let ownerId = ''
@@ -3492,7 +3790,8 @@ function createMarketUserHandlers(deps) {
           qty: demand.qty,
           city: demand.city,
           cond: demand.cond,
-          series: demand.series
+          series: demand.series,
+          pref: prefs
         })
         if (!match.ok) throw new AppError(CODES.FORBIDDEN, '我的库存中没有匹配的型号，无法领取')
         contact = await contactOfUser(demand.ownerId)
@@ -3523,7 +3822,8 @@ function createMarketUserHandlers(deps) {
           qty: demand.qty,
           city: demand.city,
           cond: demand.cond,
-          series: demand.series
+          series: demand.series,
+          pref: prefs
         }).ok)
         if (!hit) throw new AppError(CODES.FORBIDDEN, '该货源与我的需求不匹配，无法领取')
         contact = await contactOfUser(product.ownerId)
@@ -3534,6 +3834,11 @@ function createMarketUserHandlers(deps) {
         const agency = await repo.get('agencies', targetId)
         if (!agency || agency.deleted) throw new AppError(CODES.NOT_FOUND, '委托不存在或已关闭')
         throw new AppError(CODES.NOT_FOUND, '该委托由平台代为对接，暂不开放自助领取')
+      }
+
+      /* 领取即对接：领取方也必须是公开主体，保证商机里对接双方都公开（委托分支已在上方拦截） */
+      if (!(await poolProfiles([uid])).size) {
+        throw new AppError(CODES.FORBIDDEN, '请先在「我的-资料」中公开主体信息，再领取商机')
       }
 
       if (!existing) {
@@ -3596,54 +3901,8 @@ function createMarketUserHandlers(deps) {
         if (!err || err.code !== CODES.CONFLICT) throw err
       }
 
-      /* 双方各一条站内消息 + 商机类微信提醒：领取方知道领取成功，
-         发布方知道有人领取；同一领取只发一次，重复领取不重复打扰 */
-      if (!existing) {
-        const claimant = maskName(String(user.realname || user.nick || '')) || '一位会员'
-        const notices = [
-          {
-            to: ownerId,
-            title: '你的商机被领取',
-            body: `会员「${claimant}」领取了「${title}」的联系方式，可在消息中心等待对方发起站内对话。`
-          },
-          {
-            to: uid,
-            title: '商机领取成功',
-            body: contact && contact.phone
-              ? `已领取「${title}」的联系方式：${contact.name} ${contact.phone}`
-              : `已领取「${title}」的联系方式，对方未留电话，可在商机页直接发起站内对话。`
-          }
-        ]
-        for (const notice of notices) {
-          if (!notice.to) continue
-          try {
-            const noticeId = 'M' + sha256Hex(`biz-claim:${claimId}:${notice.to}`).slice(0, 24)
-            if (!(await repo.get('outbox', noticeId))) {
-              await repo.insert('outbox', {
-                id: noticeId,
-                type: 'system.notice',
-                payload: {
-                  uid: notice.to,
-                  channel: 'system',
-                  from: 'system',
-                  title: notice.title,
-                  body: notice.body,
-                  reason: '',
-                  targetType: 'biz',
-                  targetId
-                },
-                status: 'pending',
-                createdAt: at
-              })
-            }
-            if (subscribe) {
-              await subscribe.biz(notice.to, { title: notice.title, body: notice.body, at }).catch(() => {})
-            }
-          } catch (err) {
-            /* 通知失败不影响领取结果 */
-          }
-        }
-      }
+      /* 领取时不再给双方发站内信：商机提醒统一在「发布新商机」时发给双方，
+         领取后只有对方主动发起对话才会产生聊天消息，避免领取动作重复打扰 */
 
       /* 领取成功即视为已满足：清掉之前的「不满足」标记，避免继续不提醒 */
       try {
@@ -3745,12 +4004,18 @@ function createMarketUserHandlers(deps) {
       if (!accessView(access, at).unlocked) {
         throw new AppError(CODES.FORBIDDEN, '商机权限未开通或已到期，请先开通商机')
       }
+      /* 咨询对接同样要求公开主体：保证商机里对接双方都是公开主体 */
+      if (!(await poolProfiles([uid])).size) {
+        throw new AppError(CODES.FORBIDDEN, '请先在「我的-资料」中公开主体信息，再在商机里咨询接单')
+      }
 
       const stocks = await ownStocks(uid)
+      const prefs = normalizeBizPrefs(await repo.get('bizPrefs', uid))
       const match = stockMatch(stocks, agency.itemCat || '', agency.item, agency.brand, {
         qty: agency.qty,
         city: agency.city,
-        series: agency.series
+        series: agency.series,
+        pref: prefs
       })
       if (!match.ok) {
         throw new AppError(CODES.FORBIDDEN, '我的库存中没有匹配的型号，无法申请平台对接')
@@ -5556,6 +5821,8 @@ module.exports = {
   normModel,
   modelHit,
   stockMatch,
+  normalizeBizPrefs,
+  notifyNewBizMatch,
   boardItems,
   agencyOwnerView,
   agencyStaffView,
