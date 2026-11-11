@@ -444,25 +444,18 @@ Page({
   },
 
   /* 平台代采 / 代售：不展示委托方，只能联系平台客服；
-     带上商品上下文进入消息页，管理端按商品归组咨询留言 */
+     带上商品上下文进入对话页，管理端按商品归组咨询留言 */
   contactPlatform() {
     const p = this.data.product || {}
-    try {
-      const app = getApp()
-      if (app && app.globalData) {
-        app.globalData.openChat = {
-          productId: String(p.id || this.productId || ''),
-          title: p.title || [p.brand, p.model].filter(Boolean).join(' ') || p.model || '算力设备',
-          /* 会话顶部商品卡：封面 / 价格 / 城市，双方都能看到同一条标的 */
-          cover: p.cover || '',
-          priceText: p.priceMode === 'nego' ? '价格面议' : ((p.priceText || '') + (p.priceUnit || '')),
-          city: p.city || ''
-        }
-      }
-    } catch (e) { /* 全局状态不可用不影响跳转 */ }
-    /* 记住来路：关闭客服会话后回到本商品页 */
-    chat.rememberChatSource()
-    wx.switchTab({ url: '/pages/msg/msg' })
+    chat.goKf({
+      targetType: 'product',
+      targetId: String(p.id || this.productId || ''),
+      targetTitle: p.title || [p.brand, p.model].filter(Boolean).join(' ') || p.model || '算力设备',
+      /* 会话顶部商品卡：封面 / 价格 / 城市，双方都能看到同一条标的 */
+      cover: p.cover || '',
+      priceText: p.priceMode === 'nego' ? '价格面议' : ((p.priceText || '') + (p.priceUnit || '')),
+      city: p.city || ''
+    })
   },
 
   /* 复制货主公开的联系电话 */

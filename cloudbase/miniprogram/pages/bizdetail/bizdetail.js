@@ -278,7 +278,7 @@ Page({
             targetTitle: opp.title || ''
           }, { silent: true })
           this.setData({ consulting: false, consulted: true })
-          wx.switchTab({ url: '/pages/msg/msg' })
+          wx.navigateTo({ url: '/pages/chat/chat' })
           return
         } catch (err) {
           /* 对话建立失败不影响已提交的对接申请 */

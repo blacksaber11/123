@@ -693,19 +693,16 @@ Page({
       if (app && app.globalData) app.globalData.mineDirty = true
     } catch (e) {}
 
-    /* 必须条件全部满足：后端已开通直聊，直接带用户进入会话 */
+    /* 必须条件全部满足：后端已开通直聊，直接带用户进入独立对话页 */
     if (receipt && receipt.chatReady && receipt.threadId) {
-      const app = getApp()
-      app.globalData = app.globalData || {}
       wx.showModal({
         title: '已开启对话',
         content: (receipt.receipt || '必须条件已满足，已为你开启与对方的会话。') +
-          '可在「消息 - 对话」继续沟通，材料仅你与平台可见。',
+          '可在对话中继续沟通，材料仅你与平台可见。',
         showCancel: false,
         confirmText: '去沟通',
         success: () => {
-          app.globalData.openThread = receipt.threadId
-          wx.switchTab({ url: '/pages/msg/msg' })
+          wx.navigateTo({ url: '/pages/chat/chat?threadId=' + encodeURIComponent(receipt.threadId) })
         }
       })
       return

@@ -355,7 +355,7 @@ function createUserHandlers(deps) {
         sender: payload.sender || '',
         preview: payload.preview || '',
         at: payload.at,
-        page: 'pages/msg/msg?threadId=' + encodeURIComponent(payload.threadId || '')
+        page: 'pages/chat/chat?threadId=' + encodeURIComponent(payload.threadId || '')
       })
     } catch (err) {
       /* 推送失败不影响站内消息 */
@@ -1180,7 +1180,7 @@ function createUserHandlers(deps) {
         chat: String(site.tmplChat || env.SUBSCRIBE_TMPL_CHAT || ''),
         system: String(site.tmplSystem || env.SUBSCRIBE_TMPL_SYSTEM || ''),
         biz: String(site.tmplBiz || env.SUBSCRIBE_TMPL_BIZ || ''),
-        chatPage: 'pages/msg/msg'
+        chatPage: 'pages/chat/chat'
       }
     },
 

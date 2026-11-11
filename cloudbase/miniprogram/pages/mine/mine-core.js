@@ -1189,11 +1189,7 @@ const BASE = {
 
   /* 在线客服：进入平台内的官方客服会话，消息发给管理端坐席，不走微信客服 */
   goService() {
-    const app = getApp()
-    if (app && app.globalData) app.globalData.openChat = true
-    /* 记住来路：关闭客服会话后回到「我的」页 */
-    chat.rememberChatSource()
-    wx.switchTab({ url: '/pages/msg/msg' })
+    chat.goKf()
   },
 
   goPrivacy() {

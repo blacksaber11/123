@@ -21,6 +21,7 @@
     "pages/profile/profile",
     "pages/privacy/privacy",
     "pages/msg/msg",
+    "pages/chat/chat",
     "pages/userhome/userhome",
     "pages/report/report"
   ],

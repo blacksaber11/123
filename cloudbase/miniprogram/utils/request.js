@@ -325,7 +325,7 @@ function gotoLogin() {
  * 登录回跳时允许携带的 query 白名单。
  * 只保留「定位到同一份内容」所需的参数，openid / 手机号 / 线索号一律不带走。
  */
-const RETURN_KEYS = ['id', 'type', 'kind', 'from', 'tab', 'sub']
+const RETURN_KEYS = ['id', 'type', 'kind', 'from', 'tab', 'sub', 'threadId']
 
 /** 拼安全 query：白名单外的参数直接丢弃 */
 function safeQuery(options) {

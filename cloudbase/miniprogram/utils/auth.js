@@ -20,7 +20,8 @@ const GATE_PAGES = [
   'pages/publish/publish',
   'pages/mine/mine',
   'pages/profile/profile',
-  'pages/msg/msg'
+  'pages/msg/msg',
+  'pages/chat/chat'
 ]
 
 function isGate(route) {

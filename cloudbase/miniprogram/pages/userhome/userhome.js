@@ -174,15 +174,13 @@ Page({
     wx.makePhoneCall({ phoneNumber: phone, fail: () => {} })
   },
 
-  /* 私信：回到原会话；从资讯作者主页进入时没有会话，先去消息页 */
+  /* 私信：从对话页进来时直接返回原会话；从资讯作者主页进入时没有会话，先去消息页 */
   sendMessage() {
     const threadId = this.data.threadId
     if (!threadId) {
       wx.switchTab({ url: '/pages/msg/msg' })
       return
     }
-    const app = getApp()
-    if (app && app.globalData) app.globalData.openThread = threadId
     wx.navigateBack()
   },
 

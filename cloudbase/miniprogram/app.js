@@ -198,7 +198,8 @@ App({
       const pages = getCurrentPages() || []
       topRoute = routeOf(pages[pages.length - 1])
     } catch (e) { topRoute = '' }
-    if (topRoute === 'pages/msg/msg') return
+    /* 消息页 / 对话页自己会刷新并标记已读，全局轮询跳过，避免角标反复跳动 */
+    if (topRoute === 'pages/msg/msg' || topRoute === 'pages/chat/chat') return
     this._inboxPolling = true
     try {
       const res = await request('user', 'msg.list', { page: 1, limit: 50 }, { silent: true })

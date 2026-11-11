@@ -1,0 +1,10 @@
+@import "../msg/msg.wxss";
+
+/* 独立对话页：整屏会话，没有底部 tabBar，会话面板直接贴底 */
+.chat-page {
+  min-height: 100vh;
+  background: var(--paper);
+}
+.chat-page .chat-panel {
+  bottom: 0;
+}
