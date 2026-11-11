@@ -3392,6 +3392,21 @@ section('28. 商机池：主体可见门槛 / 会员分层 / 发布方开关')
   ok(badgeBefore.ok && badgeBefore.data.claimed === 0, '「我的商机」角标统计已领取条数：领取前为 0')
   const claimPool = await call(userRouter, 'biz.claim', { targetType: 'demand', demandId: poolPub.data.id }, SEEK)
   ok(claimPool.ok, '商机会员可领取匹配的商机', claimPool.message)
+  /* 领取即通知双方：领取方收到领取成功，发布方收到「被领取」提醒 */
+  const claimNotices = await repo.find('outbox', {
+    'payload.targetType': 'biz', 'payload.targetId': poolPub.data.id
+  }, { limit: 10 })
+  const claimTo = claimNotices.map((n) => n.payload && n.payload.uid)
+  ok(claimTo.indexOf(SEEK.openid) >= 0 && claimTo.indexOf(PUB2.openid) >= 0,
+    '领取商机后领取方与发布方都收到站内消息', claimTo.join(' / '))
+  const ownerNotice = claimNotices.filter((n) => n.payload && n.payload.uid === PUB2.openid)[0]
+  ok(!!ownerNotice && ownerNotice.payload.title === '你的商机被领取',
+    '发布方收到「你的商机被领取」提醒')
+  await call(userRouter, 'biz.claim', { targetType: 'demand', demandId: poolPub.data.id }, SEEK)
+  const claimNoticesAgain = await repo.find('outbox', {
+    'payload.targetType': 'biz', 'payload.targetId': poolPub.data.id
+  }, { limit: 10 })
+  ok(claimNoticesAgain.length === claimNotices.length, '重复领取不重复发站内消息')
   const badgeAfter = await call(userRouter, 'biz.badge', {}, SEEK)
   ok(badgeAfter.ok && badgeAfter.data.claimed === 1,
     '领取后「我的商机」角标为已领取 1 条（不是可领取条数）',

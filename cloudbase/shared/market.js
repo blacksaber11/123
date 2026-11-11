@@ -3423,7 +3423,7 @@ function createMarketUserHandlers(deps) {
     /** 领取商机：必须已开通 + 库存匹配；重复领取幂等返回同一联系方式 */
     'biz.claim': async (data, ctx) => {
       const uid = ctx.openid
-      await mustUser(ctx)
+      const user = await mustUser(ctx)
       const at = now()
       const access = await ownAccess(uid)
       const view = accessView(access, at)
@@ -3445,6 +3445,7 @@ function createMarketUserHandlers(deps) {
       const stocks = await ownStocks(uid)
 
       let contact = null
+      let ownerId = ''
       let title = ''
       if (targetType === 'demand') {
         const demand = await repo.get('demands', targetId)
@@ -3469,6 +3470,7 @@ function createMarketUserHandlers(deps) {
         })
         if (!match.ok) throw new AppError(CODES.FORBIDDEN, '我的库存中没有匹配的型号，无法领取')
         contact = await contactOfUser(demand.ownerId)
+        ownerId = demand.ownerId
         title = demand.title || demand.model
       } else if (targetType === 'supply') {
         /* 反向商机：领取的是别人在售的货源，需要与我的某条求购需求匹配 */
@@ -3499,6 +3501,7 @@ function createMarketUserHandlers(deps) {
         }).ok)
         if (!hit) throw new AppError(CODES.FORBIDDEN, '该货源与我的需求不匹配，无法领取')
         contact = await contactOfUser(product.ownerId)
+        ownerId = product.ownerId
         title = product.title || product.model
       } else {
         /* 代采 / 代售委托均由平台代为对接并联系缴费，不开放自助领取 */
@@ -3565,6 +3568,55 @@ function createMarketUserHandlers(deps) {
       } catch (err) {
         /* 并发领取 / 同时直聊：另一路已建好同一条线索，忽略冲突 */
         if (!err || err.code !== CODES.CONFLICT) throw err
+      }
+
+      /* 双方各一条站内消息 + 商机类微信提醒：领取方知道领取成功，
+         发布方知道有人领取；同一领取只发一次，重复领取不重复打扰 */
+      if (!existing) {
+        const claimant = maskName(String(user.realname || user.nick || '')) || '一位会员'
+        const notices = [
+          {
+            to: ownerId,
+            title: '你的商机被领取',
+            body: `会员「${claimant}」领取了「${title}」的联系方式，可在消息中心等待对方发起站内对话。`
+          },
+          {
+            to: uid,
+            title: '商机领取成功',
+            body: contact && contact.phone
+              ? `已领取「${title}」的联系方式：${contact.name} ${contact.phone}`
+              : `已领取「${title}」的联系方式，对方未留电话，可在商机页直接发起站内对话。`
+          }
+        ]
+        for (const notice of notices) {
+          if (!notice.to) continue
+          try {
+            const noticeId = 'M' + sha256Hex(`biz-claim:${claimId}:${notice.to}`).slice(0, 24)
+            if (!(await repo.get('outbox', noticeId))) {
+              await repo.insert('outbox', {
+                id: noticeId,
+                type: 'system.notice',
+                payload: {
+                  uid: notice.to,
+                  channel: 'system',
+                  from: 'system',
+                  title: notice.title,
+                  body: notice.body,
+                  reason: '',
+                  targetType: 'biz',
+                  targetId
+                },
+                status: 'pending',
+                createdAt: at
+              })
+            }
+            if (subscribe) {
+              await subscribe.biz(notice.to, { title: notice.title, body: notice.body, at }).catch(() => {})
+            }
+          } catch (err) {
+            /* 通知失败不影响领取结果 */
+          }
+        }
       }
 
       /* 领取成功即视为已满足：清掉之前的「不满足」标记，避免继续不提醒 */

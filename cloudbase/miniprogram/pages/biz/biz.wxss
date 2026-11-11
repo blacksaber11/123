@@ -573,6 +573,8 @@
 .oc-l {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-width: 0;
   gap: 4rpx;
 }
 .oc-name {
@@ -585,9 +587,10 @@
   color: var(--brand);
   letter-spacing: 1rpx;
 }
+/* 对方未留电话：只留一行小字提示，不挤占右侧「站内对话」按钮的位置 */
 .oc-phone.empty {
   color: var(--muted);
-  font-size: 22rpx;
+  font-size: 20rpx;
   letter-spacing: 0;
 }
 .op-foot {

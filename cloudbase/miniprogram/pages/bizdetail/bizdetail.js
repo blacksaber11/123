@@ -235,13 +235,23 @@ Page({
     }
     this.openingChat = true
     try {
+      let threadId = ''
       if (this.remote) {
         const conds = this.data.mustList.map((c) => ({ k: c.t, satisfied: true }))
         const payload = opp.type === 'supply'
           ? { productId: opp.id, conds: conds }
           : { demandId: opp.id, conds: conds }
-        await request('user', 'chat.open', payload, { silent: true })
+        const res = await request('user', 'chat.open', payload, { silent: true })
+        threadId = res && res.threadId ? String(res.threadId) : ''
       }
+      if (!threadId) {
+        wx.showToast({ title: '暂时无法直接对话，请稍后再试', icon: 'none' })
+        return
+      }
+      /* 直达会话：消息页是 tabBar 页只能 switchTab，threadId 交给消息页当场打开该会话 */
+      const app = getApp()
+      app.globalData = app.globalData || {}
+      app.globalData.openThread = threadId
       wx.switchTab({ url: '/pages/msg/msg' })
     } catch (err) {
       wx.showToast({

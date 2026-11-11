@@ -237,8 +237,9 @@
   color: var(--brand);
   letter-spacing: 1rpx;
 }
+/* 对方未留电话：一行小字提示，尺寸与「站内对话」按钮的文字一致 */
 .bc-phone.empty {
-  font-size: 22rpx;
+  font-size: 20rpx;
   font-weight: 400;
   color: var(--muted);
 }

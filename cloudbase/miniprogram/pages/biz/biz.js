@@ -395,7 +395,16 @@ Page({
     const conds = must.map((k) => ({ k, satisfied: true }))
     try {
       const payload = opp.type === 'supply' ? { productId: opp.id, conds } : { demandId: opp.id, conds }
-      await request('user', 'chat.open', payload, { silent: true })
+      const res = await request('user', 'chat.open', payload, { silent: true })
+      /* 直达会话：消息页是 tabBar 页只能 switchTab，threadId 交给消息页当场打开该会话 */
+      const threadId = res && res.threadId ? String(res.threadId) : ''
+      if (!threadId) {
+        wx.showToast({ title: '暂时无法直接对话，请稍后再试', icon: 'none' })
+        return
+      }
+      const app = getApp()
+      app.globalData = app.globalData || {}
+      app.globalData.openThread = threadId
       wx.switchTab({ url: '/pages/msg/msg' })
     } catch (err) {
       const msg = String((err && err.message) || '')
