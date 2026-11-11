@@ -47,7 +47,7 @@
   <view class="block media-sec">
     <view class="block-hd">
       <text class="bt">商品图片与视频</text>
-      <text class="r">{{imgCount}} 张图片 · {{videoCount}} 段视频</text>
+      <text class="r">{{mediaSlides.length ? mediaSummary : '暂无实拍'}}</text>
     </view>
     <view wx:if="{{mediaSlides.length}}" class="media-stage">
       <view class="hbadge stage-badge">
@@ -73,17 +73,17 @@
       <view wx:if="{{mediaSlides.length > 1}}" class="ms-hint">左右滑动切换</view>
       <view wx:if="{{mediaSlides.length > 1}}" class="ms-count">{{mediaIndex + 1}} / {{mediaSlides.length}}</view>
     </view>
+    <!-- 没有实拍：与首页卡片同一套占位视觉，只展示型号 / 数量，不叠水印 -->
     <view wx:else class="media-stage">
-      <view class="ms-empty" bindtap="openMedia">
-        <text class="ms-empty-t">{{product.model}}</text>
-        <image class="ms-empty-lock" src="/assets/icons/ic-lock.png" mode="aspectFit" />
-        <text class="ms-empty-d">暂无实拍图片或视频</text>
-      </view>
-      <view wx:if="{{wmOn}}" class="ms-wm-wall">
-        <view wx:for="{{wmTiles}}" wx:key="k" class="ms-wm-t">{{item.t}}</view>
+      <view class="ms-empty">
+        <text wx:if="{{product.brand}}" class="ms-empty-brand">{{product.brand}}</text>
+        <text class="ms-empty-t">{{product.model || product.cat || '算力设备'}}</text>
+        <text wx:if="{{product.qty || product.city}}" class="ms-empty-sub">{{product.qty ? product.qty + ' 台' : ''}}{{product.qty && product.city ? ' · ' : ''}}{{product.city || ''}}</text>
+        <text class="ms-empty-d">货主暂未上传实拍图片或视频</text>
+        <text class="ms-empty-h">可在对话中向货主索取实拍</text>
       </view>
     </view>
-    <view class="media-guard">
+    <view wx:if="{{mediaSlides.length}}" class="media-guard">
       <image class="mg-i" src="/assets/icons/tip-lock.png" mode="aspectFit" />
       <view class="mg-b">
         <text class="mg-bt">媒体已加密保护</text>

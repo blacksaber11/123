@@ -269,16 +269,17 @@
   background: rgba(15, 16, 32, .55);
   pointer-events: none;
 }
-/* 没有实拍材料时的占位块 */
+/* 没有实拍材料时的占位块：与首页商品卡同一套视觉（品牌色 + 网格 + 型号 / 数量） */
 .ms-empty {
   position: relative;
-  height: 480rpx;
+  height: 400rpx;
+  border-radius: 20rpx;
   background: linear-gradient(135deg, #4F46E5 0%, #312E81 100%);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10rpx;
+  gap: 8rpx;
   color: rgba(255, 255, 255, .92);
 }
 .ms-empty::before {
@@ -290,25 +291,38 @@
     linear-gradient(rgba(255,255,255,.10) 1rpx, transparent 1rpx) 0 0 / 28rpx 28rpx;
   opacity: .5;
 }
+.ms-empty-brand {
+  position: relative;
+  z-index: 1;
+  font-size: 20rpx;
+  letter-spacing: .12em;
+  opacity: .72;
+}
 .ms-empty-t {
   position: relative;
   z-index: 1;
-  font-size: 28rpx;
+  font-size: 34rpx;
   font-weight: 700;
+  letter-spacing: .02em;
 }
-.ms-empty-lock {
+.ms-empty-sub {
   position: relative;
   z-index: 1;
-  width: 40rpx;
-  height: 40rpx;
-  display: block;
-  opacity: .8;
+  font-size: 24rpx;
+  color: rgba(255, 255, 255, .8);
 }
 .ms-empty-d {
   position: relative;
   z-index: 1;
+  margin-top: 14rpx;
   font-size: 22rpx;
   opacity: .8;
+}
+.ms-empty-h {
+  position: relative;
+  z-index: 1;
+  font-size: 20rpx;
+  opacity: .58;
 }
 
 .media-guard {

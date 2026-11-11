@@ -70,6 +70,8 @@ Page({
     mediaIndex: 0,
     imgCount: 0,
     videoCount: 0,
+    /* 媒体数量文案：无实拍时整行由页面显示「暂无实拍」，不出现 0 张 / 0 段 */
+    mediaSummary: '',
     /* 水印保护：设置里可关闭，关闭后图片 / 视频 / 查看层都不叠水印 */
     wmOn: true,
     checklistDone: 0,
@@ -159,6 +161,10 @@ Page({
       .map((m, i) => ({ k: String(i), kind: m.kind, url: m.url, poster: m.poster || '' }))
     const imgCount = mediaSlides.filter((m) => m.kind === 'image').length
     const videoCount = mediaSlides.filter((m) => m.kind === 'video').length
+    const mediaSummary = [
+      imgCount ? imgCount + ' 张图片' : '',
+      videoCount ? videoCount + ' 段视频' : ''
+    ].filter(Boolean).join(' · ')
     const user = readUser()
     const wm = watermarkOf(product.id || this.productId, user)
     /* 保密内容：服务端不给联系电话，前端同时隐藏「查看主页 / 电话」入口 */
@@ -175,6 +181,7 @@ Page({
       mediaIndex: 0,
       imgCount,
       videoCount,
+      mediaSummary,
       wmOn: prefs.watermarkOn(),
       checklistDone,
       checklistTotal,
