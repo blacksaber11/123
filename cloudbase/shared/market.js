@@ -1359,6 +1359,32 @@ const BIZ_PLAN_MAP = Object.freeze(BIZ_PLANS.reduce((acc, item) => {
   acc[item.key] = item
   return acc
 }, {}))
+/* 套餐档位对应的自然月数：按月开通按自然月到期，不按 30 天折算 */
+const BIZ_PLAN_MONTHS = Object.freeze({ month: 1, quarter: 3, half: 6, year: 12 })
+
+/**
+ * 会员按自然月计算到期时间：
+ * 2 月 15 日 12:00 开通 → 3 月 15 日 11:59:59 到期；
+ * 目标月份没有开通日（如 3 月 31 日开通、4 月只有 30 天）→ 到 4 月 30 日 23:59:59 到期。
+ * baseMs 为本次时长起始时刻，months 为自然月数。
+ */
+function monthlyExpireAt(baseMs, months) {
+  /* 统一按北京时间（UTC+8）取「日 / 时」，不受服务器时区影响 */
+  const OFFSET = 8 * 60 * 60 * 1000
+  const base = new Date(Number(baseMs) + OFFSET)
+  const day = base.getUTCDate()
+  const hour = base.getUTCHours()
+  const minute = base.getUTCMinutes()
+  const second = base.getUTCSeconds()
+  const ms = base.getUTCMilliseconds()
+  const target = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + months, 1, hour, minute, second, ms))
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate()
+  /* 下个月没有同一天：按该月最后一天 23:59:59 结束 */
+  if (day > lastDay) {
+    return Date.UTC(target.getUTCFullYear(), target.getUTCMonth(), lastDay, 23, 59, 59, 999) - OFFSET
+  }
+  return Date.UTC(target.getUTCFullYear(), target.getUTCMonth(), day, hour, minute, second, ms) - OFFSET - 1000
+}
 
 /** 套餐配置：管理端可在设置页改写价格 / 天数，未配置时用默认四档 */
 function sanitizePlans(input) {
@@ -3888,10 +3914,17 @@ function createMarketAdminHandlers(deps) {
     const at = now()
     const staff = await staffLabel(ctx)
     const existing = await repo.get('bizAccess', uid)
-    const base = existing && existing.status === BIZ_STATUS.ACTIVE && Number(existing.expireAt) > at
+    const activeUntil = existing && existing.status === BIZ_STATUS.ACTIVE && Number(existing.expireAt) > at
       ? Number(existing.expireAt)
-      : at
-    const expireAt = base + days * DAY_MS
+      : 0
+    const base = activeUntil || at
+    /* 套餐购买按自然月到期：月度 = 下月同日 23:59:59 前结束，月末没有同日则到最后一天；
+       管理端手工按天开通（无套餐档位）的仍按天计算 */
+    const planMonths = plan && BIZ_PLAN_MONTHS[plan.key] ? BIZ_PLAN_MONTHS[plan.key] : 0
+    const qty = planMonths && plan.days > 0 ? Math.max(1, Math.round(days / plan.days)) : 0
+    const expireAt = planMonths
+      ? monthlyExpireAt(activeUntil ? activeUntil + 1000 : at, planMonths * qty)
+      : base + days * DAY_MS
     const original = plan ? plan.original : Math.round((BIZ_PLAN.price / BIZ_PLAN.days) * days * 100) / 100
     const amount = data.amount === undefined || data.amount === ''
       ? (plan ? plan.price : BIZ_PLAN.price)

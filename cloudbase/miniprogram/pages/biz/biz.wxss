@@ -344,36 +344,67 @@
   color: var(--muted);
 }
 
-/* 已开通状态条 + 筛选 */
-.bz-status {
+/* 概览里的领取状态：点数字筛选，当前筛选高亮 */
+.bz-s.on .l {
+  color: #fff;
+  font-weight: 600;
+}
+.bz-s.on {
+  position: relative;
+}
+.bz-s.on::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -12rpx;
+  width: 34rpx;
+  height: 4rpx;
+  border-radius: 2rpx;
+  background: #fff;
+}
+/* 会员倒计时与续费：并入蓝色概览，不再单独占一行 */
+.bz-me {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-top: 22rpx;
+  padding-top: 18rpx;
+  border-top: 1rpx solid rgba(255, 255, 255, .18);
+}
+.bm-t {
+  font-size: 22rpx;
+  color: rgba(255, 255, 255, .82);
+}
+.bm-x {
+  flex: none;
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #fff;
+  border-bottom: 1rpx solid rgba(255, 255, 255, .5);
+  padding-bottom: 2rpx;
+}
+
+/* 筛选 */
+.bz-statebar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin: 20rpx 24rpx 0;
-  padding: 18rpx 22rpx;
+  padding: 16rpx 22rpx;
   border-radius: 16rpx;
   background: var(--brand-soft);
   border: 1rpx solid var(--brand-line);
 }
-.bs-l {
-  display: flex;
-  align-items: center;
-  gap: 10rpx;
+.sb-t {
   font-size: 23rpx;
   color: var(--brand);
   font-weight: 600;
 }
-.bs-dot {
-  width: 12rpx;
-  height: 12rpx;
-  border-radius: 50%;
-  background: var(--brand);
-}
-.bs-r {
+.sb-b {
+  flex: none;
   font-size: 22rpx;
   color: var(--brand);
-  border-bottom: 1rpx solid var(--brand-line);
-  padding-bottom: 2rpx;
 }
 .bz-tabs {
   display: flex;
@@ -395,20 +426,8 @@
   color: var(--brand);
   font-weight: 600;
 }
-/* 可领取 / 已领取：与品类筛选同款样式，两行之间收紧间距 */
-.bz-tabs.state-tabs {
-  padding-bottom: 0;
-}
-.bz-tabs.state-tabs .bz-tab {
-  font-weight: 600;
-}
-.bz-tabs.state-tabs .bz-tab text {
-  margin-left: 8rpx;
-  font-size: 21rpx;
-  opacity: .72;
-}
 .bz-tabs.cat-tabs {
-  padding-top: 12rpx;
+  padding-top: 18rpx;
 }
 
 /* 商机卡片 */

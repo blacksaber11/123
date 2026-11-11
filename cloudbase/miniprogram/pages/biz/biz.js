@@ -16,12 +16,12 @@ const FILTERS = [
   { key: 'supply', label: '匹配我需求的货源' }
 ]
 
-/* 领取状态：可领取 / 已领取 / 不满足；不满足仍保留在列表里，只是不再提醒 */
-const STATES = [
-  { key: 'open', label: '可领取' },
-  { key: 'claimed', label: '已领取' },
-  { key: 'unsatisfied', label: '不满足' }
-]
+/* 套餐时长按自然月展示：月度即 1 个月，不写「30 天」 */
+const PLAN_TERMS = { month: '1 个月', quarter: '3 个月', half: '6 个月', year: '12 个月' }
+const withTerm = (plans) => (Array.isArray(plans) ? plans : []).map((p) => Object.assign({}, p, {
+  termText: PLAN_TERMS[p.key] || (p.days ? p.days + ' 天' : '')
+}))
+const LOCAL_PLANS = withTerm(biz.PLANS)
 
 Page({
   data: {
@@ -30,16 +30,17 @@ Page({
     /* 会员状态：unlocked / expireText 由云端返回，paying 控制按钮防重 */
     unlocked: false,
     expireText: '',
+    /* 会员剩余天数倒计时：按自然月到期，由云端 daysLeft 返回 */
+    daysLeft: 0,
     /* 微信虚拟支付进行中：按钮 loading，避免重复拉起收银台 */
     paying: false,
     /* 会员四档：管理端设置页可改价格 / 天数，用户端在此选择 */
-    plans: biz.PLANS,
+    plans: LOCAL_PLANS,
     planKey: 'month',
-    selectedPlan: biz.PLANS[0],
+    selectedPlan: LOCAL_PLANS[0],
     /* 是否已连上云端：云端模式不再提供「模拟开通」 */
     remote: false,
     stats: { matched: 0, agency: 0, demands: 0, claimed: 0, open: 0, unsatisfied: 0, stock: { sku: 0, qty: 0 } },
-    states: STATES,
     state: 'open',
     filters: FILTERS,
     filter: 'all',
@@ -197,7 +198,7 @@ Page({
     const all = this.mineMode ? pool.filter((o) => o.claimed) : pool
     this.remote = true
     this.source = all
-    const plans = Array.isArray(res.plans) && res.plans.length ? res.plans : this.data.plans
+    const plans = withTerm(Array.isArray(res.plans) && res.plans.length ? res.plans : this.data.plans)
     const keep = plans.some((p) => p.key === this.data.planKey) ? this.data.planKey : (plans[0] && plans[0].key) || 'month'
     const selectedPlan = plans.filter((p) => p.key === keep)[0] || null
     const stats = {
@@ -217,6 +218,7 @@ Page({
       loadFailed: false,
       unlocked: !!res.unlocked,
       expireText: res.expireText || '',
+      daysLeft: Number(res.daysLeft) || 0,
       plan: (selectedPlan && selectedPlan.label) || (res.plan && res.plan.label) || this.data.plan,
       price: (selectedPlan && selectedPlan.price) || this.data.price,
       plans,
@@ -224,8 +226,7 @@ Page({
       selectedPlan,
       total: all.length,
       items: this.filterItems(all),
-      stats,
-      states: this.stateTabs(stats)
+      stats
     })
     if (!this.mineMode) this.preparePosters(this.data.items)
     this.applyFocus(all)
@@ -250,7 +251,7 @@ Page({
   clearFocus() {
     this.focusShown = true
     this.focusId = ''
-    this.setData({ focusId: '', state: 'all', filter: 'all' })
+    this.setData({ focusId: '', state: 'open', filter: 'all' })
     this.setData({ items: this.filterItems(this.source || []) })
   },
 
@@ -267,23 +268,13 @@ Page({
       loadFailed: false,
       unlocked: info.unlocked,
       expireText: info.expireText,
+      daysLeft: Number(info.daysLeft) || 0,
       stats,
-      states: this.stateTabs(stats),
       total: all.length,
       items: this.filterItems(all)
     })
     this.preparePosters(this.data.items)
     this.applyFocus(all)
-  },
-
-  /* 三个状态 Tab 的数量：不满足的商机单独计数，仍保留在列表里 */
-  stateTabs(stats) {
-    const s = stats || this.data.stats || {}
-    return STATES.map((item) => Object.assign({}, item, {
-      count: item.key === 'open'
-        ? (Number(s.open) || 0)
-        : (item.key === 'claimed' ? (Number(s.claimed) || 0) : (Number(s.unsatisfied) || 0))
-    }))
   },
 
   filterItems(all) {
@@ -309,7 +300,12 @@ Page({
   switchState(e) {
     const key = e.currentTarget.dataset.key
     if (!key || key === this.data.state) return
-    /* 切 Tab 即退出分享定位 */
+    /* 会员未开通：已领取 / 不满足没有可看的内容，直接引导开通 */
+    if (key !== 'open' && !this.data.unlocked) {
+      this.openSheet()
+      return
+    }
+    /* 切状态即退出分享定位 */
     if (this.data.focusId) {
       this.focusShown = true
       this.focusId = ''
@@ -342,9 +338,9 @@ Page({
     wx.navigateTo({ url: '/pages/board/board' })
   },
 
-  /* 我的商机 → 回到完整商机页领取新商机 */
+  /* 我的商机 → 回到完整商机页领取新商机；用 navigateTo，返回时仍回到我的商机 */
   goAllBiz() {
-    wx.redirectTo({ url: '/pages/biz/biz' })
+    wx.navigateTo({ url: '/pages/biz/biz' })
   },
 
   openSheet() {

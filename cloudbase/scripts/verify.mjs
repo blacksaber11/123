@@ -2357,6 +2357,22 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
   const grantExpire = csGrant.data.expireAt
   ok(grantExpire === now() + 30 * 24 * 60 * 60 * 1000, '商机权限有效期 30 天')
 
+  /* 按套餐开通：月度按自然月到期（下月同日 23:59:59 前结束），不按固定 30 天折算 */
+  const MONTH_BUYER = { openid: 'o_user_month_plan', ip: '10.0.8.8' }
+  await call(userRouter, 'auth.login', { nick: '按月开通' }, MONTH_BUYER)
+  const monthGrant = await call(adminRouter, 'biz.grant', { uid: MONTH_BUYER.openid, plan: 'month', note: '按月开通' }, csCtxMk)
+  const monthShift = 8 * 60 * 60 * 1000
+  const monthBase = new Date(now() + monthShift)
+  const monthTarget = new Date(Date.UTC(monthBase.getUTCFullYear(), monthBase.getUTCMonth() + 1, 1,
+    monthBase.getUTCHours(), monthBase.getUTCMinutes(), monthBase.getUTCSeconds(), monthBase.getUTCMilliseconds()))
+  const monthLast = new Date(Date.UTC(monthTarget.getUTCFullYear(), monthTarget.getUTCMonth() + 1, 0)).getUTCDate()
+  const monthExpire = monthBase.getUTCDate() > monthLast
+    ? Date.UTC(monthTarget.getUTCFullYear(), monthTarget.getUTCMonth(), monthLast, 23, 59, 59, 999) - monthShift
+    : Date.UTC(monthTarget.getUTCFullYear(), monthTarget.getUTCMonth(), monthBase.getUTCDate(),
+      monthBase.getUTCHours(), monthBase.getUTCMinutes(), monthBase.getUTCSeconds(), monthBase.getUTCMilliseconds()) - monthShift - 1000
+  ok(monthGrant.ok && monthGrant.data.expireAt === monthExpire,
+    '月度会员按自然月到期：下月同日 23:59:59 前结束，不按固定 30 天', String(monthGrant.data.expireAt))
+
   const status1 = await call(userRouter, 'biz.status', {}, SEEKER)
   ok(status1.ok && status1.data.unlocked === true, '开通后商机权限生效')
 
