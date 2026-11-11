@@ -617,6 +617,72 @@
   line-height: 1.6;
 }
 
+/* 库存图片：3 列缩略图 + 虚线添加格 */
+.f-imgs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+  margin-top: 6rpx;
+}
+.f-img {
+  position: relative;
+  width: 196rpx;
+  height: 196rpx;
+  border-radius: 14rpx;
+  overflow: hidden;
+  background: var(--paper);
+  border: 1rpx solid var(--line);
+}
+.f-img-pic {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.f-img-x {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 42rpx;
+  height: 42rpx;
+  line-height: 42rpx;
+  text-align: center;
+  font-size: 22rpx;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.45);
+  border-bottom-left-radius: 14rpx;
+}
+.f-img.add {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  color: var(--muted);
+}
+.f-img-plus {
+  font-size: 44rpx;
+  line-height: 1;
+  color: var(--brand);
+}
+.f-img-tip {
+  margin-top: 10rpx;
+  font-size: 21rpx;
+}
+
+/* 列表卡片上的库存图片 */
+.st-imgs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-top: 12rpx;
+}
+.st-img {
+  width: 132rpx;
+  height: 132rpx;
+  border-radius: 12rpx;
+  background: var(--paper);
+}
+
 /* 设备类型横向滚动 */
 .cat-scroll {
   width: 100%;

@@ -2,7 +2,7 @@
 const stock = require('../../utils/stock')
 const biz = require('../../utils/biz')
 const { getUser } = require('../../utils/auth')
-const { request } = require('../../utils/request')
+const { request, uploadFile } = require('../../utils/request')
 const { ensureProfileReady, handleProfileError } = require('../../utils/profile-ready')
 const { normSearch, searchHit } = require('../../utils/model')
 const M = require('../../utils/mock')
@@ -137,6 +137,9 @@ Page({
     condIndex: 0,
     form: emptyForm(''),
     formUnit: stock.unitOf(CATS[0]),
+    /* 库存图片：最多 5 张，选中即上传，保存时只提交 fileId */
+    imgList: [],
+    imgMax: 5,
     /* 设备搜索：一个输入框，选中后型号直接显示在里面 */
     devKw: '',
     devPath: '',
@@ -248,6 +251,7 @@ Page({
       condIndex: 0,
       form: f,
       formUnit: stock.unitOf(f.cat),
+      imgList: [],
       devKw: '',
       devPath: '',
       devResults: [],
@@ -276,6 +280,7 @@ Page({
       condIndex: Math.max(0, CONDS.indexOf(item.cond || '全新')),
       formUnit: item.unit || stock.unitOf(item.cat),
       form: form,
+      imgList: (item.images || []).map((fileId, i) => ({ key: 'e' + i, fileId: fileId, path: fileId })),
       devKw: form.model || '',
       devPath: [form.cat, form.brand].filter(Boolean).join(' · '),
       devResults: [],
@@ -349,6 +354,83 @@ Page({
     this.setData({ 'form.city': this.data.city })
   },
 
+  /* ---------- 库存图片（选填）：最多 5 张，选中即上传 ---------- */
+  pickImages() {
+    const limit = Number(this.data.imgMax) || 5
+    const remain = limit - this.data.imgList.length
+    if (remain <= 0) {
+      wx.showToast({ title: '最多上传 ' + limit + ' 张图片', icon: 'none' })
+      return
+    }
+    const pick = (res) => {
+      const files = (res && res.tempFiles) ||
+        ((res && res.tempFilePaths) || []).map((p) => ({ tempFilePath: p }))
+      if (files.length) this.uploadImages(files.slice(0, remain))
+    }
+    if (wx.chooseMedia) {
+      wx.chooseMedia({ count: remain, mediaType: ['image'], success: pick })
+    } else {
+      wx.chooseImage({ count: remain, success: pick })
+    }
+  },
+
+  /* 逐张上传：成功后立刻展示，失败保留已成功的，避免整批重来 */
+  async uploadImages(files) {
+    const list = this.data.imgList.slice()
+    let oversize = 0
+    let failed = 0
+    wx.showLoading({ title: '上传中', mask: true })
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i] || {}
+      const path = f.tempFilePath || f.path || ''
+      if (!path) continue
+      if (Number(f.size) > 10 * 1024 * 1024) {
+        oversize++
+        continue
+      }
+      const ext = ((/\.([a-z0-9]+)(?:\?|$)/i.exec(path) || [])[1] || 'jpg').toLowerCase()
+      try {
+        const fileId = await uploadFile(path, {
+          cloudPath: 'stock/' + Date.now() + '-' + (list.length + 1) + '.' + ext
+        })
+        list.push({ key: 'im' + Date.now() + '-' + list.length, fileId: fileId, path: path })
+      } catch (err) {
+        failed++
+      }
+    }
+    wx.hideLoading()
+    this.setData({ imgList: list })
+    if (oversize) {
+      wx.showToast({ title: '已跳过 ' + oversize + ' 张超过 10MB 的图片', icon: 'none' })
+    } else if (failed) {
+      wx.showToast({ title: failed + ' 张上传失败，请重试', icon: 'none' })
+    }
+  },
+
+  removeImage(e) {
+    const i = Number(e.currentTarget.dataset.i) || 0
+    const list = this.data.imgList.slice()
+    list.splice(i, 1)
+    this.setData({ imgList: list })
+  },
+
+  previewImage(e) {
+    const i = Number(e.currentTarget.dataset.i) || 0
+    const urls = this.data.imgList.map((x) => x.path || x.fileId).filter(Boolean)
+    if (!urls.length) return
+    wx.previewImage({ current: urls[i] || urls[0], urls: urls })
+  },
+
+  /* 列表卡片上的图片：按当前库存的完整图片列表预览 */
+  previewStockImage(e) {
+    const id = e.currentTarget.dataset.id
+    const i = Number(e.currentTarget.dataset.i) || 0
+    const item = this.data.items.filter((x) => x.id === id)[0]
+    const urls = (item && item.images) || []
+    if (!urls.length) return
+    wx.previewImage({ current: urls[i] || urls[0], urls: urls })
+  },
+
   onFormInput(e) {
     const key = e.currentTarget.dataset.key
     this.setData({ ['form.' + key]: e.detail.value })
@@ -385,7 +467,8 @@ Page({
       unit: stock.unitOf(f.cat),
       city: city,
       cond: f.cond,
-      note: String(f.note || '').trim()
+      note: String(f.note || '').trim(),
+      images: this.data.imgList.map((x) => x.fileId).filter(Boolean)
     }
     const editing = this.data.editingId
     let id = editing
@@ -395,7 +478,7 @@ Page({
       id = 'sk' + Date.now()
       stock.add(Object.assign({ id: id }, payload))
     }
-    this.setData({ sheetOpen: false, editingId: '', form: emptyForm(this.data.city) })
+    this.setData({ sheetOpen: false, editingId: '', form: emptyForm(this.data.city), imgList: [] })
     this.refresh()
     wx.showToast({ title: editing ? '已保存修改' : '已加入库存', icon: 'success' })
     /* 本地先落盘保证界面即时可用，再静默同步云端 */

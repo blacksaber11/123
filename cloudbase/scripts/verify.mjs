@@ -3375,9 +3375,16 @@ section('28. 商机池：主体可见门槛 / 会员分层 / 发布方开关')
   await call(userRouter, 'profile.save', {
     nick: '商机查看者', realname: '商机查看者', phone: '13900006002', exposure: 'open'
   }, SEEK)
-  await call(userRouter, 'stock.save', {
-    cat: 'GPU 服务器', brand: 'NVIDIA', model: 'H200 141G', qty: 15, price: 250000, city: '深圳'
+  const seekStock = await call(userRouter, 'stock.save', {
+    cat: 'GPU 服务器', brand: 'NVIDIA', model: 'H200 141G', qty: 15, price: 250000, city: '深圳',
+    images: ['cloud://test.bucket/stock/h200-1.jpg', 'https://cdn.example.com/stock/h200-2.jpg']
   }, SEEK)
+  ok(seekStock.ok && (seekStock.data.images || []).length === 2, '库存支持上传图片并原样回传', seekStock.message)
+  const badStockImg = await call(userRouter, 'stock.save', {
+    cat: 'GPU 服务器', brand: 'NVIDIA', model: 'H200 141G', qty: 15, price: 250000, city: '深圳',
+    images: ['wxfile://tmp_123.jpg']
+  }, SEEK)
+  ok(!badStockImg.ok && String(badStockImg.message).includes('云端'), '库存图片拒绝本机临时路径', badStockImg.message)
 
   /* 未开通会员：角标照常显示匹配数（开通前无法消除），列表锁定且全部脱敏，看不到榜单 */
   const badge = await call(userRouter, 'biz.badge', {}, SEEK)
@@ -3447,7 +3454,8 @@ section('28. 商机池：主体可见门槛 / 会员分层 / 发布方开关')
   const pubNotice = await repo.find('outbox', {
     'payload.targetType': 'biz', 'payload.targetId': poolPub2.data.id, 'payload.uid': PUB2.openid
   }, { limit: 10 })
-  ok(pubNotice.length === 1, '发布者收到一条汇总提醒（同一条商机只提醒一次）',
+  /* 对方只有库存、没在商机池发布对应商品：只提醒库存方，需求发布方收不到任何「谁有货」的消息 */
+  ok(pubNotice.length === 0, '仅有库存匹配时不提醒需求发布者（不暴露库存方）',
     `count=${pubNotice.length}`)
   /* 未开通会员的匹配方不打扰：同一时段另一位有货但未开通会员的账号不应收到提醒 */
   const NOMEM = { openid: 'o_pool_nomem', ip: '10.60.0.3' }
@@ -3472,6 +3480,49 @@ section('28. 商机池：主体可见门槛 / 会员分层 / 发布方开关')
     'payload.targetType': 'biz', 'payload.targetId': poolPub3.data.id, 'payload.uid': SEEK.openid
   }, { limit: 10 })
   ok(seekNotice3.length === 1, '新商机按条提醒：会员对每个新商机各收到一条')
+  const pubNotice3 = await repo.find('outbox', {
+    'payload.targetType': 'biz', 'payload.targetId': poolPub3.data.id, 'payload.uid': PUB2.openid
+  }, { limit: 10 })
+  ok(pubNotice3.length === 0, '对方仅有库存时需求发布者始终收不到汇总提醒')
+
+  /* 反向用例：对方在商机池发布了对应商品，需求发布者才会收到汇总提醒 */
+  const PROD = { openid: 'o_pool_prod', ip: '10.60.0.4' }
+  await call(userRouter, 'auth.login', { nick: '商机池货源方' }, PROD)
+  await call(userRouter, 'profile.save', {
+    nick: '商机池货源方', realname: '货源方丁', phone: '13900006004', subject: '货源测试有限公司', exposure: 'open'
+  }, PROD)
+  await call(adminRouter, 'biz.grant', { uid: PROD.openid, note: '微信收款 99 元' }, { token: adminToken })
+  const prodPool = await call(userRouter, 'product.publish', {
+    tradeMode: TRADE_MODES.SELL, title: 'H200 141G 商机池现货',
+    cat: 'GPU 服务器', brand: 'NVIDIA', model: 'H200 141G',
+    qty: 30, minQty: 1, price: '252000', cond: '全新',
+    tax: ['含税'], city: '深圳', supply: '现货', deliver: '3 天内',
+    must: [], nego: [], flow: []
+  }, PROD)
+  ok(prodPool.ok && (await repo.get('products', prodPool.data.id)).bizPool === true,
+    '货源方在商机池发布对应商品', prodPool.message)
+  CLOCK += 61 * 60 * 1000
+  /* 换一个新发布号，避免同一账号的发布频率限制干扰本用例 */
+  const PUB5 = { openid: 'o_pool_pub2', ip: '10.60.0.5' }
+  await call(userRouter, 'auth.login', { nick: '商机发布者乙' }, PUB5)
+  await call(userRouter, 'profile.save', {
+    nick: '商机发布者乙', realname: '发布者戊', phone: '13900006005', subject: '商机测试乙有限公司', exposure: 'open'
+  }, PUB5)
+  const poolPub4 = await call(userRouter, 'demand.publish', {
+    tradeMode: TRADE_MODES.BUY, title: '求购 6 台 H200', cat: 'GPU 服务器', brand: 'NVIDIA', model: 'H200 141G',
+    qty: 6, budget: 258000, city: '深圳', supply: '现货', cond: '全新', tax: ['含税'], bizPool: true
+  }, PUB5)
+  ok(poolPub4.ok, '发布新需求（商机池已有对应商品）', poolPub4.message)
+  const pubNotice4 = await repo.find('outbox', {
+    'payload.targetType': 'biz', 'payload.targetId': poolPub4.data.id, 'payload.uid': PUB5.openid
+  }, { limit: 10 })
+  ok(pubNotice4.length === 1 && String((pubNotice4[0].payload || {}).body || '').includes('1 家货源'),
+    '商机池商品匹配时需求发布者收到汇总提醒',
+    pubNotice4.length ? String((pubNotice4[0].payload || {}).body) : 'none')
+  const prodNotice = await repo.find('outbox', {
+    'payload.targetType': 'biz', 'payload.targetId': poolPub4.data.id, 'payload.uid': PROD.openid
+  }, { limit: 10 })
+  ok(prodNotice.length === 1, '商机池货源方同样收到「有新的商机可查看」提醒')
 
   /* 提示力度：三档预设 + 维度微调，直接决定「什么算匹配」 */
   const prefDefault = await call(userRouter, 'biz.prefs', {}, SEEK)

@@ -150,6 +150,8 @@ const NEUTRAL_RECEIPT = '咨询已提交。若匹配，后台客服会进行联�
 
 /* 我的库存：本人私有清单，仅用于商机匹配，不对外展示 */
 const STOCK_LIMIT = 200
+/* 库存图片：与发布页图片上限同口径，最多 5 张 */
+const STOCK_IMAGE_LIMIT = 5
 const STOCK_STATUS_ON = '在售'
 const STOCK_STATUS_OFF = '已下架'
 
@@ -255,9 +257,29 @@ function stockView(doc) {
     city: d.city || '',
     cond: d.cond || '',
     note: d.note || '',
+    images: Array.isArray(d.images) ? d.images.filter(Boolean).slice(0, STOCK_IMAGE_LIMIT) : [],
     status: d.status === STOCK_STATUS_OFF ? STOCK_STATUS_OFF : STOCK_STATUS_ON,
     at: Number(d.at || d.updatedAt || d.createdAt) || 0
   }
+}
+
+/** 库存图片：只接受云存储 fileID / https 链接，最多 5 张，客户端本地路径一律丢弃 */
+function stockImagesOf(input) {
+  if (input === undefined || input === null) return []
+  if (!Array.isArray(input)) throw new AppError(CODES.VALIDATION, '库存图片格式不正确')
+  if (input.length > STOCK_IMAGE_LIMIT) {
+    throw new AppError(CODES.VALIDATION, `库存图片最多 ${STOCK_IMAGE_LIMIT} 张`)
+  }
+  const out = []
+  for (const raw of input) {
+    const fileId = String(raw == null ? '' : raw).trim()
+    if (!fileId) continue
+    if (!/^(cloud:\/\/|https:\/\/)/i.test(fileId)) {
+      throw new AppError(CODES.VALIDATION, '库存图片需先上传到云端')
+    }
+    if (out.indexOf(fileId) < 0) out.push(fileId)
+  }
+  return out
 }
 
 /** 金额展示：面议 / 区间 / 单价统一口径，避免各端各写一套 */
@@ -2717,6 +2739,8 @@ function createUserHandlers(deps) {
         updatedAt: at,
         deleted: false
       }
+      /* 图片可选：未传时保留原值，避免下架 / 改状态把已上传的图片清空 */
+      if (data.images !== undefined) patch.images = stockImagesOf(data.images)
       /* 上架中的库存会对外展示：主体信息与联系方式必须齐全；仅下架不做拦截 */
       if (patch.status === STOCK_STATUS_ON) await assertProfileReady(uid)
       const existing = await repo.get('stocks', id)
@@ -2731,7 +2755,7 @@ function createUserHandlers(deps) {
       if (live >= STOCK_LIMIT) {
         throw new AppError(CODES.CONFLICT, `库存最多保存 ${STOCK_LIMIT} 条，请先清理已下架的型号`)
       }
-      const doc = Object.assign({ id, ownerId: uid, createdAt: at }, patch)
+      const doc = Object.assign({ id, ownerId: uid, createdAt: at, images: [] }, patch)
       await repo.insert('stocks', doc)
       return stockView(doc)
     },

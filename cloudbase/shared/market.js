@@ -512,9 +512,11 @@ async function openSubjectSet(repo, ids) {
  *
  * 口径：
  * 1. 只有公开主体的发布内容才进入商机池，也只有公开主体的会员才会收到提醒；
- * 2. 发布方收到一条汇总提醒，每个匹配到的会员各收到一条（B/C/D 都有货就分别提醒 B/C/D）；
- * 3. 商机被领取时不发提醒，只有对方主动发起对话才会产生聊天消息；
- * 4. 站内信 id 由「场景 + 内容 id + 收件人」确定，重复发布 / 领取不会重复打扰。
+ * 2. 每个匹配到的会员各收到一条（B/C/D 都有货就分别提醒 B/C/D）；
+ * 3. 需求发布方只在「商机池里有对应商品」时才收到汇总提醒；对方仅有库存、没在商机池
+ *    发布对应商品时，只提醒库存方本人，绝不把库存方告知需求方，也不拿库存当商机派给需求方；
+ * 4. 商机被领取时不发提醒，只有对方主动发起对话才会产生聊天消息；
+ * 5. 站内信 id 由「场景 + 内容 id + 收件人」确定，重复发布 / 领取不会重复打扰。
  */
 async function notifyNewBizMatch(repo, subscribe, options) {
   const opts = options || {}
@@ -530,22 +532,27 @@ async function notifyNewBizMatch(repo, subscribe, options) {
   const publisherAccess = accessView(await repo.get('bizAccess', publisher), at)
 
   const title = String(doc.title || doc.model || '商机')
-  /* 新需求：匹配「商机池里的在售商品」+「本人库存」；新货源：匹配商机池里的求购需求 */
-  const rows = kind === 'demand'
-    ? (await repo.find('products', {
+  /* 新需求：匹配「商机池里的在售商品」+「本人库存」；新货源：匹配商机池里的求购需求。
+     库存行打标 __bizSource=stock：只用于提醒库存方本人，不参与需求发布方的汇总。 */
+  let rows = []
+  if (kind === 'demand') {
+    const products = await repo.find('products', {
       status: '在售',
       visibility: { $ne: VISIBILITIES.PRIVATE },
       bizPool: true,
       deleted: { $ne: true }
-    }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 200 })).concat(
-      await repo.find('stocks', { status: '在售', deleted: { $ne: true } }, { limit: 200 })
-    )
-    : await repo.find('demands', {
+    }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 200 })
+    const stocks = await repo.find('stocks', { status: '在售', deleted: { $ne: true } }, { limit: 200 })
+    rows = products.map((row) => Object.assign({}, row, { __bizSource: 'product' }))
+      .concat(stocks.map((row) => Object.assign({}, row, { __bizSource: 'stock' })))
+  } else {
+    rows = await repo.find('demands', {
       status: '求购中',
       visibility: { $ne: VISIBILITIES.PRIVATE },
       bizPool: true,
       deleted: { $ne: true }
     }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 200 })
+  }
 
   const candidates = (rows || []).filter((row) => row.ownerId && row.ownerId !== publisher)
   if (!candidates.length) return { matched: 0, notified: 0 }
@@ -560,6 +567,8 @@ async function notifyNewBizMatch(repo, subscribe, options) {
   }
 
   let matchedOwners = 0
+  /* 仅统计「商机池商品」命中的会员：需求发布方的汇总提醒只认这一种来源 */
+  let matchedProductOwners = 0
   let notified = 0
   for (const [ownerId, ownerRows] of byOwner) {
     /* 没开通商机会员的会员看不到商机详情，不做无效提醒 */
@@ -568,10 +577,19 @@ async function notifyNewBizMatch(repo, subscribe, options) {
     const prefRow = await repo.get('bizPrefs', ownerId)
     const pref = normalizeBizPrefs(prefRow)
     let hit = false
+    let hitProduct = false
     if (kind === 'demand') {
-      hit = stockMatch(ownerRows, doc.cat, doc.model, doc.brand, {
-        qty: doc.qty, cond: doc.cond, series: doc.series, pref
-      }).ok
+      for (const row of ownerRows) {
+        const rowHit = stockMatch([row], doc.cat, doc.model, doc.brand, {
+          qty: doc.qty, cond: doc.cond, series: doc.series, pref
+        }).ok
+        if (!rowHit) continue
+        hit = true
+        if (row.__bizSource === 'product') {
+          hitProduct = true
+          break
+        }
+      }
     } else {
       for (const demandRow of ownerRows) {
         const rowHit = stockMatch([doc], demandRow.cat, demandRow.model, demandRow.brand, {
@@ -582,6 +600,7 @@ async function notifyNewBizMatch(repo, subscribe, options) {
     }
     if (!hit) continue
     matchedOwners += 1
+    if (hitProduct) matchedProductOwners += 1
     const body = kind === 'demand'
       ? `「${title}」与你的库存匹配，可在商机页查看`
       : `「${title}」与你的求购需求匹配，可在商机页查看`
@@ -596,12 +615,14 @@ async function notifyNewBizMatch(repo, subscribe, options) {
     if (sent) notified += 1
   }
 
-  /* 发布者本人也要提示一次：未开通会员时文案引导开通，会员直接进商机页查看 */
-  if (matchedOwners > 0) {
+  /* 发布者汇总：新需求只统计「商机池商品」匹配，对方仅有库存时不打扰需求方；
+     新货源统计求购需求匹配。未开通会员时文案引导开通，会员直接进商机页查看 */
+  const publisherMatches = kind === 'demand' ? matchedProductOwners : matchedOwners
+  if (publisherMatches > 0) {
     const verb = kind === 'demand' ? '家货源' : '位买家'
     const summary = publisherAccess.unlocked
-      ? `已有 ${matchedOwners} ${verb}与「${title}」匹配，可在商机页查看`
-      : `已有 ${matchedOwners} ${verb}与「${title}」匹配，开通商机会员即可查看`
+      ? `已有 ${publisherMatches} ${verb}与「${title}」匹配，可在商机页查看`
+      : `已有 ${publisherMatches} ${verb}与「${title}」匹配，开通商机会员即可查看`
     await pushBizPublishNotice(repo, subscribe, {
       uid: publisher,
       key: `publisher:${kind}:${doc.id}`,
@@ -611,7 +632,7 @@ async function notifyNewBizMatch(repo, subscribe, options) {
       at
     })
   }
-  return { matched: matchedOwners, notified }
+  return { matched: matchedOwners, notified, productMatched: matchedProductOwners }
 }
 
 /** 商机提醒幂等写入：同一条内容对同一个人只发一次站内信 + 一次微信订阅提醒 */

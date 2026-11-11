@@ -59,6 +59,14 @@ function list() {
   return read().map((x) => Object.assign({}, x))
 }
 
+/* 图片：云端 fileID / https 链接，最多 5 张；本机只做展示 */
+const IMAGE_LIMIT = 5
+
+function imagesOf(src) {
+  const list = Array.isArray(src) ? src : []
+  return list.filter(Boolean).slice(0, IMAGE_LIMIT)
+}
+
 /** 云端 / 本地统一结构：字段缺失一律补默认值，页面不需要再做防御式判断 */
 function normalize(doc) {
   const d = doc || {}
@@ -73,6 +81,7 @@ function normalize(doc) {
     city: d.city || '',
     cond: d.cond || '',
     note: String(d.note || ''),
+    images: imagesOf(d.images),
     status: d.status === STATUS_OFF ? STATUS_OFF : STATUS_ON,
     at: Number(d.at || d.updatedAt || d.createdAt) || 0
   }
@@ -104,6 +113,7 @@ function add(item) {
     city: src.city || '',
     cond: src.cond || '',
     note: String(src.note || '').trim(),
+    images: imagesOf(src.images),
     status: STATUS_ON,
     at: Date.now()
   })
@@ -128,6 +138,7 @@ function update(id, patch) {
     if (src.city != null) merged.city = src.city
     if (src.cond != null) merged.cond = src.cond
     if (src.note != null) merged.note = String(src.note).trim()
+    if (src.images != null) merged.images = imagesOf(src.images)
     merged.at = Date.now()
     return merged
   })

@@ -72,6 +72,12 @@
 
       <view wx:if="{{item.note}}" class="st-desc">{{item.note}}</view>
 
+      <view wx:if="{{item.images.length}}" class="st-imgs">
+        <image wx:for="{{item.images}}" wx:for-item="img" wx:for-index="ii" wx:key="*this"
+               class="st-img" src="{{img}}" mode="aspectFill"
+               data-id="{{item.id}}" data-i="{{ii}}" bindtap="previewStockImage" />
+      </view>
+
       <view class="st-acts">
         <text class="st-act" data-id="{{item.id}}" bindtap="openEdit">编辑</text>
         <text class="st-act" data-id="{{item.id}}" bindtap="toggleItem">{{item.off ? '上架' : '下架'}}</text>
@@ -156,6 +162,21 @@
         <textarea class="f-textarea" value="{{form.note}}" data-key="note" bindinput="onFormInput"
                   maxlength="200" placeholder="新旧程度、外观 / 功能损坏、是否拆封、能否提供检测报告等" />
         <view class="f-tip">城市默认读取本机定位、可手动修改；描述只对你自己和平台客服可见。</view>
+
+        <view class="sec-tt">库存图片</view>
+        <view class="f-label">实拍 / 检测图<text class="f-opt">选填，最多 {{imgMax}} 张</text></view>
+        <view class="f-imgs">
+          <view wx:for="{{imgList}}" wx:key="key" class="f-img">
+            <image class="f-img-pic" src="{{item.path || item.fileId}}" mode="aspectFill"
+                   data-i="{{index}}" bindtap="previewImage" />
+            <text class="f-img-x" data-i="{{index}}" catchtap="removeImage">✕</text>
+          </view>
+          <view wx:if="{{imgList.length < imgMax}}" class="f-img add" bindtap="pickImages">
+            <text class="f-img-plus">＋</text>
+            <text class="f-img-tip">上传图片</text>
+          </view>
+        </view>
+        <view class="f-tip">图片只用于自己核对库存，不会展示给需求方。</view>
       </scroll-view>
 
       <view class="sheet-foot">
