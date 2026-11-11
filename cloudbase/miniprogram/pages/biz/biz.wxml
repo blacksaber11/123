@@ -1,6 +1,6 @@
 <view class="page biz">
-  <!-- 概览：匹配商机 / 在售库存 / 已领取 / 不满足，会员倒计时与续费并入本卡 -->
-  <view class="bz-hero">
+  <!-- 概览：匹配商机 / 在售库存 / 已领取 / 不满足，会员倒计时与续费并入本卡（列表页不展示） -->
+  <view wx:if="{{!listMode}}" class="bz-hero">
     <view class="bz-hd">
       <view class="bz-tt">{{mineMode ? '我的商机' : '商机'}}</view>
       <view class="bz-hd-r">
@@ -18,13 +18,13 @@
         <text class="n">{{stats.stock.sku}}</text>
         <text class="l">在售库存 ›</text>
       </view>
-      <view class="bz-s {{state === 'claimed' ? 'on' : ''}}" data-key="claimed" bindtap="switchState">
+      <view class="bz-s link" data-key="claimed" bindtap="goView">
         <text class="n">{{stats.claimed}}</text>
-        <text class="l">已领取</text>
+        <text class="l">已领取 ›</text>
       </view>
-      <view class="bz-s {{state === 'unsatisfied' ? 'on' : ''}}" data-key="unsatisfied" bindtap="switchState">
+      <view class="bz-s link" data-key="unsatisfied" bindtap="goView">
         <text class="n">{{stats.unsatisfied}}</text>
-        <text class="l">不满足</text>
+        <text class="l">不满足 ›</text>
       </view>
     </view>
     <view wx:if="{{!mineMode && unlocked}}" class="bz-me">
@@ -46,7 +46,7 @@
   </view>
 
   <!-- 未开通商机会员：只能看到角标数字，热度榜单与供求关系需开通后查看 -->
-  <view wx:if="{{!unlocked && !loadFailed && !mineMode}}" class="bz-board" bindtap="openSheet">
+  <view wx:if="{{!unlocked && !loadFailed && !mineMode && !listMode}}" class="bz-board" bindtap="openSheet">
     <view class="bb-hd">
       <view class="bb-l">
         <text class="bb-tt">商机榜单 · 供求关系</text>
@@ -57,7 +57,7 @@
   </view>
 
   <!-- 商机榜单入口：点击进入独立页面查看需求榜 / 火热榜 / 供给榜 / 品类榜 -->
-  <view wx:if="{{unlocked && !mineMode}}" class="bz-board">
+  <view wx:if="{{unlocked && !mineMode && !listMode}}" class="bz-board">
     <view class="bb-hd" bindtap="goBoard">
       <view class="bb-l">
         <text class="bb-tt">商机榜单</text>
@@ -67,14 +67,14 @@
     </view>
   </view>
 
-  <!-- 「我的商机」只展示已领取：权限到期时给出续费入口，不再展示商机池概览 -->
-  <view wx:if="{{mineMode && !unlocked && !loadFailed}}" class="bz-renew" bindtap="openSheet">
+  <!-- 「我的商机」/ 已领取、不满足列表页：权限到期时给出续费入口 -->
+  <view wx:if="{{(mineMode || listMode) && !unlocked && !loadFailed}}" class="bz-renew" bindtap="openSheet">
     <text class="br-t">商机联系方式需开通会员后查看</text>
-    <text class="br-b">开通 / 续费后可查看已领取商机的联系方式 ›</text>
+    <text class="br-b">{{listMode ? '开通 / 续费后可查看并联系对方 ›' : '开通 / 续费后可查看已领取商机的联系方式 ›'}}</text>
   </view>
 
   <!-- 未开通：展示商机原理 + 开通入口 -->
-  <block wx:if="{{!unlocked && !loadFailed && !mineMode}}">
+  <block wx:if="{{!unlocked && !loadFailed && !mineMode && !listMode}}">
     <view class="bz-gate">
       <view class="gate-hd">
         <view class="gate-tt">商机会员</view>
@@ -218,10 +218,10 @@
 
   <!-- 已开通：商机列表 -->
   <block wx:elif="{{!loadFailed}}">
-    <!-- 从概览进入已领取 / 不满足后，这里给出返回可领取的入口 -->
-    <view wx:if="{{!mineMode && (state === 'claimed' || state === 'unsatisfied')}}" class="bz-statebar">
-      <text class="sb-t">{{state === 'claimed' ? '只看已领取 · ' + stats.claimed + ' 条' : '只看不满足 · ' + stats.unsatisfied + ' 条'}}</text>
-      <text class="sb-b" data-key="open" bindtap="switchState">查看可领取 ›</text>
+    <!-- 已领取 / 不满足列表页：展示当前分组条数，可返回商机页 -->
+    <view wx:if="{{listMode}}" class="bz-statebar">
+      <text class="sb-t">{{state === 'claimed' ? '已领取 · ' + stats.claimed + ' 条' : '不满足 · ' + stats.unsatisfied + ' 条'}}</text>
+      <text class="sb-b" bindtap="goBack">返回商机 ›</text>
     </view>
 
     <view class="bz-tabs cat-tabs">
@@ -293,8 +293,8 @@
       <view wx:if="{{mineMode}}" class="acts">
         <button class="btn primary" bindtap="goAllBiz">去看可领取商机</button>
       </view>
-      <view wx:elif="{{state === 'claimed' || state === 'unsatisfied'}}" class="acts">
-        <button class="btn primary" bindtap="switchState" data-key="open">去看可领取</button>
+      <view wx:elif="{{listMode}}" class="acts">
+        <button class="btn primary" bindtap="goBack">返回商机</button>
       </view>
       <view wx:else class="acts">
         <button class="btn primary" bindtap="goStock">完善我的库存</button>

@@ -89,6 +89,8 @@ Page({
     focusId: '',
     /* 我的商机：从「我的」页进入时只展示我领取过的商机，不展示榜单与统计 */
     mineMode: false,
+    /* 已领取 / 不满足独立列表页：只展示对应状态并按类别筛选，不展示概览与榜单 */
+    listMode: false,
     /* 提示力度：三档预设 + 品牌 / 型号 / 数量 / 容量四维微调 */
     prefs: Object.assign({}, PREF_PRESETS.standard),
     prefLevels: PREF_LEVELS,
@@ -106,6 +108,13 @@ Page({
     if (this.mineMode) {
       wx.setNavigationBarTitle({ title: '我的商机' })
       this.setData({ mineMode: true, state: 'claimed' })
+    }
+    /* 「已领取 / 不满足」：与在售库存一致，点开进入独立列表页，页内再按类别筛选 */
+    const view = String((options && options.view) || '')
+    if (view === 'claimed' || view === 'unsatisfied') {
+      this.listMode = view
+      wx.setNavigationBarTitle({ title: view === 'claimed' ? '已领取商机' : '不满足商机' })
+      this.setData({ listMode: true, state: view, filter: 'all' })
     }
     /* 后台「系统设置」里的套餐价格，登录后先拉一次 */
     this.loadSite()
@@ -344,26 +353,26 @@ Page({
     })
   },
 
-  switchState(e) {
+  /* 已领取 / 不满足：与在售库存一致，点开进入独立列表页，页内再按类别筛选 */
+  goView(e) {
     const key = e.currentTarget.dataset.key
-    if (!key || key === this.data.state) return
-    /* 会员未开通：已领取 / 不满足没有可看的内容，直接引导开通 */
-    if (key !== 'open' && !this.data.unlocked) {
+    if (key !== 'claimed' && key !== 'unsatisfied') return
+    /* 会员未开通：这两类没有可看的内容，直接引导开通 */
+    if (!this.data.unlocked) {
       this.openSheet()
       return
     }
-    /* 切状态即退出分享定位 */
-    if (this.data.focusId) {
-      this.focusShown = true
-      this.focusId = ''
-      this.setData({ focusId: '' })
-    }
-    this.setData({ state: key })
-    if (this.source) {
-      this.setData({ items: this.filterItems(this.source) })
+    wx.navigateTo({ url: '/pages/biz/biz?view=' + key })
+  },
+
+  /* 列表页返回商机主页：页面栈里还有上一页就回退，直接打开时兜底跳回商机页 */
+  goBack() {
+    const pages = getCurrentPages() || []
+    if (pages.length > 1) {
+      wx.navigateBack()
       return
     }
-    this.refresh()
+    wx.redirectTo({ url: '/pages/biz/biz' })
   },
 
   switchFilter(e) {

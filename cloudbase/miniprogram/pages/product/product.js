@@ -460,6 +460,8 @@ Page({
         }
       }
     } catch (e) { /* 全局状态不可用不影响跳转 */ }
+    /* 记住来路：关闭客服会话后回到本商品页 */
+    chat.rememberChatSource()
     wx.switchTab({ url: '/pages/msg/msg' })
   },
 

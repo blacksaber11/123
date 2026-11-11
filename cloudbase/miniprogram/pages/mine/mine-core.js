@@ -9,6 +9,7 @@ const shop = require('../../utils/shop')
 const { request } = require('../../utils/request')
 const { ensureProfileReady } = require('../../utils/profile-ready')
 const prefs = require('../../utils/prefs')
+const chat = require('../../utils/chat')
 
 function pad(n) {
   return n < 10 ? '0' + n : '' + n
@@ -1190,6 +1191,8 @@ const BASE = {
   goService() {
     const app = getApp()
     if (app && app.globalData) app.globalData.openChat = true
+    /* 记住来路：关闭客服会话后回到「我的」页 */
+    chat.rememberChatSource()
     wx.switchTab({ url: '/pages/msg/msg' })
   },
 

@@ -8,7 +8,7 @@ const notify = require('../../utils/notify')
 const prefs = require('../../utils/prefs')
 const shop = require('../../utils/shop')
 const { request, uploadFile } = require('../../utils/request')
-const { PENDING_THREAD_KEY } = require('../../utils/chat')
+const { PENDING_THREAD_KEY, takeChatSource, clearChatSource, backToChatSource } = require('../../utils/chat')
 
 const SYSTEM_NOTICES = inbox.SYSTEM_NOTICES
 
@@ -870,6 +870,8 @@ Page({
   },
 
   async closeChat() {
+    /* 从货盘 / 商品 / 商机页进入的会话：返回进入前那一页，而不是停在消息列表 */
+    const from = takeChatSource()
     this.setTabBarHidden(false)
     this.setData({
       chatOpen: false,
@@ -887,6 +889,7 @@ Page({
       cardOpen: false,
       cardDetail: {}
     })
+    if (backToChatSource(from)) return
     await this.refresh()
   },
 
@@ -1201,6 +1204,8 @@ Page({
 
   openChatEntry(e) {
     const id = String((e && e.currentTarget && e.currentTarget.dataset.id) || '')
+    /* 用户自己从会话列表点开：丢弃上一次的来路，关闭时仍回到消息列表 */
+    clearChatSource()
     if (id.indexOf('thread:') === 0) return this.openThread(id.slice(7))
     return this.openChat()
   },
