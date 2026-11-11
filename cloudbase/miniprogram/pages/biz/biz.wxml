@@ -4,11 +4,23 @@
     <view class="bz-hd">
       <view class="bz-tt">{{mineMode ? '我的商机' : '商机'}}</view>
       <view class="bz-hd-r">
-        <text wx:if="{{!mineMode}}" class="bz-pref" bindtap="openPref">提示力度 · {{prefLevelName}}</text>
         <view wx:if="{{!mineMode}}" class="bz-badge">{{plan}}</view>
       </view>
     </view>
     <view class="bz-ds">{{mineMode ? '只显示你已领取的商机，可随时回看联系方式并直接发起站内对话' : '已发布需求 + 平台核验后的代采 / 代售委托，按你的库存自动匹配；委托类由平台代为对接'}}</view>
+    <!-- 提示力度：做成明确的设置按钮，旁边提示可手动调整匹配范围 -->
+    <view wx:if="{{!mineMode}}" class="bz-pref-row">
+      <view class="bz-pref-btn" bindtap="openPref" hover-class="bz-pref-btn-hover">
+        <view class="pfr-ico">
+          <view class="pfr-line"><text class="pfr-knob" style="left:3rpx"></text></view>
+          <view class="pfr-line"><text class="pfr-knob" style="left:11rpx"></text></view>
+          <view class="pfr-line"><text class="pfr-knob" style="left:6rpx"></text></view>
+        </view>
+        <text class="pfr-t">提示力度</text>
+        <text class="pfr-v">{{prefLevelName}}</text>
+      </view>
+      <text class="bz-pref-hint" bindtap="openPref">点此手动设置 ›</text>
+    </view>
     <view wx:if="{{!mineMode}}" class="bz-stats">
       <view class="bz-s">
         <text class="n">{{stats.matched}}</text>
