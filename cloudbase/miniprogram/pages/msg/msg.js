@@ -8,6 +8,7 @@ const notify = require('../../utils/notify')
 const prefs = require('../../utils/prefs')
 const shop = require('../../utils/shop')
 const { request, uploadFile } = require('../../utils/request')
+const { PENDING_THREAD_KEY } = require('../../utils/chat')
 
 const SYSTEM_NOTICES = inbox.SYSTEM_NOTICES
 
@@ -214,6 +215,12 @@ Page({
     if (this.polling) return
     /* 正在发送或页面已切走时不打扰 */
     if (this.data.sending) return
+    /* 兜底：站点跳转时消息页已在后台，onShow 没取到待打开会话，轮询时补开 */
+    const pending = this.takePendingThread()
+    if (pending) {
+      await this.openThread(pending)
+      return
+    }
     this.polling = true
     try {
       const prevUnread = new Map((this.data.chats || []).map((c) => [c.id, Number(c.unread) || 0]))
@@ -294,6 +301,28 @@ Page({
     this.writeChatCache(id, patch.chatList)
   },
 
+  /* 取出待打开的会话：globalData 优先，本地缓存兜底（switchTab 不能带参数） */
+  takePendingThread() {
+    let id = ''
+    try {
+      const app = getApp()
+      if (app && app.globalData && app.globalData.openThread) {
+        id = String(app.globalData.openThread)
+        app.globalData.openThread = ''
+      }
+    } catch (e) { /* globalData 不可用时读缓存 */ }
+    if (!id) {
+      try {
+        const saved = wx.getStorageSync(PENDING_THREAD_KEY)
+        if (saved) {
+          id = String(saved)
+          wx.removeStorageSync(PENDING_THREAD_KEY)
+        }
+      } catch (e) { /* 没有缓存就直接进会话列表 */ }
+    }
+    return id
+  },
+
   async onShow() {
     gate(this.route || 'pages/msg/msg', this.options)
     this.syncTabBar()
@@ -309,11 +338,10 @@ Page({
       wmTiles: wmOn ? Array.from({ length: WM_TILES }, (_, k) => ({ k, t: wmText })) : []
     })
     this.startPoll()
-    /* 咨询页条件满足后会写入待打开会话，落地即进入直聊 */
+    /* 咨询页 / 商机页条件满足后会写入待打开会话，落地即进入直聊 */
     const app = getApp()
-    const pending = app && app.globalData && app.globalData.openThread
+    const pending = this.takePendingThread()
     if (pending) {
-      app.globalData.openThread = ''
       await this.openThread(pending)
       return
     }

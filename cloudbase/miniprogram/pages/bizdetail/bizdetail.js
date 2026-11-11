@@ -2,6 +2,7 @@
    不满足可标记，商机仍保留在列表的「不满足」分类里，只是不再角标提醒 */
 const biz = require('../../utils/biz')
 const { request } = require('../../utils/request')
+const { goThread } = require('../../utils/chat')
 
 /* 列表与详情共用同一条商机：优先按 id + 类型匹配，类型缺失时按 id 兜底 */
 function pickItem(list, id, type) {
@@ -249,10 +250,7 @@ Page({
         return
       }
       /* 直达会话：消息页是 tabBar 页只能 switchTab，threadId 交给消息页当场打开该会话 */
-      const app = getApp()
-      app.globalData = app.globalData || {}
-      app.globalData.openThread = threadId
-      wx.switchTab({ url: '/pages/msg/msg' })
+      goThread(threadId)
     } catch (err) {
       wx.showToast({
         title: String((err && err.message) || '发起对话失败，请稍后重试'),

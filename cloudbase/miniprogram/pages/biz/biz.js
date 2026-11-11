@@ -3,6 +3,7 @@ const biz = require('../../utils/biz')
 const guard = require('../../utils/guard')
 const sharePoster = require('../../utils/share-poster')
 const { request, xpayOrder } = require('../../utils/request')
+const { goThread } = require('../../utils/chat')
 
 /* 分享图兜底：海报未生成 / 低版本基础库时用静态商机底图 */
 const SHARE_CARD = '/assets/share/card-biz.png'
@@ -499,10 +500,7 @@ Page({
         wx.showToast({ title: '暂时无法直接对话，请稍后再试', icon: 'none' })
         return
       }
-      const app = getApp()
-      app.globalData = app.globalData || {}
-      app.globalData.openThread = threadId
-      wx.switchTab({ url: '/pages/msg/msg' })
+      goThread(threadId)
     } catch (err) {
       const msg = String((err && err.message) || '')
       /* 服务端要求逐项确认必须条件：转到商机页逐条确认后再对话，避免按钮点了没反应 */

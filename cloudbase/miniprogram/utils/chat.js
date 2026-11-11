@@ -30,6 +30,28 @@ function ensureChatLogin() {
   return false
 }
 
+/* 待打开会话：消息页是 tabBar 页，switchTab 不能带参数，用 globalData + 本地缓存双通道交接 */
+const PENDING_THREAD_KEY = 'sl:openThread'
+
+/**
+ * 跳到消息页并直接打开指定会话。
+ * 只写 globalData 时，若消息页 onShow 早于赋值或被其它入口抢先消费就会落到会话列表，
+ * 这里同时写一份本地缓存，消息页在 onShow / 轮询里都能取到，保证「点站内对话即进对话」。
+ */
+function goThread(threadId) {
+  const id = String(threadId || '')
+  if (!id) return false
+  try {
+    const app = getApp()
+    app.globalData = app.globalData || {}
+    app.globalData.openThread = id
+  } catch (e) { /* globalData 不可用时仍走缓存 */ }
+  try { wx.setStorageSync(PENDING_THREAD_KEY, id) } catch (e) { /* 缓存失败不影响跳转 */ }
+  /* 消息页是 tabBar 页，只能用 switchTab；navigateTo 到 tab 页会被微信直接拒绝 */
+  wx.switchTab({ url: '/pages/msg/msg' })
+  return true
+}
+
 /**
  * 打开与对方的会话。
  * @param {object} opts
@@ -64,15 +86,7 @@ async function openChat(opts) {
     o.onPhone(res.phone)
   }
 
-  try {
-    const app = getApp()
-    app.globalData = app.globalData || {}
-    app.globalData.openThread = res.threadId
-  } catch (e) {
-    /* globalData 写不进去时仍进消息页，只是不自动打开这条会话 */
-  }
-  /* 消息页是 tabBar 页，只能用 switchTab；navigateTo 到 tab 页会被微信直接拒绝 */
-  wx.switchTab({ url: '/pages/msg/msg' })
+  goThread(res.threadId)
   return true
 }
 
@@ -87,4 +101,4 @@ function copyPhone(phone) {
   return true
 }
 
-module.exports = { openChat, copyPhone }
+module.exports = { openChat, copyPhone, goThread, PENDING_THREAD_KEY }
