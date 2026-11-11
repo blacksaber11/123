@@ -120,6 +120,8 @@ function serverCache() {
     chatList: Array.isArray(s.chatList) ? s.chatList : [],
     noticeUnread: Number(s.noticeUnread) || 0,
     chatUnread: Number(s.chatUnread) || 0,
+    /* 系统通知未读：全局轮询只重算这部分，咨询回复未读仍以消息页写入的为准 */
+    sysUnread: Number(s.sysUnread) || 0,
     unread: Number(s.unread) || 0,
     at: Number(s.at) || 0
   }
@@ -132,12 +134,14 @@ function cacheServer(data) {
   const chats = Array.isArray(d.chats) ? d.chats.slice(0, 20) : []
   const noticeUnread = Number(d.noticeUnread) || 0
   const chatUnread = Number(d.chatUnread) || 0
+  const sysUnread = Number(d.sysUnread) || 0
   const next = {
     notices,
     chats,
     chatList,
     noticeUnread,
     chatUnread,
+    sysUnread,
     unread: noticeUnread + chatUnread,
     at: Date.now()
   }

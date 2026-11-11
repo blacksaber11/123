@@ -620,7 +620,15 @@ Page({
     this.setData(patch)
     /* 客服会话记录落本地：下次进入先秒开，再由本次结果覆盖 */
     this.writeChatCache('kf', displayList)
-    inbox.cacheServer({ notices, chats, chatList: displayList, noticeUnread, chatUnread })
+    inbox.cacheServer({
+      notices,
+      chats,
+      chatList: displayList,
+      noticeUnread,
+      chatUnread,
+      /* 分开记系统通知未读：全局轮询重算未读时不会把咨询回复的未读算丢 */
+      sysUnread: sysNotices.filter((n) => n.unread).length
+    })
     /* 未读角标与列表同源：读完 / 点开后立即刷新底部导航，角标当场消失 */
     this.syncTabBarBadge()
     return true

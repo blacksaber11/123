@@ -728,6 +728,23 @@
     clearNavCountTimer()
     clearPageTimer()
   })
+  /*
+   * 浏览器切到后台后 setInterval 会被节流（最慢约 1 分钟一次），
+   * 管理端挂在后台时新消息角标不会亮。切回前台 / 窗口重新聚焦时立刻补一次，
+   * 消息中心开着的话也顺手拉一次会话列表。
+   */
+  let navFocusBound = false
+  function bindNavFocus() {
+    if (navFocusBound) return
+    navFocusBound = true
+    const refresh = function () {
+      if (document.hidden) return
+      loadNavCounts()
+      if (typeof C.msgPollNow === 'function') C.msgPollNow()
+    }
+    document.addEventListener('visibilitychange', refresh)
+    window.addEventListener('focus', refresh)
+  }
   function paintNav(el, value) {
     if (!el) return
     const n = Number(value) || 0
@@ -886,9 +903,10 @@
     }
     renderPage()
     loadNavCounts()
-    /* 新咨询单进来后角标要能自己亮起来，不用等用户切页面 */
+    /* 新咨询单进来后角标要能自己亮起来，不用等用户切页面（15 秒一轮，切回前台立即补一次） */
     clearNavCountTimer()
-    navCountTimer = setInterval(loadNavCounts, 60000)
+    navCountTimer = setInterval(loadNavCounts, 15000)
+    bindNavFocus()
   }
 
   function navigate(key, query) {

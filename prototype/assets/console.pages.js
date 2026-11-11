@@ -4945,6 +4945,15 @@
     if (qBox && qVal) qBox.value = qVal
   }
 
+  /* 切回前台 / 窗口聚焦时立即拉一次：后台期间定时器被浏览器节流，不能干等下一轮 */
+  C.msgPollNow = function () {
+    const view = document.getElementById('view')
+    if (!view || !view.querySelector('#msg-body')) return
+    const key = (location.hash || '').replace(/^#\/?/, '')
+    if (key && key !== 'messages') return
+    pollMessages(view)
+  }
+
   Pages.messages = async function (view) {
     msgStopPoll()
     view.innerHTML = pageHead('消息中心', '用户端「联系客服」的留言都汇总在这里，回复后用户端消息列表立即能看到',

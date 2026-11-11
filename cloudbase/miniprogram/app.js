@@ -10,9 +10,13 @@ const { ensureLogin, readUser, hasPhone } = require('./utils/auth')
 const { startScreenGuard } = require('./utils/guard')
 const { request } = require('./utils/request')
 const { requestLocation } = require('./utils/location')
+const inbox = require('./utils/inbox')
 
 /* 底部 tab 路由：只有这些页面在栈底时，安卓物理返回才允许退出小程序 */
 const TAB_ROUTES = ['pages/home/home', 'pages/msg/msg', 'pages/mine/mine']
+
+/* 未读轮询间隔：消息页是 tabBar 页，只有它 onShow 才拉数据，其它页面靠这个定时补角标 */
+const INBOX_POLL_MS = 20000
 
 /* 当前页面路由（不带前导 /），取不到时返回空串 */
 function routeOf(page) {
@@ -110,6 +114,8 @@ App({
       .then((user) => {
         /* 已有手机号的老用户：顺手申请一次定位（用于同城匹配），拒绝也不影响浏览 */
         if (hasPhone(user)) requestLocation(this)
+        /* 登录后立刻取一次未读：不必等 20 秒后的第一轮轮询 */
+        this.pollInbox()
       })
       .catch(() => {})
   },
@@ -119,6 +125,8 @@ App({
     startScreenGuard()
     /* 回到前台时顺手补一次页面栈：冷启动直达详情页等场景都在这里兜住 */
     this.repairRootStack()
+    /* 未读轮询重新挂上并立刻补一次，切回前台马上能看到角标 */
+    this.startInboxWatch()
     /* 在线心跳：管理端「实时在线人数」按 5 分钟内的心跳统计；未登录不发，失败静默 */
     if (readUser()) request('user', 'online.ping', {}, { silent: true }).catch(() => {})
   },
@@ -165,7 +173,88 @@ App({
     })
   },
 
+  /**
+   * 未读轮询开关：消息页是 tabBar 页，只有它 onShow 才拉 msg.list，
+   * 用户停在首页 / 商机 / 商品页时完全感知不到新消息。这里全局每 20 秒拉一次，
+   * 把未读写进与消息页同一份缓存，底部导航角标就能自己亮起来。
+   */
+  startInboxWatch() {
+    if (this._inboxTimer) return
+    this._inboxTimer = setInterval(() => this.pollInbox(), INBOX_POLL_MS)
+    this.pollInbox()
+  },
+
+  stopInboxWatch() {
+    if (!this._inboxTimer) return
+    clearInterval(this._inboxTimer)
+    this._inboxTimer = null
+  },
+
+  async pollInbox() {
+    if (this._inboxPolling || !readUser()) return
+    /* 消息页自己在 onShow 里刷新并把消息标已读，这里不插手，避免角标被旧数据刷回来 */
+    let topRoute = ''
+    try {
+      const pages = getCurrentPages() || []
+      topRoute = routeOf(pages[pages.length - 1])
+    } catch (e) { topRoute = '' }
+    if (topRoute === 'pages/msg/msg') return
+    this._inboxPolling = true
+    try {
+      const res = await request('user', 'msg.list', { page: 1, limit: 50 }, { silent: true })
+      const items = (res && res.items) || []
+      let staffUnread = 0
+      let sysUnread = 0
+      const directUnread = {}
+      items.forEach((m) => {
+        const isDirect = m.channel === 'direct' || m.type === 'direct.chat'
+        if (isDirect) {
+          /* 私聊按会话累计未读条数，与消息页的会话角标口径一致 */
+          if (m.threadId && m.from === 'peer' && m.unread) {
+            directUnread[m.threadId] = (directUnread[m.threadId] || 0) + 1
+          }
+          return
+        }
+        const isChat = m.channel === 'kf' || m.type === 'kf.chat'
+        if (isChat) {
+          if (m.from === 'staff' && m.unread) staffUnread += 1
+          return
+        }
+        if (m.unread) sysUnread += 1
+      })
+      const directTotal = Object.keys(directUnread).reduce((sum, k) => sum + directUnread[k], 0)
+      const prev = inbox.serverCache()
+      /* 咨询回复未读只有消息页能算（要逐条比对本地已读），这里保留它算出的那部分 */
+      const prevSys = prev ? Number(prev.sysUnread) || 0 : 0
+      const inquiryUnread = prev ? Math.max(0, Number(prev.noticeUnread) - prevSys) : 0
+      const next = inbox.cacheServer({
+        notices: prev ? prev.notices : [],
+        chats: prev ? prev.chats : [],
+        chatList: prev ? prev.chatList : [],
+        noticeUnread: inquiryUnread + sysUnread,
+        chatUnread: staffUnread + directTotal,
+        sysUnread
+      })
+      this.syncTabBarUnread(next.unread)
+    } catch (e) {
+      /* 失败静默：下一轮再试，不打断当前页面 */
+    } finally {
+      this._inboxPolling = false
+    }
+  },
+
+  /* 当前页面挂着自定义 tabBar 时直接刷新角标，不必等它自己的 20 秒兜底 */
+  syncTabBarUnread(n) {
+    try {
+      const pages = getCurrentPages() || []
+      const cur = pages[pages.length - 1]
+      const bar = cur && typeof cur.getTabBar === 'function' ? cur.getTabBar() : null
+      if (bar && bar.setData && bar.data.unread !== n) bar.setData({ unread: n })
+    } catch (e) { /* 取不到 tabBar 不影响下一轮 */ }
+  },
+
   onHide() {
+    this.stopInboxWatch()
     this.globalData.user = null
     this.globalData.profile = null
   },
