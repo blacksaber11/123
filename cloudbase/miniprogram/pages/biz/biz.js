@@ -214,6 +214,8 @@ Page({
     const pool = res.items
       /* 兜底：云端已经过滤本人发布与未匹配商机，这里再过滤一次 */
       .filter((o) => o && !(o.isMine || o.mine) && o.matched !== false)
+      /* 统一按发布时间倒序：越晚发布越靠前，避免旧缓存把新商机压到后面 */
+      .sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0))
       .map((o) => {
         const platformOnly = o.type === 'agency'
         const merged = Object.assign({}, o, {

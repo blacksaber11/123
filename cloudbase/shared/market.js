@@ -1953,6 +1953,8 @@ function createMarketUserHandlers(deps) {
       /* 领取后可逐项确认必须条件，再在平台内发起对话 */
       must: Array.isArray(demand.must) ? demand.must : [],
       published: relTime(demand.createdAt, o.now || now()),
+      /* 列表统一按发布时间倒序：越晚发布越靠前 */
+      at: Number(demand.createdAt) || 0,
       expireText: '长期有效'
     }
   }
@@ -2000,6 +2002,8 @@ function createMarketUserHandlers(deps) {
       unsatisfied: o.unsatisfied === true,
       must: Array.isArray(product.must) ? product.must : [],
       published: relTime(product.createdAt, o.now || now()),
+      /* 列表统一按发布时间倒序：越晚发布越靠前 */
+      at: Number(product.createdAt) || 0,
       expireText: '长期有效'
     }
   }
@@ -2043,6 +2047,8 @@ function createMarketUserHandlers(deps) {
       claimRemaining: claim.claimRemaining,
       claimText: claim.claimText,
       published: relTime(doc.confirmedAt || doc.createdAt, o.now || now()),
+      /* 列表统一按发布时间倒序：越晚发布越靠前，代采代售以上架时间为发布口径 */
+      at: Number(doc.confirmedAt || doc.createdAt) || 0,
       expireText: `剩余 ${Math.max(0, Math.ceil((Number(doc.expiresAt) - (o.now || now())) / DAY_MS))} 天`
     }
   }
@@ -3536,14 +3542,16 @@ function createMarketUserHandlers(deps) {
         }
       }
 
-      /* 排序：代采 / 代售（平台代对接、库存已匹配）排最前，其次库存匹配的求购，
-         最后是满足我已发布需求的货源，保证「同类产品排在前面」 */
+      /* 排序：全部按发布时间倒序（越晚发布越靠前），代采代售以上架时间为准，
+         同类条目不再分组优先，避免新发的商机被旧委托压到后面 */
       const matchedDemands = demandItems
+      const newestFirst = (a, b) => (Number(b.at) || 0) - (Number(a.at) || 0)
+      const visibleItems = agencyItems.concat(matchedDemands, supplyItems, endedItems).sort(newestFirst)
       const plans = await resolvePlans(repo)
       /* 未开通商机会员：看得到商机条数（角标与列表条数），但看不到型号 / 价格 / 主体 / 联系方式，
          也不下发必须条件，避免绕过会员门槛拿到商机内容 */
       const lockedItems = !unlocked
-        ? agencyItems.concat(demandItems, supplyItems).map((item) => Object.assign({}, item, {
+        ? visibleItems.map((item) => Object.assign({}, item, {
           title: '',
           model: '****',
           brand: '',
@@ -3567,7 +3575,7 @@ function createMarketUserHandlers(deps) {
         }))
         : null
       return Object.assign(view, {
-        items: unlocked ? agencyItems.concat(matchedDemands, supplyItems, endedItems) : lockedItems,
+        items: unlocked ? visibleItems : lockedItems,
         locked: !unlocked,
         matchedCount: agencyItems.length + matchedDemands.length + supplyItems.length,
         stockCount: stocks.length,
