@@ -1,6 +1,7 @@
 'use strict'
 
 const { AppError, CODES } = require('./errors')
+const { applyRestrictions, stateOf } = require('./restrictions')
 const {
   ROLES,
   LEAD_STATUS,
@@ -2278,21 +2279,41 @@ function createAdminHandlers(deps) {
             .some((v) => String(v || '').toLowerCase().indexOf(q) >= 0)
         })
         .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
-      const items = filtered.slice(paging.skip, paging.skip + paging.limit).map((row) => ({
-        id: row.id,
-        type: row.type || '意见反馈',
-        targetType: row.targetType || 'other',
-        targetId: row.targetId || '',
-        targetTitle: row.targetTitle || '',
-        content: row.content || '',
-        contact: row.contact || '',
-        uid: row.uid || '',
-        status: row.status || '待处理',
-        handlerNote: row.handlerNote || '',
-        handledBy: row.handledBy || '',
-        createdAt: Number(row.createdAt) || 0,
-        handledAt: Number(row.handledAt) || 0
-      }))
+      const items = []
+      /* 举报对象要能落到具体账号：处置时可直接打开「调整账号」并限制发布 / 对话 */
+      const targetUidCache = new Map()
+      const targetCollection = { product: 'products', demand: 'demands', news: 'news' }
+      for (const row of filtered.slice(paging.skip, paging.skip + paging.limit)) {
+        let targetUid = ''
+        const targetType = row.targetType || 'other'
+        const targetId = row.targetId || ''
+        if (targetType === 'owner') {
+          targetUid = targetId
+        } else if (targetId && targetCollection[targetType]) {
+          const cacheKey = targetType + ':' + targetId
+          if (!targetUidCache.has(cacheKey)) {
+            const doc = await repo.get(targetCollection[targetType], targetId)
+            targetUidCache.set(cacheKey, (doc && doc.uid) || '')
+          }
+          targetUid = targetUidCache.get(cacheKey)
+        }
+        items.push({
+          id: row.id,
+          type: row.type || '意见反馈',
+          targetType,
+          targetId,
+          targetUid,
+          targetTitle: row.targetTitle || '',
+          content: row.content || '',
+          contact: row.contact || '',
+          uid: row.uid || '',
+          status: row.status || '待处理',
+          handlerNote: row.handlerNote || '',
+          handledBy: row.handledBy || '',
+          createdAt: Number(row.createdAt) || 0,
+          handledAt: Number(row.handledAt) || 0
+        })
+      }
       return {
         items,
         total: filtered.length,
@@ -3448,6 +3469,8 @@ function createAdminHandlers(deps) {
           phoneMasked: phone ? maskPhone(phone) : '',
           phoneSaved: !!user.phoneCipher,
           status: user.status || '正常',
+          /* 举报处置后的功能限制：发布内容 / 发布资讯 / 发起对话 */
+          restrictions: stateOf(user, now()),
           /* 手动调整留痕：管理员在用户页写的内部备注 */
           note: user.adminNote || '',
           joined: profile.joined || ''
@@ -4324,17 +4347,37 @@ function createAdminHandlers(deps) {
       const exposure = data.exposure ? enumOf(data.exposure, Object.values(EXPOSURES), '曝光范围') : ''
       const note = data.note === undefined ? (user.adminNote || '') : str(data.note, { field: '内部备注', max: 200 })
       const at = now()
-      await repo.updateWhere('users', { id }, { status, adminNote: note, updatedAt: at })
+      /* 功能限制：{publish / news / chat: 天数}，0 表示解除，不传表示保持不动 */
+      let limit = null
+      if (data.restrict && typeof data.restrict === 'object') {
+        limit = applyRestrictions(user, {
+          publish: data.restrict.publish,
+          news: data.restrict.news,
+          chat: data.restrict.chat,
+          reason: data.restrictReason !== undefined ? data.restrictReason : data.restrict.reason
+        }, at, ctx.session ? ctx.session.accountId : '')
+      }
+      const patch = { status, adminNote: note, updatedAt: at }
+      if (limit) patch.restrictions = limit.restrictions
+      await repo.updateWhere('users', { id }, patch)
       if (exposure) {
         const profile = (await repo.find('profiles', { uid: id }, { limit: 1 }))[0]
         if (profile) await repo.updateWhere('profiles', { uid: id }, { exposure })
       }
+      const limitState = limit ? stateOf({ restrictions: limit.restrictions }, at) : null
+      const limitText = limitState
+        ? ['publish', 'news', 'chat']
+            .filter((kind) => limitState[kind])
+            .map((kind) => limitState[kind].label + '至 ' + limitState[kind].untilText)
+            .join('；')
+        : ''
       await appendAudit(repo, {
         actorType: 'admin',
         actorId: ctx.session ? ctx.session.accountId : '',
         action: 'user.admin',
         target: id,
-        reason: `账号 ${status}；曝光 ${exposure || '不变'}；备注${note ? '已更新' : '为空'}`,
+        reason: `账号 ${status}；曝光 ${exposure || '不变'}；备注${note ? '已更新' : '为空'}` +
+          (limit ? `；限制 ${limitText || '已解除'}${limit.restrictions.reason ? '（' + limit.restrictions.reason + '）' : ''}` : ''),
         ip: ctx.ip,
         result: 'allow',
         at
@@ -4352,7 +4395,23 @@ function createAdminHandlers(deps) {
           })
         } catch (notifyErr) { /* 状态已落库：回执失败不回滚 */ }
       }
-      return { uid: id, status, exposure, note }
+      /* 功能限制变化也要通知：用户被举报处置后需要知道具体到哪天、为什么 */
+      if (limit && limit.changed) {
+        try {
+          const tips = ['publish', 'news', 'chat']
+            .filter((kind) => limitState[kind])
+            .map((kind) => `「${limitState[kind].label}」至 ${limitState[kind].untilText}`)
+          await notifyUser(id, {
+            title: tips.length ? '账号功能受限' : '账号功能限制已解除',
+            body: tips.length
+              ? `你的账号功能受限：${tips.join('；')}。${limit.restrictions.reason ? '原因：' + limit.restrictions.reason + '。' : ''}如有疑问请在「我的」联系在线客服。`
+              : '你的账号功能限制已解除，可以继续发布与咨询。',
+            targetType: 'account',
+            targetId: id
+          })
+        } catch (notifyErr) { /* 限制已落库：通知失败不回滚 */ }
+      }
+      return { uid: id, status, exposure, note, restrictions: stateOf({ restrictions: (limit || user).restrictions }, at) }
     },
 
     /* 注销申请：用户端提交，管理员核实后停用账号。仅管理员可处理，客服只读。 */

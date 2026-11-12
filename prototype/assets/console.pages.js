@@ -2400,6 +2400,99 @@
     }
   }
 
+  /* ---------------- 3.2 调整账号（用户页 / 举报处置共用） ---------------- */
+
+  const RESTRICT_KINDS = [
+    ['publish', '发布内容'],
+    ['news', '发布资讯'],
+    ['chat', '发起对话']
+  ]
+
+  function restrictionBadges(rest) {
+    if (!rest) return ''
+    return RESTRICT_KINDS.filter(function (k) { return rest[k[0]] }).map(function (k) {
+      return badge(k[1] + ' 剩 ' + num(rest[k[0]].daysLeft) + ' 天', 'danger', true)
+    }).join('')
+  }
+
+  function restrictionSummary(rest) {
+    const active = RESTRICT_KINDS.filter(function (k) { return rest && rest[k[0]] })
+    if (!active.length) return '当前没有功能限制'
+    return '限制中：' + active.map(function (k) {
+      return k[1] + '至 ' + rest[k[0]].untilText
+    }).join('；') + (rest.reason ? '（原因：' + rest.reason + '）' : '')
+  }
+
+  function restrictionSelect(rest, kind) {
+    const hit = rest && rest[kind]
+    const list = [
+      { value: '', label: hit ? '保持当前（剩 ' + num(hit.daysLeft) + ' 天）' : '保持当前（不限制）' },
+      { value: '0', label: '解除该限制' }
+    ]
+    ;[1, 3, 7, 15, 30, 90].forEach(function (d) {
+      list.push({ value: String(d), label: '禁止 ' + d + ' 天' })
+    })
+    return '<select id="ua-' + kind + '">' + options(list, '', false) + '</select>'
+  }
+
+  /**
+   * 调整账号：账号状态、主体曝光、发布内容 / 发布资讯 / 发起对话三类限制。
+   * 限制按截止时间落库，到期自动恢复；举报处置时可直接复用。
+   */
+  function openUserEditModal(u, onDone) {
+    const rest = u.restrictions || {}
+    const root = modal({
+      title: '调整账号',
+      sub: u.nick || u.id,
+      wide: true,
+      body: '<div class="form-grid">' +
+        field('账号状态', '<select id="ua-status">' + options(['正常', '停用'], u.status || '正常', false) + '</select>') +
+        field('主体曝光范围', '<select id="ua-exposure">' + options([
+          { value: 'hidden', label: '不公开主体' },
+          { value: 'open', label: '公开主体' }
+        ], u.exposure === 'open' ? 'open' : 'hidden', false) + '</select>') +
+        field('禁止发布内容', restrictionSelect(rest, 'publish')) +
+        field('禁止发布资讯', restrictionSelect(rest, 'news')) +
+        field('禁止发起对话', restrictionSelect(rest, 'chat')) +
+        '<div class="field full"><label>限制原因（会站内信通知用户）</label>' +
+        '<input id="ua-reason" maxlength="120" value="' + esc(rest.reason || '') + '" placeholder="例如：发布虚假信息，举报核实成立"></div>' +
+        '<div class="field full"><label>内部备注</label><textarea id="ua-note" rows="3">' + esc(u.note || '') + '</textarea></div>' +
+        '</div>' +
+        '<div class="card" style="margin-top:12px"><div class="card-body">' +
+        '<div class="strong">' + esc(restrictionSummary(rest)) + '</div>' +
+        '<div class="small" style="color:var(--ink-3);margin-top:6px;line-height:1.8">' +
+        '限制按天设置，到期自动恢复；重复处罚会在当前截止时间上顺延，避免多次举报只算一次。' +
+        '「发布内容」影响商品 / 需求的发布与草稿转正式；「发布资讯」影响资讯圈投稿；' +
+        '「发起对话」影响直聊、咨询与商机对接，已存在的会话仍可回复。' +
+        '</div></div></div>',
+      footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="ua-ok">保存</button>'
+    })
+    if (!root) return
+    root.querySelector('#ua-ok').onclick = async function () {
+      this.disabled = true
+      try {
+        await api('user.admin', {
+          uid: u.id,
+          status: root.body.querySelector('#ua-status').value,
+          exposure: root.body.querySelector('#ua-exposure').value,
+          note: root.body.querySelector('#ua-note').value.trim(),
+          restrict: {
+            publish: root.body.querySelector('#ua-publish').value,
+            news: root.body.querySelector('#ua-news').value,
+            chat: root.body.querySelector('#ua-chat').value
+          },
+          restrictReason: root.body.querySelector('#ua-reason').value.trim()
+        })
+        closeModal()
+        toast('账号与权限已更新')
+        if (typeof onDone === 'function') onDone()
+      } catch (err) {
+        toast(err.message, 'err')
+        this.disabled = false
+      }
+    }
+  }
+
   async function openUserDrawer(uid, onDone) {
     let data
     try {
@@ -2428,7 +2521,7 @@
       badges: autoBadge(u.status) +
         (u.hasLicense ? badge('有营业执照', 'ok', true) : badge('未上传资质', 'warn', true)) +
         (u.phoneSaved ? badge('已留手机号', 'info') : badge('未留手机号')) +
-        badge(u.exposureLabel || '不公开主体'),
+        badge(u.exposureLabel || '不公开主体') + restrictionBadges(u.restrictions),
       body: '<div class="tabs" id="u-tabs">' + tabConf.map(function (t, i) {
         return '<button data-tab="' + t[0] + '"' + (i === 0 ? ' class="on"' : '') + '>' + t[1] + '</button>'
       }).join('') + '</div><div id="u-panel" style="margin-top:14px"></div>',
@@ -2461,6 +2554,7 @@
           ['主体类型', esc(u.subjectType || '个人')], ['主体名称', esc(u.subject || '未填写')],
           ['联系方式', esc(u.phone || u.contact || u.phoneMasked || '未留')],
           ['曝光范围', esc(u.exposureLabel || '不公开主体')],
+          ['功能限制', esc(restrictionSummary(u.restrictions))],
           ['内部备注', esc(u.note || '无')]
         ]) + (recent ? '<div class="small" style="margin-top:12px;color:var(--ink-3)">最近动态：' + esc(String(recent).slice(0, 120)) + '</div>' : '')
       } else if (key === 'membership') {
@@ -2724,39 +2818,7 @@
       openPaymentModal({ uid: uid, nick: u.nick, onDone: function () { reloadTabs() } })
     }
     drawer.foot.querySelector('#u-edit').onclick = function () {
-      const root = modal({
-        title: '调整账号',
-        sub: u.nick,
-        body: '<div class="form-grid">' +
-          field('账号状态', '<select id="ua-status">' + options(['正常', '停用'], u.status || '正常', false) + '</select>') +
-          field('主体曝光范围', '<select id="ua-exposure">' + options([
-            { value: 'hidden', label: '不公开主体' },
-            { value: 'open', label: '公开主体' }
-          ], u.exposure === 'open' ? 'open' : 'hidden', false) + '</select>') +
-          '<div class="field full"><label>内部备注</label><textarea id="ua-note" rows="3">' + esc(u.note || '') + '</textarea></div>' +
-          '</div>' +
-          '<div class="small" style="margin-top:10px;color:var(--ink-3)">「不公开主体」：无法进入商机池，只能发布普通商品或需求，用户只能在站内消息联系；「公开主体」：可发布同步到商机池的任务，商机会员可以直接添加微信和联系方式。</div>',
-        footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="ua-ok">保存</button>'
-      })
-      if (!root) return
-      root.querySelector('#ua-ok').onclick = async function () {
-        this.disabled = true
-        try {
-          await api('user.admin', {
-            uid: uid,
-            status: root.body.querySelector('#ua-status').value,
-            exposure: root.body.querySelector('#ua-exposure').value,
-            note: root.body.querySelector('#ua-note').value.trim()
-          })
-          closeModal()
-          toast('账号信息已更新')
-          /* 保存后留在当前 Tab 原地刷新 */
-          reloadTabs()
-        } catch (err) {
-          toast(err.message, 'err')
-          this.disabled = false
-        }
-      }
+      openUserEditModal(u, function () { reloadTabs() })
     }
   }
 
@@ -3713,10 +3775,20 @@
               '</div>'
             : '<div class="small" style="margin-top:12px;color:var(--ink-3)">当前角色无处置权限，只能查看。</div>'),
         footer: canHandle
-          ? '<button class="btn" data-close="1">取消</button><button class="btn primary" id="rp-ok">提交处置</button>'
+          ? (item.targetUid && C.can('user.admin') ? '<button class="btn" id="rp-user">调整被举报账号</button>' : '') +
+            '<button class="btn" data-close="1">取消</button><button class="btn primary" id="rp-ok">提交处置</button>'
           : '<button class="btn" data-close="1">关闭</button>'
       })
       if (!root || !canHandle) return
+      const userBtn = root.querySelector('#rp-user')
+      if (userBtn) {
+        /* 举报核实后直接落到该账号的「调整账号」：限制发布 / 资讯 / 对话 */
+        userBtn.onclick = function () {
+          const targetUid = item.targetUid
+          closeModal()
+          openUserDrawer(targetUid)
+        }
+      }
       root.querySelector('#rp-ok').onclick = async function () {
         const status = root.body.querySelector('#rp-to').value
         const note = root.body.querySelector('#rp-note').value.trim()

@@ -16,6 +16,7 @@
  */
 
 const { AppError, CODES } = require('./errors')
+const { assertAllowed } = require('./restrictions')
 const {
   str,
   arrayOfStrings,
@@ -2787,6 +2788,8 @@ function createMarketUserHandlers(deps) {
     'news.submit': async (data, ctx) => {
       const uid = ctx.openid
       const user = await mustUser(ctx)
+      /* 资讯投稿受限期间直接拦截，阅读与其他功能不受影响 */
+      assertAllowed(user, 'news')
       const input = normalizeNewsInput(data, false)
       /* 基础筛查：命中暴力 / 色情 / 赌博 / 诈骗等违禁词直接驳回，不落库、不进人工队列 */
       const hit = findBannedWord(`${input.title} ${input.content}`)
@@ -4006,7 +4009,9 @@ function createMarketUserHandlers(deps) {
      */
     'biz.consult': async (data, ctx) => {
       const uid = ctx.openid
-      await mustUser(ctx)
+      const user = await mustUser(ctx)
+      /* 商机对接属于「发起对话」：受限期间不允许新发起 */
+      assertAllowed(user, 'chat')
       const at = now()
 
       /* 兼容前端传 agencyId / id，避免两端口径不一致 */

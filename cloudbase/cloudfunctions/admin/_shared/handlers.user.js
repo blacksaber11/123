@@ -24,6 +24,7 @@ const {
   CHAT_RETENTION_DAYS
 } = require('./constants')
 const { encryptField, decryptField, blindIndex, randomId, sha256Hex, userNoOf } = require('./crypto')
+const { assertAllowed } = require('./restrictions')
 const { recordSensitiveRisk } = require('./sensitive')
 const {
   str,
@@ -1479,6 +1480,8 @@ function createUserHandlers(deps) {
       const uid = ctx.openid
       const user = await mustUser(ctx)
       const isDraft = data.draft === true || data.draft === 'true' || data.draft === 1
+      /* 举报处置后的功能限制：草稿仍可暂存，正式发布一律拦截 */
+      if (!isDraft) assertAllowed(user, 'publish')
       /* 草稿只是暂存、不对外展示：没有实名也可以先存，正式发布前再补资料 */
       if (!isDraft) await assertProfileReady(uid, user)
       assertNoContactInText(
@@ -1569,6 +1572,9 @@ function createUserHandlers(deps) {
      */
     'product.submit': async (data, ctx) => {
       const uid = ctx.openid
+      const user = await mustUser(ctx)
+      /* 草稿转正式发布同样属于发布内容：受限期间一律拦截 */
+      assertAllowed(user, 'publish')
       const id = str(data.id || data.productId, { field: '商品', required: true, max: 64 })
       const product = await repo.get('products', id)
       if (!product) throw new AppError(CODES.NOT_FOUND, '商品不存在')
@@ -1667,6 +1673,8 @@ function createUserHandlers(deps) {
       const uid = ctx.openid
       const user = await mustUser(ctx)
       const isDraft = data.draft === true || data.draft === 'true' || data.draft === 1
+      /* 举报处置后的功能限制：草稿仍可暂存，正式发布一律拦截 */
+      if (!isDraft) assertAllowed(user, 'publish')
       /* 草稿只是暂存、不对外展示：没有实名也可以先存，正式发布前再补资料 */
       if (!isDraft) await assertProfileReady(uid, user)
       assertNoContactInText(
@@ -1735,6 +1743,9 @@ function createUserHandlers(deps) {
     /** 提交需求：草稿 / 已驳回 → 直接发布（求购中）。审核不是发布的前置路径。 */
     'demand.submit': async (data, ctx) => {
       const uid = ctx.openid
+      const user = await mustUser(ctx)
+      /* 草稿转正式发布同样属于发布内容：受限期间一律拦截 */
+      assertAllowed(user, 'publish')
       const id = str(data.id || data.demandId, { field: '需求', required: true, max: 64 })
       const demand = await repo.get('demands', id)
       if (!demand) throw new AppError(CODES.NOT_FOUND, '需求不存在')
@@ -3014,6 +3025,8 @@ function createUserHandlers(deps) {
     'consult.submit': async (data, ctx) => {
       const uid = ctx.openid
       const user = await mustUser(ctx)
+      /* 咨询属于「发起对话」：受限期间不允许新发起 */
+      assertAllowed(user, 'chat')
       const { productId, demandId } = allowedTargetQuery(data)
       const target = await loadTarget(productId, demandId, uid)
 
@@ -3263,6 +3276,8 @@ function createUserHandlers(deps) {
     'chat.open': async (data, ctx) => {
       const uid = ctx.openid
       const user = await mustUser(ctx)
+      /* 直聊属于「发起对话」：受限期间不允许新开会话，已有会话仍可回复 */
+      assertAllowed(user, 'chat')
       const { productId, demandId } = allowedTargetQuery(data)
       const target = await loadTarget(productId, demandId, uid)
 
