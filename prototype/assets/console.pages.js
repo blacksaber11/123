@@ -3372,7 +3372,21 @@
 
   Pages.risk = async function (view, ctx) {
     /* 支持从工作台的「举报反馈」直接落到举报 tab（navigate('risk', { tab: 'reports' })） */
-    let tab = (ctx && ctx.query && ctx.query.tab) === 'reports' && C.can('report.list') ? 'reports' : 'cases'
+    const askTab = (ctx && ctx.query && ctx.query.tab) || ''
+    /* 先取待处理举报数：既用于 tab 角标，也决定无参数进入时默认展示哪个 tab */
+    let pendingReports = 0
+    if (C.can('report.list')) {
+      try {
+        const pending = await api('report.list', { status: '待处理', type: '', targetType: '', q: '', page: 1, limit: 1 })
+        pendingReports = Number(pending.total) || 0
+      } catch (err) {
+        pendingReports = 0
+      }
+    }
+    /* 有未处理举报且没指定 tab 时直接落到举报反馈，避免举报进来了却停在风险单看不到 */
+    let tab = askTab === 'reports' && C.can('report.list')
+      ? 'reports'
+      : (!askTab && pendingReports > 0 && C.can('report.list') ? 'reports' : 'cases')
     let stateCase = { type: '', status: '待处理', level: '', keyword: '', page: 1, limit: 12 }
     let stateReport = { status: '', type: '', targetType: '', q: '', page: 1, limit: 20 }
     let scanning = false
@@ -3385,10 +3399,30 @@
       '<button data-tab="social" class="' + (tab === 'social' ? 'on' : '') + '">收藏关注</button>' +
       (C.can('behavior.list') ? '<button data-tab="security" class="' + (tab === 'security' ? 'on' : '') + '">安全监测</button>' : '') +
       (C.can('blocked.list') ? '<button data-tab="blocked" class="' + (tab === 'blocked' ? 'on' : '') + '">已拦截</button>' : '') +
-      (C.can('report.list') ? '<button data-tab="reports" class="' + (tab === 'reports' ? 'on' : '') + '">举报反馈</button>' : '') + '</div>' +
+      (C.can('report.list') ? '<button data-tab="reports" class="' + (tab === 'reports' ? 'on' : '') + '">举报反馈' +
+        (pendingReports > 0 ? '<span class="count">' + num(pendingReports) + '</span>' : '') + '</button>' : '') + '</div>' +
       '<div id="r-body" style="margin-top:16px"></div>'
 
     const body = view.querySelector('#r-body')
+
+    /* 受理 / 处置后同步「举报反馈」tab 上的待处理角标 */
+    function syncReportBadge() {
+      const btn = view.querySelector('#r-tabs [data-tab="reports"]')
+      if (!btn) return
+      const old = btn.querySelector('.count')
+      if (pendingReports > 0) {
+        if (old) {
+          old.textContent = num(pendingReports)
+        } else {
+          const s = document.createElement('span')
+          s.className = 'count'
+          s.textContent = num(pendingReports)
+          btn.appendChild(s)
+        }
+      } else if (old) {
+        old.remove()
+      }
+    }
 
     view.querySelectorAll('#r-tabs [data-tab]').forEach(function (btn) {
       btn.onclick = function () {
@@ -3424,7 +3458,12 @@
         scanning = false
         const counts = data.counts || {}
         const items = data.items || []
-        body.innerHTML = '<div class="grid g4">' +
+        body.innerHTML = (pendingReports > 0
+          ? '<div class="card"><div class="card-body" style="display:flex;align-items:center;justify-content:space-between;gap:12px">' +
+            '<span>有 <b>' + num(pendingReports) + '</b> 条用户举报待处理</span>' +
+            '<button class="btn xs primary" id="r-goto-reports">查看举报 ›</button></div></div>'
+          : '') +
+          '<div class="grid g4"' + (pendingReports > 0 ? ' style="margin-top:16px"' : '') + '>' +
           kpi('待处理', num((counts.byStatus || {})['待处理'] || 0), '<span class="small" style="color:var(--ink-3)">需人工确认</span>') +
           kpi('高风险', num((counts.byLevel || {})['高'] || 0), '<span class="small" style="color:var(--ink-3)">优先处置</span>') +
           kpi('处理中', num((counts.byStatus || {})['处理中'] || 0), '<span class="small" style="color:var(--ink-3)">已认领</span>') +
@@ -3450,6 +3489,14 @@
           stateCase.keyword = body.querySelector('#r-keyword').value.trim()
           stateCase.page = 1
           renderCases()
+        }
+        const gotoReports = body.querySelector('#r-goto-reports')
+        if (gotoReports) {
+          gotoReports.onclick = function () {
+            tab = 'reports'
+            view.querySelectorAll('#r-tabs [data-tab]').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === 'reports') })
+            render()
+          }
         }
         wirePager(body, function (p) { stateCase.page = p; renderCases() })
         body.querySelectorAll('[data-case]').forEach(function (btn) {
@@ -3598,6 +3645,8 @@
         const data = await api('report.list', stateReport)
         const items = data.items || []
         const counts = data.counts || {}
+        pendingReports = Number(counts['待处理'] || 0)
+        syncReportBadge()
         body.innerHTML = '<div class="grid g4">' +
           kpi('待处理', num(counts['待处理'] || 0), '<span class="small" style="color:var(--ink-3)">需要首次响应</span>') +
           kpi('处理中', num(counts['处理中'] || 0), '<span class="small" style="color:var(--ink-3)">已受理待结论</span>') +
