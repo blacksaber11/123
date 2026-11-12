@@ -6,10 +6,9 @@
  * 2. 截屏 / 录屏监测在 App.onShow 统一开启，检测到即遮蔽内容；
  * 3. 所有网络请求走 utils/request.js，云函数返回的敏感字段一律不落本地存储。
  */
-const { ensureLogin, readUser, hasPhone } = require('./utils/auth')
+const { ensureLogin, readUser } = require('./utils/auth')
 const { startScreenGuard } = require('./utils/guard')
 const { request } = require('./utils/request')
-const { requestLocation } = require('./utils/location')
 const inbox = require('./utils/inbox')
 
 /* 底部 tab 路由：只有这些页面在栈底时，安卓物理返回才允许退出小程序 */
@@ -111,9 +110,7 @@ App({
 
     /* 静默登录：wx.login 不弹授权框。进入即浏览，不拦任何界面 */
     ensureLogin(this)
-      .then((user) => {
-        /* 已有手机号的老用户：顺手申请一次定位（用于同城匹配），拒绝也不影响浏览 */
-        if (hasPhone(user)) requestLocation(this)
+      .then(() => {
         /* 登录后立刻取一次未读：不必等 20 秒后的第一轮轮询 */
         this.pollInbox()
       })

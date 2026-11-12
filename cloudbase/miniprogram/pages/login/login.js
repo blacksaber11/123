@@ -1,6 +1,5 @@
 const { wxLogin, readUser, writeUser, hasPhone } = require('../../utils/auth')
 const { request, uploadFile } = require('../../utils/request')
-const { requestLocation } = require('../../utils/location')
 
 const HOME = '/pages/home/home'
 const LOGIN_ROUTE = '/pages/login/login'
@@ -299,10 +298,8 @@ Page({
     wx.switchTab({ url: HOME, fail: () => wx.reLaunch({ url: HOME, fail: () => {} }) })
   },
 
-  /* 登录 + 手机号都就绪后进入程序：定位权限不阻塞进入 */
+  /* 登录 + 手机号都就绪后进入程序 */
   enterApp() {
-    /* 先回跳、再异步申请定位：系统权限弹窗不卡住页面切换 */
-    setTimeout(() => { requestLocation(getApp()) }, 300)
     /* from 已在 onLoad 规范化：站内路径、非登录页、解码失败回落首页 */
     leaveLogin(this.data.from || HOME)
     ensureLeft(1200)

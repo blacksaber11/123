@@ -142,23 +142,6 @@ Page({
     }
   },
 
-  /** 用户主动定位：从微信地图返回的地址里识别省 / 市并回填 */
-  useLocation() {
-    const { chooseCity } = require('../../utils/location')
-    chooseCity().then((hit) => {
-      if (!hit) return
-      const loc = locateCity(hit.city)
-      const geo = cityColumns(loc.pi, loc.ci)
-      this.dirty = true
-      this.setData({ city: hit.city, cityCols: geo.cols, cityIndex: geo.index })
-      this.syncLeaveGuard()
-      wx.showToast({ title: '已填入 ' + hit.city + '，保存后生效', icon: 'none' })
-    }).catch((err) => {
-      const msg = (err && err.message) || ''
-      if (msg) wx.showToast({ title: msg, icon: 'none' })
-    })
-  },
-
   /** 发布必填口径：主体名称、主体类型、主体类别、联系人、手机号（职位选填） */
   computeMissing() {
     const d = this.data

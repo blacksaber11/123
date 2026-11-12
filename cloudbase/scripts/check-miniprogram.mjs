@@ -104,8 +104,8 @@ for (const page of pages) {
   const { dataKeys } = parsePage(js)
   for (const ref of collectRefs(wxml)) {
     if (dataKeys.has(ref)) continue
-    // 可能是 wx:for-item 的别名或模块级常量
-    const aliasRe = new RegExp(`wx:for-item\\s*=\\s*"\\{?\\{?\\s*${ref}\\b`)
+    // 可能是 wx:for-item / wx:for-index 的别名或模块级常量
+    const aliasRe = new RegExp(`wx:for-(?:item|index)\\s*=\\s*"\\{?\\{?\\s*${ref}\\b`)
     if (aliasRe.test(wxml)) continue
     const constRe = new RegExp(`const\\s+${ref}\\s*=|let\\s+${ref}\\s*=|\\b${ref}\\s*:`)
     if (constRe.test(js)) continue

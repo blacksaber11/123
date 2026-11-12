@@ -877,8 +877,10 @@ const BASE = {
       .catch(() => {})
   },
 
+  /* 引导卡片进入开通引导页：此时必然未开通，落到商机页的未开通态（套餐 + 立即开通），
+     不能带 mode=mine，否则会变成「我的商机」列表 */
   goBiz() {
-    wx.navigateTo({ url: '/pages/biz/biz?mode=mine' })
+    wx.navigateTo({ url: '/pages/biz/biz' })
   },
 
   /* 浏览记录：商品与需求混合，最新的排在最前 */

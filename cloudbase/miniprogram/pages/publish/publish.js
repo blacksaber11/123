@@ -996,24 +996,6 @@ Page({
     this.setData({ 'form.city': this.data.cities[i] || '' })
   },
 
-  /* 定位自动填写省 / 市：用户主动点击才拉起地图，拒绝授权则保持手动选择 */
-  useLocation() {
-    const { chooseCity } = require('../../utils/location')
-    chooseCity().then((hit) => {
-      if (!hit) return
-      this.setData({
-        'form.province': hit.province,
-        'form.city': hit.city,
-        cities: (CITY_TREE[hit.province] || []).slice()
-      })
-      this.syncLeaveGuard()
-      wx.showToast({ title: '已填入 ' + hit.city, icon: 'none' })
-    }).catch((err) => {
-      const msg = (err && err.message) || ''
-      if (msg) wx.showToast({ title: msg, icon: 'none' })
-    })
-  },
-
   /* ---------- 平台型号库：合并进四级滚轮 ---------- */
   async refreshCatalog() {
     try {

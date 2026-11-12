@@ -96,7 +96,6 @@
               <text class="pf-pa">›</text>
             </view>
           </picker>
-          <view class="btn sm" style="flex:none" bindtap="useLocation">定位</view>
         </view>
       </view>
       <view class="pf-f pf-f-col">

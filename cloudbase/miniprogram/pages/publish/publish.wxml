@@ -728,10 +728,7 @@
               </view>
             </picker>
           </view>
-          <view class="geo-row" style="margin-top:12rpx">
-            <view class="btn sm" bindtap="useLocation">定位自动填写</view>
-          </view>
-          <view class="tip">按省 / 直辖市 → 地级市逐级选择，覆盖全国 34 个省级行政区；也可以点「定位自动填写」，拒绝授权不影响手动选择。</view>
+          <view class="tip">按省 / 直辖市 → 地级市逐级选择，覆盖全国 34 个省级行政区。</view>
         </view>
 
         <view class="field">

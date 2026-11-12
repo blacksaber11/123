@@ -12,7 +12,7 @@
         <text wx:if="{{user.userNo}}" class="ma-pill on" catchtap="copyUserNo"><text>🆔</text>ID {{user.userNo}}</text>
         <text class="ma-pill {{user.login ? 'on' : ''}}"><text>☁</text>微信已授权</text>
         <text class="ma-pill {{user.phoneOn ? 'on' : ''}}"><text>📱</text>{{user.phoneText}}</text>
-        <text class="ma-pill {{user.geo ? 'on' : ''}}"><text>📍</text>{{user.geo ? user.city : '位置未授权'}}</text>
+        <text wx:if="{{user.geo}}" class="ma-pill on"><text>📍</text>{{user.city}}</text>
       </view>
     </view>
   </view>
