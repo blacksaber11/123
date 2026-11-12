@@ -743,22 +743,32 @@ const DEVICE_CATALOG = {
   'AI 工作站': {
     联想: {
       'ThinkStation PX 系列': ['PX 620 RTX 6000 Ada', 'PX 650 双卡 RTX 6000 Ada', 'PX 620', 'PX 650'],
+      'ThinkStation P 系列': ['P8 RTX 6000 Ada', 'P5 RTX 5090', 'P920', 'P720', 'P520', 'P360 Ultra'],
       'ThinkStation P3 系列': ['P3 Tower RTX 5090']
     },
     戴尔: {
-      'Precision 系列': ['Precision 7960 Tower RTX 6000 Ada', 'Precision 5860 RTX 5000 Ada', 'Precision 7960 Tower', 'Precision 5860', 'Precision 3680 RTX 5090']
+      'Precision 7000 系列': ['Precision 7960 Tower RTX 6000 Ada', 'Precision 7960 Tower', 'Precision 7920 Tower', 'Precision 7865 Tower'],
+      'Precision 5000 系列': ['Precision 5860 RTX 5000 Ada', 'Precision 5860'],
+      'Precision 3000 系列': ['Precision 3680 RTX 5090', 'Precision 3660']
     },
     惠普: {
-      'Z 系列': ['Z8 Fury G5 双卡 RTX 6000 Ada', 'Z6 G5 A RTX 5000 Ada', 'Z8 Fury G5', 'Z6 G5 A', 'Z2 Tower G1i RTX 5090']
+      'Z8 / Z6 系列': ['Z8 Fury G5 双卡 RTX 6000 Ada', 'Z8 Fury G5', 'Z6 G5 A RTX 5000 Ada', 'Z6 G5 A'],
+      'Z4 / Z2 系列': ['Z4 G5 RTX 6000 Ada', 'Z2 Tower G1i RTX 5090', 'Z2 Mini G1i']
     },
     超微: {
-      'SYS-5 系列': ['SYS-540A-TR RTX 6000 Ada', 'SYS-741GE-TNRT 四卡 RTX 4000 Ada', 'SYS-540A-TR', 'SYS-741GE-TNRT']
+      'SYS-5 系列': ['SYS-540A-TR RTX 6000 Ada', 'SYS-540A-TR', 'SYS-530A-IL'],
+      'SYS-7 系列': ['SYS-741GE-TNRT 四卡 RTX 4000 Ada', 'SYS-741GE-TNRT'],
+      '塔式工作站': ['AS-5014A-TT', 'AS-4124GS-TNR 工作站']
     },
     超聚变: {
-      'FusionXtation 系列': ['FusionXtation X3 8000', 'FusionXtation X3 8000 工作站']
+      'FusionXtation 系列': ['FusionXtation X3 8000', 'FusionXtation X3 8000 工作站', 'FusionXtation X2 6000', 'FusionXtation X1 3000']
+    },
+    思腾合力: {
+      'AW 系列': ['AW6200 8 卡 RTX 6000 Ada', 'AW5200 8 卡 RTX 4090', 'AW4200 8 卡 RTX 4090', 'AW4200']
     },
     华硕: {
-      'ProArt 系列': ['ProArt 创16 RTX 5090']
+      'ProArt 系列': ['ProArt 创16 RTX 5090'],
+      'Pro WS 系列': ['Pro WS W790E-SAGE SE 工作站', 'Pro WS TRX50-SAGE WIFI 工作站']
     },
     浪潮: {
       '元脑工作站': ['元脑 EIS800 工作站', '元脑 AIStation 工作站']
@@ -777,19 +787,38 @@ const DEVICE_CATALOG = {
   /* ============ 边缘计算设备 ============ */
   '边缘计算设备': {
     华为: {
-      'Atlas 500 系列': ['Atlas 500 Pro', 'Atlas 500 智能小站']
+      'Atlas 500 系列': ['Atlas 500 Pro', 'Atlas 500 智能小站', 'Atlas 200I A2 边缘小站']
     },
     浪潮: {
-      'EIS 系列': ['EIS800', 'EIS200']
+      'EIS 系列': ['EIS800', 'EIS400', 'EIS200']
     },
     联想: {
-      'ThinkSystem SE 系列': ['SE350', 'SE450']
+      'ThinkSystem SE 系列': ['SE550 V2', 'SE450', 'SE360 V2', 'SE350']
+    },
+    戴尔: {
+      'PowerEdge XR 系列': ['PowerEdge XR7620', 'PowerEdge XR5610', 'PowerEdge XR4000', 'PowerEdge XR4510c']
     },
     新华三: {
-      'UniServer E 系列': ['UniServer E3300 G6']
+      'UniServer E 系列': ['UniServer E3300 G6', 'UniServer E3200 G5']
+    },
+    超微: {
+      'SYS-E 系列': ['SYS-E403-12P', 'SYS-E300-13AD', 'SYS-E102-13R']
     },
     NVIDIA: {
-      'Jetson 边缘系列': ['Jetson AGX Orin 64G 边缘盒', 'Jetson Orin NX 16G 边缘盒']
+      'Jetson 边缘系列': ['Jetson AGX Thor 128G 边缘盒', 'Jetson AGX Orin 64G 边缘盒', 'Jetson Orin NX 16G 边缘盒', 'Jetson Orin Nano 8G 边缘盒']
+    },
+    研华: {
+      'MIC 系列': ['MIC-770 V3', 'MIC-733-AO', 'MIC-710AIX'],
+      'ARK 系列': ['ARK-3534', 'ARK-1123']
+    },
+    研祥: {
+      'IPC 系列': ['IPC-810E', 'IPC-820', 'IPC-620H']
+    },
+    凌华: {
+      'MVP 系列': ['MVP-6100', 'MVP-5200']
+    },
+    华北工控: {
+      'RPC 系列': ['RPC-610', 'RPC-206']
     }
   },
 
