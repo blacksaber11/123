@@ -220,6 +220,39 @@
   color: var(--muted);
 }
 
+/* ========== 协议主动勾选 ========== */
+.lg-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 12rpx;
+  margin: 4rpx 0 20rpx;
+}
+.lg-check {
+  flex: none;
+  width: 32rpx;
+  height: 32rpx;
+  margin-top: 5rpx;
+  border: 2rpx solid var(--line);
+  border-radius: 8rpx;
+  background: #fff;
+  color: #fff;
+  font-size: 22rpx;
+  line-height: 28rpx;
+  text-align: center;
+  box-sizing: border-box;
+}
+.lg-check.on {
+  border-color: var(--brand);
+  background: var(--brand);
+}
+.lg-consent-t {
+  flex: 1;
+  min-width: 0;
+  font-size: 22rpx;
+  line-height: 1.7;
+  color: var(--muted);
+}
+
 /* ========== 主按钮 ========== */
 .lg-btn {
   width: 100%;
@@ -235,6 +268,10 @@
   line-height: 1.3;
   border-radius: 20rpx;
   white-space: nowrap;
+}
+
+.lg-btn-off {
+  opacity: 0.45;
 }
 
 /* ========== 失败提示与手填 ========== */

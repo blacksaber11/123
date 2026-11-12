@@ -34,7 +34,7 @@
   <view class="block">
     <view class="block-hd">
       <text class="bt">基本信息</text>
-      <text class="r">头像、昵称、手机号可直接使用微信授权信息</text>
+      <text class="r">头像、昵称、手机号可直接使用授权信息</text>
     </view>
     <view class="pf-form">
       <view class="pf-f pf-f-av">
@@ -42,19 +42,19 @@
         <view class="pf-av-row">
           <image wx:if="{{avatar}}" class="pf-av-thumb" src="{{avatar}}" mode="aspectFill" bindtap="pickAvatarUpload" />
           <view wx:else class="pf-av-thumb ph" bindtap="pickAvatarUpload">{{avatarText}}</view>
-          <button class="btn sm" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar">微信头像</button>
+          <button class="btn sm" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar">使用头像</button>
           <button class="btn sm ghost" bindtap="pickAvatarUpload">上传图片</button>
         </view>
       </view>
       <view class="pf-f">
         <text class="pf-l">昵称</text>
-        <input class="pf-i" type="nickname" value="{{nick}}" placeholder="点击使用微信昵称" bindinput="onInput" data-key="nick"/>
+        <input class="pf-i" type="nickname" value="{{nick}}" placeholder="点击填写昵称" bindinput="onInput" data-key="nick"/>
       </view>
       <view class="pf-f {{focusKey === 'phone' ? 'focus' : ''}}" id="pf-field-phone">
         <text class="pf-l">手机号</text>
         <view class="pf-phone">
-          <text class="pf-pv">{{phoneMasked || '未授权微信手机号'}}</text>
-          <button class="btn sm" open-type="getPhoneNumber" bindgetphonenumber="getPhone">{{phoneMasked ? '重新授权' : '微信授权'}}</button>
+          <text class="pf-pv">{{phoneMasked || '未绑定手机号'}}</text>
+          <button class="btn sm" open-type="getPhoneNumber" bindgetphonenumber="getPhone">{{phoneMasked ? '重新授权' : '手机号快捷登录'}}</button>
         </view>
       </view>
       <view class="pf-f {{focusKey === 'realname' ? 'focus' : ''}}" id="pf-field-realname">

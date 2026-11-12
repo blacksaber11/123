@@ -7,8 +7,17 @@
     </view>
   </view>
 
+  <!-- 未登录访客：先展示说明，点「去登录」才进入登录页，不自动拉起授权 -->
+  <view wx:if="{{guest}}" class="guest-tip" bindtap="goLogin">
+    <view class="gt-body">
+      <view class="gt-title">登录后查看消息</view>
+      <view class="gt-sub">与货主 / 需求方的对话、客服回复、审核通知都会出现在这里</view>
+    </view>
+    <text class="gt-go">去登录 ›</text>
+  </view>
+
   <!-- Tab 切换 -->
-    <view class="tabs">
+    <view wx:if="{{!guest}}" class="tabs">
       <view class="tab {{tab === 'chat' ? 'on' : ''}}" data-tab="chat" bindtap="switchTab">
         对话
         <view class="badge" wx:if="{{chatUnread > 0}}">{{chatUnread > 99 ? '99+' : chatUnread}}</view>
@@ -21,7 +30,7 @@
     </view>
 
     <!-- 微信消息提醒：未授权或额度用完时显示，一次授权只能推一条 -->
-    <view wx:if="{{!notifyOn || notifyRemain === 0}}" class="notify-tip" bindtap="enableNotify">
+    <view wx:if="{{!guest && (!notifyOn || notifyRemain === 0)}}" class="notify-tip" bindtap="enableNotify">
       <image class="nt-ico" src="/assets/icons/tip-bell.png" mode="aspectFit" />
       <view class="nt-body">
         <view class="nt-title">{{notifyRemain === 0 ? '微信提醒已用完' : '开启微信消息提醒'}}</view>
@@ -31,7 +40,7 @@
     </view>
 
     <!-- 通知列表 -->
-    <view wx:if="{{tab === 'notice'}}" class="msg-list">
+    <view wx:if="{{!guest && tab === 'notice'}}" class="msg-list">
       <block wx:for="{{notices}}" wx:key="id">
         <view class="msg-item" bindtap="openMsg" data-id="{{item.id}}">
           <view class="msg-ico {{item.kind === 'inquiry' ? 'inq' : 'sys'}}"><image class="mi-img" src="/assets/icons/{{item.kind === 'inquiry' ? 'menu-inq' : 'ic-mega'}}.png" mode="aspectFit" /></view>
@@ -94,7 +103,7 @@
     </view>
 
     <!-- 客服消息列表 -->
-    <view wx:if="{{tab === 'chat'}}" class="msg-list">
+    <view wx:if="{{!guest && tab === 'chat'}}" class="msg-list">
       <view wx:for="{{chats}}" wx:key="id" class="msg-item {{item.pinned ? 'pinned' : ''}}" bindtap="openChatEntry" bindlongpress="onChatLongPress" data-id="{{item.id}}">
         <view class="msg-avatar {{item.official ? 'official' : ''}}">{{item.avatar}}</view>
         <view class="msg-body">

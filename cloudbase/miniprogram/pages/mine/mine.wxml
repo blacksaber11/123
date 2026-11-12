@@ -2,15 +2,15 @@
   <!-- 分类列表：个人卡 + 四宫格 + 菜单；进入二级页后整体让位给全屏内容 -->
   <block wx:if="{{view === 'menu' && mode !== 'sub'}}">
   <!-- 用户信息卡：头像 / 昵称 / 手机号与位置均由微信授权自动带入 -->
-  <view class="me-card" bindtap="goProfile">
+  <view class="me-card" bindtap="onUserCard">
     <image wx:if="{{user.avatar}}" class="me-av-img" src="{{user.avatar}}" mode="aspectFill" />
     <view wx:else class="av">{{user.avatarText || '算'}}</view>
     <view class="mi">
-      <view class="nm">{{user.nick || '微信用户'}}<text class="mi-go">›</text></view>
-      <view class="sb">{{user.city}} · {{user.joined}} 加入</view>
-      <view class="ma-line">
+      <view class="nm">{{user.nick || '未设置昵称'}}<text class="mi-go">›</text></view>
+      <view class="sb">{{user.guest ? user.city : user.city + ' · ' + user.joined + ' 加入'}}</view>
+      <view wx:if="{{!user.guest}}" class="ma-line">
         <text wx:if="{{user.userNo}}" class="ma-pill on" catchtap="copyUserNo"><text>🆔</text>ID {{user.userNo}}</text>
-        <text class="ma-pill {{user.login ? 'on' : ''}}"><text>☁</text>微信已授权</text>
+        <text class="ma-pill {{user.login ? 'on' : ''}}"><text>☁</text>已登录</text>
         <text class="ma-pill {{user.phoneOn ? 'on' : ''}}"><text>📱</text>{{user.phoneText}}</text>
         <text wx:if="{{user.geo}}" class="ma-pill on"><text>📍</text>{{user.city}}</text>
       </view>

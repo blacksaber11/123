@@ -15,12 +15,13 @@ const USER_KEY = 'suanli_user_auth_v1'
 const PROFILE_KEY = 'suanli_user_profile_v1'
 /* 用户选择「暂不授权，先随便逛逛」的标记：记住后冷启动不再强制弹授权页 */
 const SKIP_KEY = 'suanli_skip_phone_v1'
+/* 只有真正需要身份的动作页才拦登录；「消息」「我的」是 tab 页，
+   允许未登录浏览（页面内展示登录引导），不能一进 tab 就弹授权登录 */
 const GATE_PAGES = [
   'pages/consult/consult',
   'pages/publish/publish',
-  'pages/mine/mine',
+  'pages/mine/sub/sub',
   'pages/profile/profile',
-  'pages/msg/msg',
   'pages/chat/chat'
 ]
 
@@ -156,9 +157,24 @@ async function wxLogin(profile) {
   if (nick) payload.nick = nick
   if (p.avatar) payload.avatar = p.avatar
   const user = await call('user', 'auth.login', payload)
-  /* 同意留痕：协议版本 + 同意时间随本地账号档案保存，静默登录同样记录 */
+  /* 静默登录不采集任何个人信息，因此不写协议同意记录；
+     只有用户主动勾选并授权手机号时才调用 markConsent 留痕 */
+  const stored = Object.assign({}, user)
+  writeUser(stored)
+  try {
+    const app = getApp()
+    if (app && app.globalData) app.globalData.user = stored
+  } catch (e) {}
+  return stored
+}
+
+/**
+ * 协议同意留痕：仅在用户主动勾选《用户协议》《隐私政策》并继续授权时调用，
+ * 记录协议版本与时间，杜绝「登录即默认同意」。
+ */
+function markConsent(user) {
   const consent = writeConsent()
-  const stored = Object.assign({}, user, { consentVersion: consent.version, consentAt: consent.at })
+  const stored = Object.assign({}, user || {}, { consentVersion: consent.version, consentAt: consent.at })
   writeUser(stored)
   try {
     const app = getApp()
@@ -187,6 +203,7 @@ module.exports = {
   clearUser,
   getUser,
   wxLogin,
+  markConsent,
   logout,
   isGate,
   hasPhone,

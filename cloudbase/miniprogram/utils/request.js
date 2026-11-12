@@ -25,6 +25,9 @@ const CODE = {
 /** 需要重新登录的错误码 */
 const NEED_LOGIN = [CODE.UNAUTHENTICATED]
 
+/** 允许未登录浏览的 tab 页：401 时不清栈跳登录，由用户主动点功能再引导 */
+const BROWSE_PAGES = ['pages/home/home', 'pages/msg/msg', 'pages/mine/mine']
+
 /** 单次云函数调用的兜底超时：超时按网络异常处理，避免按钮永久 loading */
 const TIMEOUT_MS = 15000
 
@@ -341,6 +344,10 @@ function gotoLogin() {
     const pages = getCurrentPages() || []
     const current = pages.length ? pages[pages.length - 1] : null
     if (current && current.route === 'pages/login/login') return
+    /* 浏览型 tab 页（首页 / 消息 / 我的）允许未登录停留：
+       后台请求返回 401 时只清登录态，不再把人弹到登录页，等用户主动点功能再引导 */
+    const route = String((current && current.route) || '')
+    if (BROWSE_PAGES.indexOf(route) > -1) return
     const url = '/pages/login/login?from=' + encodeURIComponent(getCurrentPagesPath())
     if (pages.length > 0) {
       wx.redirectTo({ url })

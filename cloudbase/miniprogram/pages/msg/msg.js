@@ -2,7 +2,7 @@
    数据优先读云端：通知来自 demand.responses，系统通知与客服会话来自 outbox(msg.list)；
    云端不可用时才回落到本地演示收件箱，避免整页空白。
    会话本身是独立页面 pages/chat/chat：安卓返回 / iOS 侧滑都回到上一级，不会退出小程序。 */
-const { gate, getUser } = require('../../utils/auth')
+const { getUser } = require('../../utils/auth')
 const inbox = require('../../utils/inbox')
 const notify = require('../../utils/notify')
 const { request } = require('../../utils/request')
@@ -96,7 +96,9 @@ Page({
     /* 微信订阅消息授权状态 */
     notifyOn: false,
     /* 剩余可推送条数：-1 表示还没有授权记录，0 表示已用完 */
-    notifyRemain: -1
+    notifyRemain: -1,
+    /* 未登录访客：只展示登录引导，不请求云端、不自动跳登录页 */
+    guest: false
   },
 
   onLoad(options) {
@@ -150,12 +152,26 @@ Page({
   },
 
   async onShow() {
-    gate(this.route || 'pages/msg/msg', this.options)
     this.syncTabBar()
     this.setData({ notifyOn: notify.enabled() })
+    const me = getUser() || {}
+    if (!me.uid) {
+      /* 未登录：只展示访客引导，不自动拉起授权登录 */
+      this.stopPoll()
+      this.setData({ guest: true, notices: [], chats: [], noticeUnread: 0, chatUnread: 0, notifyRemain: -1 })
+      return
+    }
+    if (this.data.guest) this.setData({ guest: false })
     this.loadNotifyQuota()
     this.startPoll()
     await this.refresh()
+  },
+
+  /* 访客点「去登录」：用户主动进入登录页，登录后回到消息 tab */
+  goLogin() {
+    wx.navigateTo({
+      url: '/pages/login/login?from=' + encodeURIComponent('/pages/msg/msg')
+    })
   },
 
   /* 一次性订阅一次授权只推一条：拉回剩余条数，用完时重新显示提醒条 */

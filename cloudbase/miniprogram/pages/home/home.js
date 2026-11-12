@@ -806,6 +806,7 @@ Page({
   async fetchNews(seq) {
     let list = null
     let mine = []
+    const me = getUser()
     /* 资讯列表与「我的投稿」并行请求：两个串行会多一个来回，切过来要白等一程 */
     const [newsRes, ownRes] = await Promise.all([
       request('user', 'news.list', {
@@ -814,7 +815,10 @@ Page({
         scope: this.data.newsScope,
         city: this.newsTargetCity()
       }, { silent: true }).catch(() => null),
-      request('user', 'news.mine', {}, { silent: true }).catch(() => null)
+      /* 未登录访客不请求「我的投稿」：避免 401 把人从资讯页弹回登录页 */
+      (me && me.uid)
+        ? request('user', 'news.mine', {}, { silent: true }).catch(() => null)
+        : Promise.resolve(null)
     ])
     if (newsRes && Array.isArray(newsRes.items)) list = newsRes.items
     /* 自己的投稿：审核中 / 被驳回也要看得见，不能「投了就消失」 */

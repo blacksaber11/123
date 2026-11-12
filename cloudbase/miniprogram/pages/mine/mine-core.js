@@ -206,10 +206,10 @@ const BASE = {
   },
 
   async onShow() {
-    if (gate(this.route || 'pages/mine/mine', this.options)) {
-      /* 只允许把「已发布的公开条目」发给朋友，分享链接不带任何联系方式 */
-      guard.enableShare()
-    }
+    /* 只有需要身份的动作页才拦登录；「我的」允许未登录浏览，由页面内引导登录 */
+    if (!gate(this.route || 'pages/mine/mine', this.options)) return
+    /* 只允许把「已发布的公开条目」发给朋友，分享链接不带任何联系方式 */
+    guard.enableShare()
     if (this.data.mode === 'sub') {
       /* 已经在二级页：清掉发布页留下的落点，避免之后回菜单时被再次跳转 */
       try {
@@ -225,9 +225,16 @@ const BASE = {
     }
     this.syncTabBar()
     this.loadUser()
-    this.refreshNotify()
     this.setData({ wmOn: prefs.watermarkOn() })
     this.loadViews()
+    /* 未登录：只渲染本机缓存（浏览记录 / 收藏 / 关注），不发云端请求、不跳授权页 */
+    if (!this.data.user || this.data.user.guest) {
+      this.loadFav()
+      this.loadFollows(true)
+      this.syncTabHidden()
+      return
+    }
+    this.refreshNotify()
     this.loadBizGuide()
     /* 先切到「我发布的」再拉取：applyPub 按当前子类组装列表 */
     this.openPendingPub()
@@ -743,28 +750,46 @@ const BASE = {
 
   loadUser() {
     const u = readUser() || {}
+    const guest = !u.uid
     let app = null
     try {
       app = getApp()
     } catch (e) { /* 非页面环境（构建期检查）忽略 */ }
     const geo = !!u.geo || !!(app && app.globalData && app.globalData.geo)
-    /* 微信授权登录后：头像、昵称与手机号（脱敏）都由登录态带入 */
+    /* 未登录：只展示访客态，登录入口由用户自己点击，不自动拉起授权 */
     this.setData({
       user: {
-        nick: u.nick || '微信用户',
-        avatar: u.avatar || '',
+        guest,
+        nick: guest ? '未登录' : (u.nick || '未设置昵称'),
+        avatar: guest ? '' : (u.avatar || ''),
         avatarText: String(u.nick || '算').slice(0, 1),
-        city: u.city || '未填写城市',
-        phoneText: u.phoneMasked || u.phone || '手机号未授权',
-        phoneOn: !!(u.phoneMasked || u.phone),
-        joined: u.joined || '刚刚',
+        city: guest ? '登录后可发布、收藏与对接' : (u.city || '未填写城市'),
+        phoneText: guest ? '' : (u.phoneMasked || u.phone || '手机号未授权'),
+        phoneOn: !guest && !!(u.phoneMasked || u.phone),
+        joined: guest ? '' : (u.joined || '刚刚'),
         /* 用户ID：用户本人可见，报给客服即可按 ID 查账号 / 开权限 */
-        userNo: u.userNo || '',
-        login: !!u.login,
-        geo,
-        subject: u.subject || '',
+        userNo: guest ? '' : (u.userNo || ''),
+        login: !guest && !!u.login,
+        geo: !guest && geo,
+        subject: guest ? '' : (u.subject || ''),
         subjectKindText: u.subjectKind === 'person' ? '个人主体' : (u.subjectKind === 'company' ? '企业主体' : '未设置')
       }
+    })
+  },
+
+  /* 顶部用户卡：已登录进资料页；未登录去登录页（用户主动点击） */
+  onUserCard() {
+    if (this.data.user && this.data.user.guest) {
+      this.goLogin()
+      return
+    }
+    this.goProfile()
+  },
+
+  /* 登录入口：带着当前 tab 作为回跳，登录后回到「我的」 */
+  goLogin() {
+    wx.navigateTo({
+      url: '/pages/login/login?from=' + encodeURIComponent('/pages/mine/mine')
     })
   },
 
@@ -779,7 +804,7 @@ const BASE = {
   },
 
   /* 关注列表：只展示关注的账号；账号注销后保留条目并标记 */
-  loadFollows() {
+  loadFollows(offline) {
     const accounts = fav.readFollows()
       /* 历史遗留的商品关注不再展示，商品统一走收藏 */
       .filter((f) => f.type !== 'product')
@@ -790,7 +815,8 @@ const BASE = {
       }))
     this.setData({ follows: accounts, followAccounts: accounts, followList: accounts })
     this.buildMenu()
-    this.loadFollowOverview()
+    /* 未登录时没有令牌：跳过云端有效性对账，避免触发 401 跳登录 */
+    if (offline !== true) this.loadFollowOverview()
   },
 
   /* 关注对象有效性：账号注销后仍保留条目，只标记失效 */
@@ -947,6 +973,11 @@ const BASE = {
   openView(e) {
     const view = e.currentTarget.dataset.k
     if (!view) return
+    /* 未登录：设置页可直接看，其余功能由用户点击后引导登录（不自动弹授权） */
+    if (this.data.user && this.data.user.guest && view !== 'set') {
+      this.goLogin()
+      return
+    }
     const entry = QUICKS.concat(MENUS).filter((x) => x.k === view)[0]
     /* 直接跳页的菜单项（如「我的商机」）：不进二级页，交给目标页面处理 */
     if (entry && entry.url) {
@@ -1186,6 +1217,10 @@ const BASE = {
   },
 
   goProfile() {
+    if (this.data.user && this.data.user.guest) {
+      this.goLogin()
+      return
+    }
     wx.navigateTo({ url: '/pages/profile/profile' })
   },
 
@@ -1574,7 +1609,9 @@ const BASE = {
       success: (res) => {
         if (res.confirm) {
           logout()
-          wx.reLaunch({ url: '/pages/login/login' })
+          /* 退出后按访客继续浏览，不强制回到登录页 */
+          wx.showToast({ title: '已退出登录', icon: 'none' })
+          wx.switchTab({ url: '/pages/home/home', fail: () => {} })
         }
       }
     })

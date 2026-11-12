@@ -3,7 +3,7 @@
   <view class="lg-hero">
     <view class="lg-logo">算</view>
     <view class="lg-title">算力聚合</view>
-    <view class="lg-sub">{{loading ? '正在获取微信身份…' : (needPhone ? '微信已登录，补充资料即可开始' : (error ? '登录遇到问题，请重试' : '使用微信身份快速登录'))}}</view>
+    <view class="lg-sub">{{loading ? '正在登录…' : (needPhone ? '已登录，补充资料即可开始' : (error ? '登录遇到问题，请重试' : '授权后即可发布与对接'))}}</view>
   </view>
 
   <view class="lg-card">
@@ -22,7 +22,13 @@
 
       <!-- 头像 + 昵称 -->
       <view class="lg-profile">
-        <button class="lg-avatar" open-type="chooseAvatar" hover-class="none" bindchooseavatar="onChooseAvatar">
+        <button
+          class="lg-avatar"
+          open-type="{{agreed ? 'chooseAvatar' : ''}}"
+          hover-class="none"
+          bindtap="needAgree"
+          bindchooseavatar="onChooseAvatar"
+        >
           <image wx:if="{{avatar}}" class="lg-avatar-img" src="{{avatar}}" mode="aspectFill" show-menu-by-longpress="false"/>
           <view wx:else class="lg-avatar-ph">
             <text class="lg-avatar-plus">＋</text>
@@ -35,7 +41,8 @@
             class="lg-input"
             type="nickname"
             value="{{nick}}"
-            placeholder="点击使用微信昵称"
+            placeholder="点击填写昵称"
+            disabled="{{!agreed}}"
             bindinput="onNickInput"
           />
         </view>
@@ -51,21 +58,28 @@
         <text class="lg-phone-tag">必填</text>
       </view>
 
+      <!-- 协议由用户自己勾选：未勾选不触发手机号 / 头像授权，不存在默认同意 -->
+      <view class="lg-consent">
+        <view class="lg-check {{agreed ? 'on' : ''}}" bindtap="toggleAgree"><text wx:if="{{agreed}}">✓</text></view>
+        <view class="lg-consent-t">我已阅读并同意<text class="lg-link" catchtap="openTerms">《用户协议》</text>与<text class="lg-link" catchtap="openPrivacy">《隐私政策》</text></view>
+      </view>
+
       <!-- 隐私协议未同意时先走这一步，否则手机号接口会被微信直接拒绝 -->
       <button
-        wx:if="{{privacyNeed}}"
+        wx:if="{{agreed && privacyNeed}}"
         class="btn primary lg-btn"
         open-type="agreePrivacyAuthorization"
         bindagreeprivacyauthorization="onAgreePrivacy"
       >同意隐私保护指引并继续</button>
       <button
         wx:else
-        class="btn primary lg-btn"
-        open-type="getPhoneNumber"
+        class="btn primary lg-btn {{agreed ? '' : 'lg-btn-off'}}"
+        open-type="{{agreed ? 'getPhoneNumber' : ''}}"
         bindgetphonenumber="getPhone"
+        bindtap="needAgree"
         loading="{{phoneLoading}}"
         disabled="{{phoneLoading}}"
-      >微信一键授权手机号</button>
+      >手机号快捷登录</button>
 
       <!-- 快捷验证不可用时的兜底：手填手机号，不再卡在登录页 -->
       <view wx:if="{{phoneFail}}" class="lg-fail">
@@ -85,19 +99,17 @@
       </view>
 
       <view class="lg-skip" bindtap="skip">暂不登录，先逛逛</view>
-      <view class="lg-agree">
-        登录即同意<text class="lg-link" bindtap="openTerms">《用户协议》</text>与<text class="lg-link" bindtap="openPrivacy">《隐私政策》</text>
-      </view>
     </block>
 
     <!-- 静默登录失败 -->
     <block wx:else>
       <view wx:if="{{error}}" class="lg-error">{{error}}</view>
-      <button class="btn primary lg-btn" bindtap="retry">{{error ? '重新登录' : '微信一键登录'}}</button>
-      <view class="lg-skip" bindtap="skip">{{error ? '先逛逛' : '暂不登录，先逛逛'}}</view>
-      <view class="lg-agree">
-        登录即同意<text class="lg-link" bindtap="openTerms">《用户协议》</text>与<text class="lg-link" bindtap="openPrivacy">《隐私政策》</text>
+      <view class="lg-consent">
+        <view class="lg-check {{agreed ? 'on' : ''}}" bindtap="toggleAgree"><text wx:if="{{agreed}}">✓</text></view>
+        <view class="lg-consent-t">我已阅读并同意<text class="lg-link" catchtap="openTerms">《用户协议》</text>与<text class="lg-link" catchtap="openPrivacy">《隐私政策》</text></view>
       </view>
+      <button class="btn primary lg-btn {{agreed ? '' : 'lg-btn-off'}}" bindtap="retry">{{error ? '重新登录' : '一键登录'}}</button>
+      <view class="lg-skip" bindtap="skip">{{error ? '先逛逛' : '暂不登录，先逛逛'}}</view>
     </block>
   </view>
 

@@ -1,4 +1,4 @@
-const { wxLogin, readUser, writeUser, hasPhone } = require('../../utils/auth')
+const { wxLogin, readUser, writeUser, hasPhone, markConsent } = require('../../utils/auth')
 const { request, uploadFile } = require('../../utils/request')
 
 const HOME = '/pages/home/home'
@@ -95,6 +95,8 @@ Page({
     /* 头像 / 昵称：可选，用户自己点头像按钮 / 昵称输入框才会带过来 */
     avatar: '',
     nick: '',
+    /* 协议主动勾选：默认不勾选，未勾选时不触发手机号 / 头像等任何授权 */
+    agreed: false,
     /* 隐私保护指引是否需要先同意：微信要求先同意再调用手机号等隐私接口 */
     privacyNeed: false
   },
@@ -121,15 +123,30 @@ Page({
     if (msg.indexOf('ok') < 0) {
       wx.showToast({ title: '需同意隐私保护指引后才能授权手机号', icon: 'none', duration: 2400 })
       /* 用户拒绝或组件异常：保底让手填入口可见，不让人卡在这一步 */
-      this.setData({ phoneFail: '未同意隐私保护指引时微信不会返回手机号，可手动填写手机号继续。', manual: true })
+      this.setData({ phoneFail: '未同意隐私保护指引时无法获取手机号，可手动填写手机号继续。', manual: true })
       return
     }
     this.setData({ privacyNeed: false, phoneFail: '' })
     wx.showToast({ title: '已同意，请点击下方按钮授权', icon: 'none', duration: 2000 })
   },
 
+  /* 用户主动勾选协议：只有勾选后才允许触发手机号 / 头像等授权 */
+  toggleAgree() {
+    this.setData({ agreed: !this.data.agreed })
+  },
+
+  /* 未勾选协议时点授权按钮：只提示，不拉起任何系统授权弹窗 */
+  needAgree() {
+    if (this.data.agreed) return
+    wx.showToast({ title: '请先阅读并勾选同意《用户协议》《隐私政策》', icon: 'none', duration: 2400 })
+  },
+
   /* 微信头像：拿到临时文件，登录时一并上传保存 */
   onChooseAvatar(e) {
+    if (!this.data.agreed) {
+      this.needAgree()
+      return
+    }
     const url = (e && e.detail && e.detail.avatarUrl) || ''
     if (url) this.setData({ avatar: url })
   },
@@ -154,6 +171,10 @@ Page({
   },
 
   retry() {
+    if (!this.data.agreed) {
+      this.needAgree()
+      return
+    }
     this.setData({ error: '' })
     this.doLogin()
   },
@@ -185,6 +206,10 @@ Page({
    * 组件不可用（未开通 / 额度耗尽 / 开发者工具）→ 展示原因并给出手填入口。
    */
   async getPhone(e) {
+    if (!this.data.agreed) {
+      this.needAgree()
+      return
+    }
     const detail = (e && e.detail) || {}
     const code = detail.code || ''
     const denied = String(detail.errMsg || '').indexOf('deny') > -1
@@ -203,7 +228,7 @@ Page({
         manual: noPerm,
         phoneFail: noPerm
           ? '当前小程序还没有「手机号快速验证」权限，一键授权暂时不可用，请手动填写手机号继续；平台开通后即可一键授权。'
-          : '微信没有返回手机号，请再点一次上方按钮授权；多次失败可手动填写手机号继续。'
+          : '系统没有返回手机号，请再点一次上方按钮授权；多次失败可手动填写手机号继续。'
       })
       return
     }
@@ -230,6 +255,10 @@ Page({
   },
 
   async saveManual() {
+    if (!this.data.agreed) {
+      this.needAgree()
+      return
+    }
     if (this.data.manualLoading) return
     const phone = String(this.data.manualPhone || '').replace(/\s+/g, '')
     if (!/^1[3-9]\d{9}$/.test(phone)) {
@@ -278,6 +307,8 @@ Page({
       }
     }
     writeUser(stored)
+    /* 用户已主动勾选协议：此刻才写入同意留痕（版本 + 时间） */
+    if (this.data.agreed) stored = markConsent(stored)
     try {
       const app = getApp()
       if (app && app.globalData) app.globalData.user = stored

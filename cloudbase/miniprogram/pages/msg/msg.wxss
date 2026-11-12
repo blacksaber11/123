@@ -52,6 +52,38 @@
   color: var(--muted-2);
 }
 
+/* 未登录引导：只做说明，点击后用户自己决定是否登录 */
+.guest-tip {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin: 24rpx;
+  padding: 28rpx 24rpx;
+  background: #fff;
+  border: 1rpx solid var(--line-2);
+  border-radius: 20rpx;
+}
+.gt-body {
+  flex: 1;
+  min-width: 0;
+}
+.gt-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.gt-sub {
+  margin-top: 8rpx;
+  font-size: 23rpx;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.gt-go {
+  flex: none;
+  font-size: 25rpx;
+  color: var(--brand);
+}
+
 /* Tab 切换 */
 .tabs {
   position: relative;
