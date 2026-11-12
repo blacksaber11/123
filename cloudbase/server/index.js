@@ -48,7 +48,7 @@ const { loadKeys, hmacHex, constantTimeEqual, randomToken, sha256Hex } = require
 const { chatCutoff, mediaCutoff } = require('../shared/chatmedia')
 const { ROLES } = require('../shared/constants')
 const { createMysqlRepo } = require('./repo.mysql')
-const { createMarketAdminHandlers } = require('../shared/market')
+const { createMarketAdminHandlers, newsScheduleOf, publishScheduledNews } = require('../shared/market')
 
 const PORT = Number(process.env.PORT || 3002)
 const HOST = process.env.HOST || '127.0.0.1'
@@ -1324,6 +1324,42 @@ server.on('clientError', (err, socket) => {
   if (socket && socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\n\r\n')
 })
 
+/* ---------- 资讯定时发布 ---------- */
+/* 按北京时间判断：每 30 秒看一眼，命中后台配置的时间点就把「待发布」批量上线；同一分钟只跑一次 */
+const CN_CLOCK = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai',
+  hourCycle: 'h23',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit'
+})
+
+function cnNowText(ts) {
+  const parts = {}
+  CN_CLOCK.formatToParts(new Date(ts)).forEach((p) => { parts[p.type] = p.value })
+  return { day: `${parts.year}-${parts.month}-${parts.day}`, hhmm: `${parts.hour}:${parts.minute}` }
+}
+
+let newsTickKey = ''
+
+async function newsSchedulerTick() {
+  const clock = cnNowText(Date.now())
+  const key = clock.day + ' ' + clock.hhmm
+  try {
+    const cfg = await newsScheduleOf(repo)
+    if (!cfg.enabled || cfg.slots.indexOf(clock.hhmm) < 0) return
+    if (newsTickKey === key) return
+    /* 先占位再发布，同一时间点即使两轮重叠也只执行一次 */
+    newsTickKey = key
+    const res = await publishScheduledNews({ repo, now: () => Date.now() })
+    if (res.published) console.log('[news] 定时发布 ' + res.published + ' 条（' + clock.hhmm + '）')
+  } catch (err) {
+    console.error('[news] 定时发布失败：' + (err && err.message ? err.message : 'unknown error'))
+  }
+}
+
 async function main() {
   await repo.initSchema()
   server.listen(PORT, HOST, () => {
@@ -1334,6 +1370,9 @@ async function main() {
   /* 聊天数据生命周期清理：启动 3 分钟后首跑，之后每小时一次（unref 不阻止进程退出） */
   setTimeout(() => { cleanupChatData() }, 3 * 60 * 1000).unref()
   setInterval(() => { cleanupChatData() }, 60 * 60 * 1000).unref()
+  /* 资讯定时发布：启动即检查一次（正好在时间点上时补发），之后每 30 秒检查 */
+  newsSchedulerTick()
+  setInterval(() => { newsSchedulerTick() }, 30 * 1000).unref()
 }
 
 function shutdown(signal) {

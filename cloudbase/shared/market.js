@@ -1496,13 +1496,60 @@ function boardItems({ products, agencies, quotes, now, limit }) {
 
 const NEWS_STATUS = Object.freeze({
   PENDING: '待审核',
+  SCHEDULED: '待发布',
   PUBLISHED: '已发布',
   REJECTED: '已驳回',
   OFFLINE: '已下架'
 })
-const NEWS_STATUS_LIST = Object.freeze([NEWS_STATUS.PENDING, NEWS_STATUS.PUBLISHED, NEWS_STATUS.REJECTED, NEWS_STATUS.OFFLINE])
+const NEWS_STATUS_LIST = Object.freeze([NEWS_STATUS.PENDING, NEWS_STATUS.SCHEDULED, NEWS_STATUS.PUBLISHED, NEWS_STATUS.REJECTED, NEWS_STATUS.OFFLINE])
 const NEWS_OFFICIAL_CATS = Object.freeze(['平台公告', '行情解读', '行业资讯'])
 const NEWS_USER_CAT = '用户发布'
+
+/* 资讯定时发布：官方稿先存「待发布」，到点由服务端批量上线，不需要人工守点 */
+const DEFAULT_NEWS_SLOTS = Object.freeze(['09:00', '15:00', '20:00'])
+const NEWS_SLOT_RE = /^([01]\d|2[0-3]):[0-5]\d$/
+
+function normalizeSlots(raw) {
+  const list = []
+  ;(Array.isArray(raw) ? raw : []).forEach((v) => {
+    const text = String(v || '').trim()
+    if (NEWS_SLOT_RE.test(text) && list.indexOf(text) < 0) list.push(text)
+  })
+  list.sort()
+  return list.slice(0, 6)
+}
+
+/** 读取自动发布配置：时间段 + 开关，未配置时用默认 09:00 / 15:00 / 20:00 */
+async function newsScheduleOf(repo) {
+  try {
+    const row = await repo.get('settings', 'news_schedule')
+    const slots = normalizeSlots(row && row.slots)
+    return {
+      slots: slots.length ? slots : DEFAULT_NEWS_SLOTS.slice(),
+      enabled: !(row && row.enabled === false)
+    }
+  } catch (err) {
+    return { slots: DEFAULT_NEWS_SLOTS.slice(), enabled: true }
+  }
+}
+
+/** 把「待发布」的资讯批量上线；返回实际条数，供定时器打日志 */
+async function publishScheduledNews(deps) {
+  const repo = deps && deps.repo
+  if (!repo) return { published: 0 }
+  const at = typeof (deps && deps.now) === 'function' ? deps.now() : Date.now()
+  const rows = await repo.find('news', { status: NEWS_STATUS.SCHEDULED, deleted: { $ne: true } }, { limit: 100 })
+  let published = 0
+  for (const row of rows) {
+    const res = await repo.updateWhere('news', { id: row.id, status: NEWS_STATUS.SCHEDULED }, {
+      status: NEWS_STATUS.PUBLISHED,
+      publishedAt: at,
+      updatedAt: at
+    })
+    if (res && res.count) published++
+  }
+  return { published }
+}
 
 /* 资讯不做人工审核：提交时自动过一遍违禁词筛查，命中直接驳回、不落库。
    词库覆盖暴力、色情、赌博、诈骗、违禁品等大类，用户改完内容可重新发布。 */
@@ -4896,6 +4943,12 @@ function createMarketAdminHandlers(deps) {
       const role = await roleOf(ctx)
       if (role !== 'admin') throw new AppError(CODES.FORBIDDEN, '仅管理员可发布官方资讯')
       const input = normalizeNewsInput(data, true)
+      /* 官方资讯统一口径：正文 1000–1300 字，定时发布也按这个标准 */
+      if (input.content.length < 1000 || input.content.length > 1300) {
+        throw new AppError(CODES.VALIDATION, `正文请控制在 1000–1300 字（当前 ${input.content.length} 字）`)
+      }
+      /* scheduled = true：先存「待发布」，到点由服务端自动上线 */
+      const scheduled = data.scheduled === true
       const at = now()
       const doc = {
         id: randomId('NW'),
@@ -4907,17 +4960,17 @@ function createMarketAdminHandlers(deps) {
         content: input.content,
         city: input.city,
         author: '平台运营',
-        status: NEWS_STATUS.PUBLISHED,
+        status: scheduled ? NEWS_STATUS.SCHEDULED : NEWS_STATUS.PUBLISHED,
         reason: '',
         views: 0,
         createdAt: at,
         updatedAt: at,
-        publishedAt: at,
+        publishedAt: scheduled ? 0 : at,
         reviewedBy: (ctx && ctx.accountId) || 'admin',
         deleted: false
       }
       await repo.insert('news', doc)
-      await audit(ctx, 'news.create', doc.id, '发布官方资讯')
+      await audit(ctx, 'news.create', doc.id, scheduled ? '发布官方资讯（待发布，到点自动上线）' : '发布官方资讯')
       return newsStaffView(doc, at)
     },
 
@@ -4979,6 +5032,53 @@ function createMarketAdminHandlers(deps) {
         /* 下架已生效：回执失败不回滚 */
       }
       return newsStaffView(doc, at)
+    },
+
+    /* 待发布稿立即上线：不必等到下一个时间点 */
+    'news.publish': async (data, ctx) => {
+      const role = await roleOf(ctx)
+      if (role !== 'admin') throw new AppError(CODES.FORBIDDEN, '仅管理员可发布官方资讯')
+      const id = str(data.id, { field: '资讯标识', required: true, max: 64 })
+      const at = now()
+      const res = await repo.updateWhere('news', { id, status: NEWS_STATUS.SCHEDULED }, {
+        status: NEWS_STATUS.PUBLISHED,
+        publishedAt: at,
+        updatedAt: at
+      })
+      if (!res || !res.count) throw new AppError(CODES.CONFLICT, '仅「待发布」的资讯可立即发布')
+      const doc = await repo.get('news', id)
+      await audit(ctx, 'news.publish', id, '待发布资讯立即上线')
+      return newsStaffView(doc, at)
+    },
+
+    /* 自动发布设置：每天哪几个时间点把「待发布」批量上线 */
+    'news.schedule.get': async (data, ctx) => {
+      const role = await roleOf(ctx)
+      if (role !== 'admin') throw new AppError(CODES.FORBIDDEN, '仅管理员可查看自动发布设置')
+      const cfg = await newsScheduleOf(repo)
+      const row = await repo.get('settings', 'news_schedule').catch(() => null)
+      return {
+        slots: cfg.slots,
+        enabled: cfg.enabled,
+        defaults: DEFAULT_NEWS_SLOTS.slice(),
+        pending: await repo.count('news', { status: NEWS_STATUS.SCHEDULED, deleted: { $ne: true } }),
+        updatedText: row && row.updatedAt ? dateTimeText(row.updatedAt) : ''
+      }
+    },
+
+    'news.schedule.save': async (data, ctx) => {
+      const role = await roleOf(ctx)
+      if (role !== 'admin') throw new AppError(CODES.FORBIDDEN, '仅管理员可修改自动发布设置')
+      const slots = normalizeSlots(data.slots)
+      if (!slots.length) throw new AppError(CODES.VALIDATION, '请至少保留一个发布时间，格式如 09:00')
+      const enabled = data.enabled !== false
+      const at = now()
+      const exists = await repo.get('settings', 'news_schedule')
+      const patch = { slots, enabled, updatedAt: at }
+      if (exists) await repo.updateWhere('settings', { id: 'news_schedule' }, patch)
+      else await repo.insert('settings', Object.assign({ id: 'news_schedule', createdAt: at }, patch))
+      await audit(ctx, 'news.schedule', 'news_schedule', `每天 ${slots.join('、')} ${enabled ? '自动发布' : '已关闭'}`)
+      return { slots, enabled, updatedText: dateTimeText(at) }
     },
 
     'quote.list': async (data) => {
@@ -5843,6 +5943,9 @@ module.exports = {
   NEWS_STATUS,
   NEWS_STATUS_LIST,
   NEWS_OFFICIAL_CATS,
+  DEFAULT_NEWS_SLOTS,
+  newsScheduleOf,
+  publishScheduledNews,
   BIZ_PLAN,
   BIZ_PLANS,
   BIZ_STATUS,

@@ -3847,16 +3847,39 @@
         field('城市（可选）', '<input id="n-city" placeholder="如：深圳">') +
         '<div class="field full"><label>标题</label><input id="n-title" placeholder="不超过 60 字"></div>' +
         '<div class="field full"><label>摘要</label><input id="n-summary" placeholder="列表页展示的一句话摘要"></div>' +
-        '<div class="field full"><label>正文</label><textarea id="n-content" rows="10" placeholder="支持纯文本段落"></textarea></div>' +
+        '<div class="field full"><label>发布方式</label><select id="n-mode">' +
+          '<option value="now">立即发布</option>' +
+          '<option value="later">加入待发布（每天 09:00 / 15:00 / 20:00 自动上线）</option>' +
+        '</select></div>' +
+        '<div class="field full"><label>正文</label><textarea id="n-content" rows="10" placeholder="支持纯文本段落，1000–1300 字"></textarea>' +
+          '<div class="small" id="n-count" style="margin-top:6px;color:var(--ink-3)">0 字（要求 1000–1300 字）</div></div>' +
         '</div>',
       footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="n-ok">发布</button>'
     })
     if (!root) return
+    const countEl = root.body.querySelector('#n-count')
+    const contentEl = root.body.querySelector('#n-content')
+    const syncCount = function () {
+      const n = contentEl.value.trim().length
+      countEl.textContent = n + ' 字（要求 1000–1300 字）'
+      countEl.style.color = n >= 1000 && n <= 1300 ? 'var(--success, #12805C)' : 'var(--danger)'
+    }
+    contentEl.addEventListener('input', syncCount)
+    /* 待发布稿由服务端到点批量上线，这里同步提示当前配置的时间点 */
+    api('news.schedule.get').then(function (cfg) {
+      const opt = root.body.querySelector('#n-mode option[value="later"]')
+      if (opt && cfg && cfg.slots && cfg.slots.length) {
+        opt.textContent = '加入待发布（每天 ' + cfg.slots.join(' / ') + ' 自动上线）'
+      }
+    }).catch(function () {})
     root.querySelector('#n-ok').onclick = async function () {
       const title = root.body.querySelector('#n-title').value.trim()
-      const content = root.body.querySelector('#n-content').value.trim()
+      const content = contentEl.value.trim()
+      const scheduled = root.body.querySelector('#n-mode').value === 'later'
       if (title.length < 4) return toast('标题至少 4 个字', 'err')
-      if (content.length < 10) return toast('正文至少 10 个字', 'err')
+      if (content.length < 1000 || content.length > 1300) {
+        return toast('正文请控制在 1000–1300 字（当前 ' + content.length + ' 字）', 'err')
+      }
       this.disabled = true
       try {
         await api('news.create', {
@@ -3864,10 +3887,11 @@
           city: root.body.querySelector('#n-city').value.trim(),
           title: title,
           summary: root.body.querySelector('#n-summary').value.trim(),
-          content: content
+          content: content,
+          scheduled: scheduled
         })
         closeModal()
-        toast('资讯已发布')
+        toast(scheduled ? '已加入待发布，到点自动上线' : '资讯已发布')
         if (C.state.page === 'media') C.renderPage()
       } catch (err) {
         toast(err.message, 'err')
@@ -3876,13 +3900,50 @@
     }
   }
 
+  /* 自动发布设置：每天哪些时间点把「待发布」资讯批量上线 */
+  function openNewsSchedule(done) {
+    api('news.schedule.get').then(function (cfg) {
+      const root = modal({
+        title: '资讯自动发布设置',
+        body: '<div class="form-grid">' +
+          '<div class="field full"><label>每天发布时间</label>' +
+          '<input id="ns-slots" value="' + esc((cfg.slots || []).join(', ')) + '" placeholder="09:00, 15:00, 20:00">' +
+          '<div class="small" style="margin-top:6px;color:var(--ink-3)">24 小时制，多个时间用逗号隔开，最多 6 个；到点把「待发布」的资讯批量上线</div></div>' +
+          field('开关', '<select id="ns-enabled">' + options(['开启', '关闭'], cfg.enabled === false ? '关闭' : '开启', false) + '</select>') +
+          '<div class="field full"><div class="small" style="color:var(--ink-3)">当前待发布 ' + num(cfg.pending) + ' 条' +
+            (cfg.updatedText ? ' · 上次修改 ' + esc(cfg.updatedText) : '') + '</div></div>' +
+          '</div>',
+        footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="ns-ok">保存</button>'
+      })
+      if (!root) return
+      root.querySelector('#ns-ok').onclick = async function () {
+        const slots = root.body.querySelector('#ns-slots').value.split(/[,，\s]+/).filter(Boolean)
+        if (!slots.length) return toast('请至少保留一个发布时间', 'err')
+        this.disabled = true
+        try {
+          const res = await api('news.schedule.save', {
+            slots: slots,
+            enabled: root.body.querySelector('#ns-enabled').value === '开启'
+          })
+          closeModal()
+          toast(res.slots && res.slots.length ? '已保存：每天 ' + res.slots.join('、') + ' 自动发布' : '已保存')
+          if (typeof done === 'function') done()
+        } catch (err) {
+          toast(err.message, 'err')
+          this.disabled = false
+        }
+      }
+    }).catch(function (err) { toast(err.message, 'err') })
+  }
+
   Pages.media = async function (view) {
     let tab = 'news'
     const newsStatus = { status: '', cat: '', page: 1, limit: 12 }
     let boardScope = 'all'
 
     view.innerHTML = pageHead('媒体', '资讯发布即展示、可随时下架；排行榜与价格水平运营',
-      (C.can('news.create') ? '<button class="btn primary" id="m-new">' + icon('plus') + '<span>发布资讯</span></button>' : '')) +
+      (C.can('news.create') ? '<button class="btn" id="m-schedule">自动发布设置</button>' +
+        '<button class="btn primary" id="m-new">' + icon('plus') + '<span>发布资讯</span></button>' : '')) +
       '<div class="seg" id="m-tabs"><button data-tab="news" class="on">资讯</button>' +
       '<button data-tab="rank">排行榜</button><button data-tab="price">价格水平</button></div>' +
       '<div id="m-body" style="margin-top:16px"></div>'
@@ -3890,6 +3951,13 @@
     const body = view.querySelector('#m-body')
     const newsNewBtn = view.querySelector('#m-new')
     if (newsNewBtn) newsNewBtn.onclick = openNewsCreate
+    const scheduleBtn = view.querySelector('#m-schedule')
+    if (scheduleBtn) {
+      scheduleBtn.onclick = function () {
+        tab = 'news'
+        openNewsSchedule(function () { renderNews() })
+      }
+    }
 
     view.querySelectorAll('#m-tabs [data-tab]').forEach(function (btn) {
       btn.onclick = function () {
@@ -3909,11 +3977,12 @@
         const counts = data.counts || {}
         body.innerHTML = '<div class="grid g4">' +
           kpi('已发布', num(counts['已发布']), '<span class="small" style="color:var(--ink-3)">线上可见</span>') +
+          kpi('待发布', num(counts['待发布']), '<span class="small" style="color:var(--ink-3)">到点自动上线</span>') +
           kpi('已下架', num(counts['已下架']), '<span class="small" style="color:var(--ink-3)">停止展示</span>') +
           kpi('全部资讯', num(data.total), '<span class="small" style="color:var(--ink-3)">平台与用户发布均不审核</span>') +
           '</div>' +
           '<section class="card" style="margin-top:16px"><div class="card-body">' + filterBar([
-            field('状态', '<select id="m-status">' + options(['已发布', '已下架'], newsStatus.status) + '</select>'),
+            field('状态', '<select id="m-status">' + options(['已发布', '待发布', '已下架'], newsStatus.status) + '</select>'),
             field('分类', '<select id="m-cat">' + options(['平台公告', '行情解读', '行业资讯', '用户发布'], newsStatus.cat) + '</select>')
           ]) + '</div></section>' +
           '<section class="card" style="margin-top:16px"><div class="card-body flush">' +
@@ -3923,6 +3992,7 @@
               '<td>' + autoBadge(n.status) + '</td><td>' + num(n.views) + '</td>' +
               '<td>' + esc(n.published || n.createdText || dateText(n.publishedAt)) + '</td>' +
               '<td><div class="flex" style="gap:5px">' +
+              (n.status === '待发布' && C.can('news.create') ? '<button class="btn xs primary" data-publish="' + esc(n.id) + '">立即发布</button>' : '') +
               (n.status === '已发布' && C.can('news.offline') ? '<button class="btn xs" data-offline="' + esc(n.id) + '">下架</button>' : '') +
               '<button class="btn xs ghost" data-view="' + esc(n.id) + '">查看</button></div></td>'
           }), '暂无资讯') + (Number(data.total) > newsStatus.limit ? pager(data.total, newsStatus.page, newsStatus.limit) : '') +
@@ -3931,6 +4001,29 @@
         body.querySelector('#m-status').onchange = function () { newsStatus.status = this.value; newsStatus.page = 1; renderNews() }
         body.querySelector('#m-cat').onchange = function () { newsStatus.cat = this.value; newsStatus.page = 1; renderNews() }
         wirePager(body, function (p) { newsStatus.page = p; renderNews() })
+
+        body.querySelectorAll('[data-publish]').forEach(function (btn) {
+          btn.onclick = function () {
+            const root = modal({
+              title: '立即发布',
+              body: '<div class="small">该资讯将马上上线，不用等到下一个自动发布时间点。</div>',
+              footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="n-pub-ok">立即发布</button>'
+            })
+            if (!root) return
+            root.body.querySelector('#n-pub-ok').onclick = async function () {
+              this.disabled = true
+              try {
+                await api('news.publish', { id: btn.getAttribute('data-publish') })
+                closeModal()
+                toast('资讯已发布')
+                renderNews()
+              } catch (err) {
+                toast(err.message, 'err')
+                this.disabled = false
+              }
+            }
+          }
+        })
 
         body.querySelectorAll('[data-offline]').forEach(function (btn) {
           btn.onclick = function () {
