@@ -107,7 +107,9 @@ function projectDemand(demand) {
   out.reviewReason = demand.reviewReason || ''
   out.offlineReason = demand.offlineReason || ''
   /* 买方身份同样不下发 openid */
-  out.publisherLabel = '企业'
+  out.publisherLabel = demand.platformPublished === true ? '平台发布' : '企业'
+  /* 平台代采需求：只展示「平台发布」，不关联任何个人 / 企业主体 */
+  out.platformOnly = demand.platformPublished === true
   out.heat = Number(demand.heat) || 0
   /* 浏览量：详情页被打开的次数 */
   out.views = Number(demand.views) || 0
