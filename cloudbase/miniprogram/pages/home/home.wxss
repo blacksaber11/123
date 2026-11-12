@@ -4,6 +4,10 @@
   background: var(--paper);
   min-height: 100vh;
 }
+/* 实时货盘隐藏了底部导航：不留导航空白，只留安全区 */
+.home-full {
+  padding-bottom: calc(32rpx + env(safe-area-inset-bottom));
+}
 
 /* 固定头部：Tab + 搜索栏不随列表滑动 */
 .home-hd {
@@ -38,6 +42,13 @@
   background: #fff;
   color: var(--ink);
   box-shadow: 0 2rpx 8rpx rgba(16, 24, 40, .1);
+}
+/* 货盘页的返回：沿用分段控件外形，但不当成可切换的 tab */
+.seg-tabs .seg-back {
+  color: var(--brand);
+  font-weight: 500;
+  background: transparent;
+  box-shadow: none;
 }
 
 /* 搜索栏 */

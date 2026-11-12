@@ -206,6 +206,8 @@ function parseQuoteLine(line) {
 Page({
   data: {
     tab: 'sell',
+    /* 实时货盘为全屏视图：隐藏底部导航，并去掉为导航预留的底部留白 */
+    noTab: false,
     /* 朋友圈单页模式：只做浏览，底部提示从右上角进入完整小程序 */
     singlePage: false,
     sortOptions: SELL_SORTS,
@@ -292,8 +294,9 @@ Page({
     /* 底部导航带来的落点会自己触发一次加载，避免和下面的刷新重复请求 */
     const switched = this.applyHomeTab()
     this.syncTabBar()
-    /* 弹层没打开时保证导航栏可见（重新编译 / 异常退出弹层后自愈） */
-    if (!this.data.newsPubOpen) this.setTabBarHidden(false)
+    /* 弹层没打开时保证导航栏可见（重新编译 / 异常退出弹层后自愈）；
+       实时货盘视图保持底部导航隐藏 */
+    this.syncTabBarHidden()
     /* 首页允许分享：分享的是公开货源信息，卡片与文案按当前视图区分；朋友圈同开 */
     guard.enableShare(true)
     const sp = guard.isSinglePage()
@@ -394,6 +397,14 @@ Page({
     if (bar && bar.setData) bar.setData({ selected: t === 'news' ? 1 : 0 })
   },
 
+  /* 实时货盘按全屏浏览处理：进入即隐藏底部导航，首屏只留货盘内容；
+     页内「‹ 在售货源」可退出，其它视图与资讯发布弹层关闭后恢复显示 */
+  syncTabBarHidden(tab) {
+    const hide = (tab || this.data.tab) === 'market' || this.data.newsPubOpen === true
+    this.setTabBarHidden(hide)
+    if (hide !== this.data.noTab) this.setData({ noTab: hide })
+  },
+
   // 从详情页返回时同步收藏状态（资讯 / 货盘没有收藏）
   refreshFav() {
     if (this.data.tab !== 'sell' && this.data.tab !== 'buy') return
@@ -407,6 +418,11 @@ Page({
     this.goTab(e.currentTarget.dataset.tab)
   },
 
+  /* 货盘页隐藏了底部导航，用头部返回退到在售货源 */
+  exitMarket() {
+    this.goTab('sell')
+  },
+
   /* 切视图：各视图的关键字、筛选条件与排序各自保存 */
   goTab(tab) {
     if (!tab) return
@@ -416,6 +432,8 @@ Page({
     this.initState()
     /* 先同步高亮：即使目标视图与当前一致，点击也要有可见反馈 */
     this.syncTabBar(target)
+    /* 实时货盘隐藏底部导航，其它视图恢复 */
+    this.syncTabBarHidden(target)
     if (target === this.data.tab) return
     this.keywords[this.data.tab] = this.data.search
     this.sortStore[this.data.tab] = this.data.sort
@@ -912,8 +930,8 @@ Page({
   },
 
   closeNewsPub() {
-    this.setTabBarHidden(false)
     this.setData({ newsPubOpen: false })
+    this.syncTabBarHidden()
   },
 
   /* 自定义 tabBar 的显隐：发布资讯弹层打开时隐藏，关闭后恢复 */

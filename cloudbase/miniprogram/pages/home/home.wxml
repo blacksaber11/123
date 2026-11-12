@@ -1,9 +1,10 @@
-<view class="home">
+<view class="home {{noTab ? 'home-full' : ''}}">
   <!-- 固定头部：Tab 切换 + 搜索栏 -->
   <view class="home-hd">
     <!-- 资讯视图不再显示「资讯圈」标签，头部直接是搜索栏 -->
     <view wx:if="{{tab !== 'news'}}" class="seg-tabs">
       <block wx:if="{{tab === 'market'}}">
+        <view class="seg seg-back" bindtap="exitMarket">‹ 在售货源</view>
         <view class="seg on">实时货盘</view>
       </block>
       <block wx:else>
