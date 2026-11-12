@@ -473,7 +473,12 @@ async function sendSubscribe(payload) {
     }
   )
   if (res && (res.errcode === 40001 || res.errcode === 42001)) wxTokenCache = { value: '', expireAt: 0 }
-  if (!res || res.errcode) throw new Error((res && res.errmsg) || '订阅消息发送失败')
+  if (!res || res.errcode) {
+    /* 带上微信错误码：43101 表示用户订阅次数已用完，上层据此把额度清零 */
+    const err = new Error((res && res.errmsg) || '订阅消息发送失败')
+    err.errcode = Number((res && res.errcode) || 0)
+    throw err
+  }
   return { ok: true }
 }
 

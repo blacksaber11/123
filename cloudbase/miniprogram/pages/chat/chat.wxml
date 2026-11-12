@@ -10,6 +10,11 @@
 
   <!-- 平台直连会话 -->
   <view class="chat-panel" style="top: {{navTotal}}px; bottom: {{panelBottom}}">
+    <!-- 微信提醒：一次授权只能推一条，额度用完时在这里续订 -->
+    <view wx:if="{{chatThread && wxRemain <= 0}}" class="wx-bar" bindtap="renewNotify">
+      <text class="wx-bar-t">{{wxRemain === -1 ? '开启微信提醒，对方回复时第一时间通知' : '微信提醒已用完，点此续订'}}</text>
+      <text class="wx-bar-a">{{wxRemain === -1 ? '去开启' : '续订'}}</text>
+    </view>
     <!-- 会话标的：从商品 / 需求发起聊天时固定在上方，双方可见；可关闭或点进详情 -->
     <view wx:if="{{chatTarget}}" class="chat-target">
       <view class="ct-main" bindtap="openChatTarget">

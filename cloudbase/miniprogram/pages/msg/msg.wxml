@@ -20,14 +20,14 @@
       <view class="tab-ink" style="left: {{tab === 'chat' ? '25%' : '75%'}}"></view>
     </view>
 
-    <!-- 微信消息提醒：未授权时引导开启，有人响应求购时通过微信服务通知提醒 -->
-    <view wx:if="{{!notifyOn}}" class="notify-tip" bindtap="enableNotify">
+    <!-- 微信消息提醒：未授权或额度用完时显示，一次授权只能推一条 -->
+    <view wx:if="{{!notifyOn || notifyRemain === 0}}" class="notify-tip" bindtap="enableNotify">
       <image class="nt-ico" src="/assets/icons/tip-bell.png" mode="aspectFit" />
       <view class="nt-body">
-        <view class="nt-title">开启微信消息提醒</view>
-        <view class="nt-sub">收到私信、系统通知或有新的匹配商机时，第一时间在微信收到通知</view>
+        <view class="nt-title">{{notifyRemain === 0 ? '微信提醒已用完' : '开启微信消息提醒'}}</view>
+        <view class="nt-sub">{{notifyRemain === 0 ? '微信一次性订阅每条授权只能提醒一次，点这里续订' : '收到私信、系统通知或有新的匹配商机时，第一时间在微信收到通知'}}</view>
       </view>
-      <text class="nt-go">开启 ›</text>
+      <text class="nt-go">{{notifyRemain === 0 ? '续订 ›' : '开启 ›'}}</text>
     </view>
 
     <!-- 通知列表 -->

@@ -10,11 +10,14 @@ const SITE_TTL = 60 * 1000
 const PREF_TTL = 60 * 1000
 const SITE_KEYS = { system: 'tmplSystem', biz: 'tmplBiz' }
 
+const { createQuota, isExhausted } = require('./notify-quota')
+
 function createSubscribe(deps) {
   const repo = deps.repo
   const notify = deps.notify
   const env = deps.env || {}
   const now = typeof deps.now === 'function' ? deps.now : () => Date.now()
+  const quota = createQuota({ repo })
   let siteCache = { at: 0, doc: null }
   const prefHits = new Map()
 
@@ -53,14 +56,22 @@ function createSubscribe(deps) {
       const templateId = String(doc[SITE_KEYS[kind]] || env['SUBSCRIBE_TMPL_' + kind.toUpperCase()] || '')
       if (!templateId) return false
       if (kind === 'biz' && !(await bizAllowed(uid))) return false
-      await notify[kind]({
-        openid: uid,
-        templateId,
-        title: (payload && payload.title) || '',
-        body: (payload && payload.body) || '',
-        at: (payload && payload.at) || now(),
-        page: (payload && payload.page) || 'pages/msg/msg'
-      })
+      /* 一次性订阅：没有额度时不再调用微信接口，等用户续订后再推 */
+      if (!(await quota.allow(uid, kind))) return false
+      try {
+        await notify[kind]({
+          openid: uid,
+          templateId,
+          title: (payload && payload.title) || '',
+          body: (payload && payload.body) || '',
+          at: (payload && payload.at) || now(),
+          page: (payload && payload.page) || 'pages/msg/msg'
+        })
+      } catch (err) {
+        if (isExhausted(err)) await quota.exhaust(uid, kind)
+        throw err
+      }
+      await quota.used(uid, kind)
       return true
     } catch (err) {
       /* 推送失败不影响站内消息 */

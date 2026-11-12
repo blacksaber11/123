@@ -25,6 +25,7 @@ const {
 } = require('./constants')
 const { encryptField, decryptField, blindIndex, randomId, sha256Hex, userNoOf } = require('./crypto')
 const { assertAllowed } = require('./restrictions')
+const { createQuota, isExhausted, KINDS: QUOTA_KINDS } = require('./notify-quota')
 const { recordSensitiveRisk } = require('./sensitive')
 const {
   str,
@@ -298,6 +299,8 @@ function createUserHandlers(deps) {
   const notify = deps.notify
   /* 商机提醒：发布新商机时给双方各发一次站内信 + 微信订阅消息 */
   const subscribe = deps.subscribe
+  /* 一次性订阅额度：客户端授权成功后上报，推送前检查、成功后扣减 */
+  const quota = createQuota({ repo })
   /* 微信手机号快捷验证换号能力由运行环境注入（云开发 / ECS 各一套） */
   const exchangePhone = deps.exchangePhone
   const now = typeof deps.now === 'function' ? deps.now : () => Date.now()
@@ -343,6 +346,8 @@ function createUserHandlers(deps) {
   /**
    * 会话新消息微信提醒：仅当管理端 / 环境变量配置了模板才推送，
    * 用户未授权或模板字段不匹配时由运行环境吞掉错误，不影响站内消息。
+   * 一次性订阅一次授权只能推一条：有记账额度时先检查、成功后再扣减；
+   * 微信返回 43101（已用完）时把该类额度清零，等用户续订。
    */
   async function pushChatNotice(toUid, payload) {
     if (!notify || typeof notify.chat !== 'function' || !toUid) return
@@ -350,14 +355,21 @@ function createUserHandlers(deps) {
       const site = await readSiteSettings()
       const templateId = String(site.tmplChat || env.SUBSCRIBE_TMPL_CHAT || '')
       if (!templateId) return
-      await notify.chat({
-        openid: toUid,
-        templateId,
-        sender: payload.sender || '',
-        preview: payload.preview || '',
-        at: payload.at,
-        page: 'pages/chat/chat?threadId=' + encodeURIComponent(payload.threadId || '')
-      })
+      if (!(await quota.allow(toUid, 'chat'))) return
+      try {
+        await notify.chat({
+          openid: toUid,
+          templateId,
+          sender: payload.sender || '',
+          preview: payload.preview || '',
+          at: payload.at,
+          page: 'pages/chat/chat?threadId=' + encodeURIComponent(payload.threadId || '')
+        })
+      } catch (err) {
+        if (isExhausted(err)) await quota.exhaust(toUid, 'chat')
+        throw err
+      }
+      await quota.used(toUid, 'chat')
     } catch (err) {
       /* 推送失败不影响站内消息 */
     }
@@ -1174,15 +1186,40 @@ function createUserHandlers(deps) {
      * 微信订阅消息配置：模板 ID 由管理端「平台设置」下发，环境变量兜底。
      * 前端只有拿到模板 ID 才能拉起订阅授权，不能内置占位模板。
      */
-    'notify.config': async () => {
+    'notify.config': async (data, ctx) => {
       const site = await readSiteSettings()
+      /* 已登录用户带回剩余可推送条数：null 表示从未上报授权（旧版客户端） */
+      let quotaState = null
+      try {
+        const user = await mustUser(ctx)
+        quotaState = await quota.state(user.id)
+      } catch (err) {
+        quotaState = null
+      }
       return {
         inquiry: String(site.tmplInquiry || env.SUBSCRIBE_TMPL_INQUIRY || ''),
         chat: String(site.tmplChat || env.SUBSCRIBE_TMPL_CHAT || ''),
         system: String(site.tmplSystem || env.SUBSCRIBE_TMPL_SYSTEM || ''),
         biz: String(site.tmplBiz || env.SUBSCRIBE_TMPL_BIZ || ''),
-        chatPage: 'pages/chat/chat'
+        chatPage: 'pages/chat/chat',
+        quota: quotaState
       }
+    },
+
+    /**
+     * 上报订阅授权结果：客户端每成功授权一次，对应模板可推送一条。
+     * kinds 只接受固定四类，重复上报按次数累加（上限由服务端控制）。
+     */
+    'notify.grant': async (data, ctx) => {
+      const user = await mustUser(ctx)
+      const list = []
+      ;(Array.isArray(data && data.kinds) ? data.kinds : []).forEach((k) => {
+        const kind = String(k || '')
+        if (QUOTA_KINDS.indexOf(kind) >= 0 && list.indexOf(kind) < 0) list.push(kind)
+      })
+      if (!list.length) throw new AppError(CODES.VALIDATION, '请先完成微信消息提醒授权')
+      const quotaState = await quota.grant(user.id, list)
+      return { quota: quotaState, kinds: list }
     },
 
     /** 消息提醒偏好的读取（商机消息默认开启，用户可在设置里关闭） */

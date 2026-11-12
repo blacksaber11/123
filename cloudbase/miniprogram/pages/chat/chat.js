@@ -5,6 +5,7 @@
 const { gate } = require('../../utils/auth')
 const guard = require('../../utils/guard')
 const inbox = require('../../utils/inbox')
+const notify = require('../../utils/notify')
 const prefs = require('../../utils/prefs')
 const shop = require('../../utils/shop')
 const { request, uploadFile } = require('../../utils/request')
@@ -105,7 +106,9 @@ Page({
     wmOn: true,
     /* 页内图片查看器：不走 wx.previewImage，避免长按保存 / 转发 */
     imgOpen: false,
-    imgSrc: ''
+    imgSrc: '',
+    /* 微信提醒剩余条数：-1 表示还没有授权记录（旧版账号），0 表示已用完 */
+    wxRemain: -1
   },
 
   onLoad(options) {
@@ -165,6 +168,20 @@ Page({
     if (threadId) this.openThread(threadId)
     else this.openKf(ctx)
     this.startPoll()
+    this.syncNotify()
+  },
+
+  /* 微信提醒剩余条数：一次授权只能推一条，额度用完时在会话顶部提示续订 */
+  async syncNotify(force) {
+    await notify.loadConfig(force)
+    const n = notify.quota('chat')
+    this.setData({ wxRemain: n === null ? -1 : n })
+  },
+
+  /* 会话顶部点「开启 / 续订」：补一次授权，同时再拉一次剩余条数 */
+  async renewNotify() {
+    await notify.enable('chat')
+    this.syncNotify(true)
   },
 
   /* 键盘高度变化：面板顶部（navTotal）不变，只调整底部到键盘顶边 */
@@ -628,6 +645,8 @@ Page({
   async sendChat() {
     const t = String(this.data.draft || '').trim()
     if (!t) return
+    /* 点击发送是用户手势，顺手补一次会话提醒授权；还有额度时不打扰 */
+    notify.ensure('chat')
     const ok = await this.sendMessage({ kind: 'text', body: t })
     if (ok) this.setData({ draft: '' })
   },

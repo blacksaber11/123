@@ -39,7 +39,9 @@ Page({
     /* 展开的响应面板消息 id */
     expanded: '',
     /* 微信订阅消息授权状态 */
-    notifyOn: false
+    notifyOn: false,
+    /* 剩余可推送条数：-1 表示还没有授权记录，0 表示已用完 */
+    notifyRemain: -1
   },
 
   onLoad(options) {
@@ -96,8 +98,16 @@ Page({
     gate(this.route || 'pages/msg/msg', this.options)
     this.syncTabBar()
     this.setData({ notifyOn: notify.enabled() })
+    this.loadNotifyQuota()
     this.startPoll()
     await this.refresh()
+  },
+
+  /* 一次性订阅一次授权只推一条：拉回剩余条数，用完时重新显示提醒条 */
+  async loadNotifyQuota(force) {
+    await notify.loadConfig(force)
+    const n = notify.quota()
+    this.setData({ notifyRemain: n === null ? -1 : n })
   },
 
   onHide() {
@@ -120,8 +130,10 @@ Page({
 
   /* 开启微信订阅消息：会话、系统消息、商机消息都会推送微信服务通知 */
   async enableNotify() {
-    const on = await notify.enable(['inquiry', 'chat', 'system', 'biz'])
+    const kinds = ['inquiry', 'chat', 'system', 'biz']
+    const on = await notify.enable(kinds)
     this.setData({ notifyOn: on })
+    this.loadNotifyQuota(true)
   },
 
   /* ---------- 数据装载 ---------- */

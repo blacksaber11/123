@@ -7,11 +7,15 @@
  *   notify.loadConfig()            进入页面时预取模板配置（不阻塞渲染）
  *   notify.enable()                消息页 / 设置页一键申请全部提醒授权
  *   notify.enable('chat')          只有会话场景时单独申请会话提醒授权
+ *   notify.ensure('chat')          发消息时顺手续订（额度已用完才弹窗）
+ *   notify.quota('chat')           剩余可推送条数（null 表示服务端还没有记账）
  */
 const STATE_KEY = 'suanli_notify_v1'
 const CONFIG_TTL = 5 * 60 * 1000
 /* 一次授权只能推一条：超过 3 天未重新授权时再次提示，方便用户续上提醒 */
 const ASK_TTL = 3 * 24 * 60 * 60 * 1000
+/* 发消息时自动续订：同一天最多打扰一次，避免每发一条都弹窗 */
+const ASK_SKIP = 24 * 60 * 60 * 1000
 
 /* 服务端下发的模板 ID：inquiry 咨询响应 / chat 会话 / system 系统消息 / biz 商机消息 */
 const TEMPLATES = {
@@ -22,6 +26,8 @@ const TEMPLATES = {
 }
 
 let loadedAt = 0
+/* 服务端记账的剩余可推送条数：{inquiry, chat, system, biz}；null 表示还没有上报记录 */
+let QUOTA = null
 
 function ids(kinds) {
   const list = kinds ? [].concat(kinds) : Object.keys(TEMPLATES)
@@ -53,6 +59,7 @@ async function loadConfig(force) {
       TEMPLATES.chat = res.chat || ''
       TEMPLATES.system = res.system || ''
       TEMPLATES.biz = res.biz || ''
+      QUOTA = res.quota && typeof res.quota === 'object' ? res.quota : null
       loadedAt = Date.now()
     }
   } catch (err) {
@@ -87,6 +94,42 @@ function enabled() {
   return !s.askedAt || Date.now() - s.askedAt < ASK_TTL
 }
 
+/* 剩余可推送条数：null 表示服务端还没有记账（旧版客户端 / 尚未上报授权） */
+function quota(kind) {
+  if (!QUOTA) return null
+  if (!kind) {
+    return Object.keys(TEMPLATES).reduce((sum, k) => sum + (Number(QUOTA[k]) || 0), 0)
+  }
+  return Number(QUOTA[kind]) || 0
+}
+
+/* 授权成功后上报服务端：每成功一次，该类模板可推送一条 */
+function reportGrant(kinds) {
+  if (!kinds || !kinds.length) return
+  try {
+    const { request } = require('./request')
+    request('user', 'notify.grant', { kinds }, { silent: true })
+      .then((res) => {
+        if (res && res.quota && typeof res.quota === 'object') QUOTA = res.quota
+      })
+      .catch(() => {})
+  } catch (err) {}
+}
+
+/**
+ * 发消息时顺手续订：必须直接写在点击处理里（微信要求用户手势触发）。
+ * 还有额度时不打扰；额度用完 / 未知时补一次授权，同一天最多提示一次。
+ */
+function ensure(kind) {
+  const k = String(kind || 'chat')
+  if (!supported() || !configured([k])) return false
+  if (QUOTA && (Number(QUOTA[k]) || 0) > 0) return false
+  const s = read()
+  if (s.askedAt && Date.now() - s.askedAt < ASK_SKIP) return false
+  requestSubscribe([k])
+  return true
+}
+
 /**
  * 申请订阅消息授权。必须由用户点击触发。
  * kinds：'inquiry' / 'chat' / 'system' / 'biz'，不传表示全部已配置模板。
@@ -118,6 +161,11 @@ function requestSubscribe(kinds) {
           state.enabled = accepted
           state.askedAt = Date.now()
           write(state)
+          if (accepted) {
+            /* 告诉服务端这次授权了哪些模板，用于累计可推送条数 */
+            const granted = Object.keys(TEMPLATES).filter((k) => TEMPLATES[k] && result[TEMPLATES[k]] === 'accept')
+            reportGrant(granted)
+          }
           if (accepted) finish({ ok: true, reason: 'accept' })
           else finish({ ok: false, reason: banned ? 'ban' : (rejected ? 'reject' : 'dismiss') })
         },
@@ -191,6 +239,8 @@ module.exports = {
   supported,
   configured,
   enabled,
+  quota,
+  ensure,
   requestSubscribe,
   openSetting,
   enable

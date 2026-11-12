@@ -8,3 +8,34 @@
 .chat-page .chat-panel {
   bottom: 0;
 }
+
+/* 微信提醒条：额度用完 / 未授权时常驻会话顶部，点一下补一次订阅授权 */
+.wx-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12rpx 28rpx;
+  font-size: 22rpx;
+  color: #8A5A00;
+  background: #FFF7E6;
+  border-bottom: 1rpx solid var(--line);
+}
+.wx-bar-t {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wx-bar-a {
+  flex: none;
+  margin-left: 16rpx;
+  padding: 0 18rpx;
+  height: 40rpx;
+  line-height: 40rpx;
+  font-size: 20rpx;
+  color: #fff;
+  background: #B45309;
+  border-radius: 999rpx;
+}
