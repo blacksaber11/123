@@ -134,6 +134,15 @@ function buildSeed() {
       appliedAt: NOW - 30 * DAY
     })
     stocks.push(makeStock(uid, `SK_${uid}`, 'H100 80G', 10))
+    /* 领取商机要求领取方也公开主体，夹具按真实付费用户补齐 */
+    profiles.push({
+      id: `pf_${uid}`,
+      uid,
+      exposure: EXPOSURES.OPEN,
+      subject: `商机会员企业${i}`,
+      subjectType: '民企',
+      subjectKind: 'company'
+    })
   }
 
   /* 100 个可发布用户：每个账号每天限发 10 条，一人一条不会触发限流。
@@ -161,6 +170,14 @@ function buildSeed() {
     plan: '标准版',
     expireAt: NOW + 365 * DAY,
     appliedAt: NOW - 30 * DAY
+  })
+  profiles.push({
+    id: `pf_${FLOW.biz}`,
+    uid: FLOW.biz,
+    exposure: EXPOSURES.OPEN,
+    subject: '癸商机企业',
+    subjectType: '民企',
+    subjectKind: 'company'
   })
   stocks.push(makeStock(FLOW.biz, `SK_${FLOW.biz}`, 'H100 80G', 10))
 

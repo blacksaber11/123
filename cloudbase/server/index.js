@@ -492,20 +492,42 @@ function sendJson(res, status, body) {
     'X-Frame-Options': 'SAMEORIGIN',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
+    /* 413 时请求体还没读完，必须关连接，否则残留字节会被当成下一个请求 */
+    ...(status === 413 ? { Connection: 'close' } : {}),
     'Content-Length': Buffer.byteLength(text)
   })
   res.end(text)
 }
 
+/** readBody 失败统一出口：超大体返回 413，其余仍是 400。命中返回 true。 */
+function replyBodyError(res, err) {
+  if (err && err.code === 'PAYLOAD_TOO_LARGE') {
+    sendJson(res, 413, { ok: false, code: 'PAYLOAD_TOO_LARGE', message: '请求体过大' })
+    return true
+  }
+  return false
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
+    const declared = Number(req.headers['content-length'] || 0)
+    if (declared && declared > MAX_BODY) {
+      const err = new Error('请求体过大')
+      err.code = 'PAYLOAD_TOO_LARGE'
+      reject(err)
+      req.pause()
+      return
+    }
     let size = 0
     const chunks = []
     req.on('data', (chunk) => {
       size += chunk.length
       if (size > MAX_BODY) {
-        reject(new Error('请求体过大'))
-        req.destroy()
+        /* 不直接销毁连接：先让上层回一个明确的 413，再关闭，避免客户端只看到网络错误 */
+        const err = new Error('请求体过大')
+        err.code = 'PAYLOAD_TOO_LARGE'
+        reject(err)
+        req.pause()
         return
       }
       chunks.push(chunk)
@@ -866,6 +888,7 @@ async function handleUserLogin(req, res) {
   try {
     body = await readBody(req)
   } catch (err) {
+    if (replyBodyError(res, err)) return
     return sendJson(res, 400, { ok: false, code: 'VALIDATION', message: err.message })
   }
   const devOpenid = process.env.ALLOW_DEV_OPENID === '1'
@@ -913,6 +936,7 @@ async function handleUser(req, res) {
   try {
     body = await readBody(req)
   } catch (err) {
+    if (replyBodyError(res, err)) return
     return sendJson(res, 400, { ok: false, code: 'VALIDATION', message: err.message })
   }
   const openid = verifyUserToken(bearer(req) || String(body.token || ''))
@@ -934,6 +958,7 @@ async function handleAdmin(req, res) {
   try {
     body = await readBody(req)
   } catch (err) {
+    if (replyBodyError(res, err)) return
     return sendJson(res, 400, { ok: false, code: 'VALIDATION', message: err.message })
   }
   const action = typeof body.action === 'string' ? body.action : ''
@@ -1095,6 +1120,7 @@ async function handleXpayOrder(req, res) {
   try {
     body = await readBody(req)
   } catch (err) {
+    if (replyBodyError(res, err)) return
     return sendJson(res, 400, { ok: false, code: 'VALIDATION', message: err.message })
   }
   if (!rateOk(xpayHits, 'x:' + clientIp(req), 30, 10 * 60 * 1000)) {
@@ -1320,6 +1346,15 @@ const server = http.createServer(async (req, res) => {
   }
 })
 
+/* HTTP 层防护：慢请求头 / 超长请求 / 头数量 / 单连接请求数都要有上限，
+   避免 Slowloris、超大头部与长连接堆积拖垮单进程事件循环。
+   keepAliveTimeout 取 65s，高于 nginx 默认 keepalive 65s 与自身 upstream 复用窗口。 */
+server.headersTimeout = 15 * 1000
+server.requestTimeout = 30 * 1000
+server.keepAliveTimeout = 65 * 1000
+server.maxHeadersCount = 100
+server.maxRequestsPerSocket = 1000
+
 server.on('clientError', (err, socket) => {
   if (socket && socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\n\r\n')
 })
@@ -1373,6 +1408,13 @@ async function main() {
   /* 资讯定时发布：启动即检查一次（正好在时间点上时补发），之后每 30 秒检查 */
   newsSchedulerTick()
   setInterval(() => { newsSchedulerTick() }, 30 * 1000).unref()
+  /* 登录 / 上传限流计数定期清理：只清已过期键，防止大量来源 IP 把内存撑大 */
+  setInterval(() => {
+    const ts = Date.now()
+    for (const map of [loginHits, uploadHits]) {
+      for (const [key, hit] of map) if (!hit || hit.resetAt <= ts) map.delete(key)
+    }
+  }, 10 * 60 * 1000).unref()
 }
 
 function shutdown(signal) {
