@@ -2401,6 +2401,10 @@ function createUserHandlers(deps) {
               attachOwnerInfo(view, { exposure: EXPOSURES.HIDDEN, label: ANON_LABEL })
               view.contactHidden = true
               view.privateShare = true
+            } else if (row.platformPublished === true) {
+              /* 平台发布货源：只显示「平台发布」，不关联个人 / 企业主体 */
+              attachOwnerInfo(view, { exposure: EXPOSURES.HIDDEN, label: '平台发布' })
+              view.platformOnly = true
             } else {
               attachOwnerInfo(view, ownerMap.get(row.ownerId))
             }
@@ -2502,6 +2506,17 @@ function createUserHandlers(deps) {
         view.owner = null
         view.ownerKey = ''
         view.ownerSubject = ''
+      } else if (product.platformPublished === true) {
+        /* 平台发布货源：只展示「平台发布」，不关联个人 / 企业主体 */
+        view.platformOnly = true
+        view.ownerExposure = EXPOSURES.HIDDEN
+        view.ownerExposureLabel = '平台发布'
+        view.ownerKey = ''
+        view.ownerSubject = ''
+        view.owner = null
+        view.contactHidden = false
+        view.privateShare = false
+        view.memberOnlyContact = false
       } else {
         const ownerMap = await publicOwnerMap([product.ownerId], { revealPhone: member })
         const ownerInfo = ownerMap.get(product.ownerId) || {}
