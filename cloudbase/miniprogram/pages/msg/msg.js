@@ -2,12 +2,67 @@
    数据优先读云端：通知来自 demand.responses，系统通知与客服会话来自 outbox(msg.list)；
    云端不可用时才回落到本地演示收件箱，避免整页空白。
    会话本身是独立页面 pages/chat/chat：安卓返回 / iOS 侧滑都回到上一级，不会退出小程序。 */
-const { gate } = require('../../utils/auth')
+const { gate, getUser } = require('../../utils/auth')
 const inbox = require('../../utils/inbox')
 const notify = require('../../utils/notify')
 const { request } = require('../../utils/request')
 
 const SYSTEM_NOTICES = inbox.SYSTEM_NOTICES
+/* 会话置顶 / 本地删除：只影响本账号在本机的列表视图，不动服务端消息 */
+const VIEW_KEY = 'sl_msg_view_v1'
+
+function viewStore() {
+  const me = getUser()
+  const uid = (me && me.uid) || 'anon'
+  let raw = null
+  try {
+    raw = wx.getStorageSync(VIEW_KEY)
+  } catch (e) {}
+  const all = raw && typeof raw === 'object' ? raw : {}
+  const one = all[uid] && typeof all[uid] === 'object' ? all[uid] : {}
+  return {
+    uid,
+    all,
+    pins: Array.isArray(one.pins) ? one.pins.filter((x) => typeof x === 'string').slice(0, 50) : [],
+    hidden: one.hidden && typeof one.hidden === 'object' ? one.hidden : {}
+  }
+}
+
+function saveView(store, pins, hidden) {
+  store.all[store.uid] = { pins, hidden }
+  try {
+    wx.setStorageSync(VIEW_KEY, store.all)
+  } catch (e) {}
+}
+
+/* 按本地视图整理会话列表：
+   已置顶的排前面（按置顶先后），删除过的隐藏；
+   删除后又来了新消息（atRaw 比删除时间新）就自动恢复，和微信一致 */
+function arrangeChats(entries) {
+  const store = viewStore()
+  const hidden = {}
+  let dirty = false
+  const list = []
+  entries.forEach((it) => {
+    const at = Number(it.atRaw) || 0
+    const mark = Number(store.hidden[it.id]) || 0
+    if (mark) {
+      if (at > mark) {
+        delete store.hidden[it.id]
+        dirty = true
+      } else {
+        hidden[it.id] = 1
+      }
+    }
+    if (hidden[it.id]) return
+    list.push(Object.assign({}, it, { pinned: store.pins.indexOf(it.id) >= 0 }))
+  })
+  if (dirty) saveView(store, store.pins, store.hidden)
+  const pinned = list.filter((it) => it.pinned)
+  const rest = list.filter((it) => !it.pinned)
+  pinned.sort((a, b) => store.pins.indexOf(a.id) - store.pins.indexOf(b.id))
+  return pinned.concat(rest)
+}
 
 function pad(n) {
   return n < 10 ? '0' + n : '' + n
@@ -195,7 +250,8 @@ Page({
           role: m.from === 'staff' ? 'sys' : 'me',
           kind: m.kind || 'text',
           text: m.body || '',
-          at: fmtTime(m.createdAt)
+          at: fmtTime(m.createdAt),
+          rawAt: Number(m.createdAt) || 0
         })
         if (m.from === 'staff' && m.unread) unreadStaffIds.push(m.id)
         return
@@ -224,13 +280,15 @@ Page({
       memberLabel: t.private ? '' : (t.memberLabel || ''),
       content: t.content,
       time: t.time,
+      atRaw: t.atRaw,
       avatar: t.private ? '私' : String(t.name || '对').slice(0, 1),
       direct: true,
       private: t.private === true,
       unread: t.unread
     }))
-    const chatUnread = unreadStaffIds.length + directThreads.reduce((sum, t) => sum + t.unread, 0)
-    const chats = [this.buildChatEntry(chatList, unreadStaffIds.length)].concat(directEntries)
+    /* 置顶排前、删掉的隐藏：未读也只算列表里还看得见的会话，删掉后角标同步减少 */
+    const chats = arrangeChats([this.buildChatEntry(chatList, unreadStaffIds.length)].concat(directEntries))
+    const chatUnread = chats.reduce((sum, c) => sum + (Number(c.unread) || 0), 0)
     const displayList = [Object.assign({}, inbox.WELCOME)].concat(chatList)
 
     this.server = { sysNotices, chatList, unreadStaffIds }
@@ -304,6 +362,7 @@ Page({
       name: '算力聚合 · 官方客服',
       content: last ? (last.role === 'me' ? '我：' : '') + last.text : '可直接咨询平台',
       time: last ? last.at : '',
+      atRaw: last ? Number(last.rawAt) || 0 : 0,
       avatar: '平',
       official: true,
       unread: unread || 0
@@ -320,7 +379,7 @@ Page({
     this.server = { sysNotices: [], chatList: [], unreadStaffIds: [] }
     this.setData({
       notices,
-      chats: [this.buildChatEntry(chatList, 0)],
+      chats: arrangeChats([this.buildChatEntry(chatList, 0)]),
       noticeUnread,
       chatUnread: 0
     })
@@ -375,6 +434,55 @@ Page({
       return
     }
     wx.navigateTo({ url: '/pages/chat/chat' })
+  },
+
+  /* 长按会话：置顶 / 取消置顶 / 删除对话 */
+  onChatLongPress(e) {
+    const id = String((e && e.currentTarget && e.currentTarget.dataset.id) || '')
+    const target = (this.data.chats || []).filter((c) => c.id === id)[0]
+    if (!target) return
+    const pinned = !!target.pinned
+    wx.showActionSheet({
+      itemList: [pinned ? '取消置顶' : '置顶对话', '删除对话'],
+      success: (res) => {
+        if (res.tapIndex === 0) this.togglePin(target, !pinned)
+        if (res.tapIndex === 1) this.confirmDeleteChat(target)
+      },
+      fail: () => {}
+    })
+  },
+
+  togglePin(item, on) {
+    const store = viewStore()
+    const pins = store.pins.filter((id) => id !== item.id)
+    if (on) pins.unshift(item.id)
+    saveView(store, pins, store.hidden)
+    this.setData({ chats: arrangeChats(this.data.chats) })
+    wx.showToast({ title: on ? '已置顶' : '已取消置顶', icon: 'none' })
+  },
+
+  /* 删除只在本地隐藏：对方再发消息会重新出现，服务端记录不受影响 */
+  confirmDeleteChat(item) {
+    wx.showModal({
+      title: '删除对话',
+      content: '删除后该对话从列表移除，对方再发消息时会重新出现。',
+      confirmText: '删除',
+      confirmColor: '#D93025',
+      success: (res) => {
+        if (!res.confirm) return
+        const store = viewStore()
+        store.hidden[item.id] = Number(item.atRaw) || Date.now()
+        saveView(store, store.pins.filter((id) => id !== item.id), store.hidden)
+        const chats = this.data.chats.filter((c) => c.id !== item.id)
+        const chatUnread = chats.reduce((sum, c) => sum + (Number(c.unread) || 0), 0)
+        this.setData({ chats, chatUnread })
+        /* 底部导航角标与列表同源：同步缓存，删掉未读会话后角标当场减少 */
+        const cached = inbox.serverCache()
+        if (cached) inbox.cacheServer(Object.assign({}, cached, { chats, chatUnread }))
+        this.syncTabBarBadge()
+        wx.showToast({ title: '已删除', icon: 'none' })
+      }
+    })
   },
 
   back() {

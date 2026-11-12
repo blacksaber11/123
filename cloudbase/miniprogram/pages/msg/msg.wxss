@@ -209,6 +209,21 @@
   color: var(--muted);
   margin-left: 12rpx;
 }
+/* 置顶会话：底色压一层浅灰，名字前挂「置顶」小标，和微信一致 */
+.msg-item.pinned {
+  background: #FAFAFA;
+}
+.msg-pin {
+  flex: none;
+  margin-right: 8rpx;
+  padding: 1rpx 8rpx;
+  border-radius: 6rpx;
+  background: var(--line-2);
+  color: var(--muted);
+  font-size: 18rpx;
+  line-height: 26rpx;
+  white-space: nowrap;
+}
 .msg-content {
   font-size: 24rpx;
   color: var(--muted);
