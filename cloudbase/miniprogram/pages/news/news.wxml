@@ -102,4 +102,6 @@
     <view class="nw-tip">资讯内容由发布者提供，交易前请自行核验主体与资质。<text class="nw-report" catchtap="report">举报该资讯</text></view>
   </block>
 
+  <!-- 朋友圈单页模式：只展示正文，关注 / 评论等入口需进入完整小程序 -->
+  <view wx:if="{{singlePage}}" class="sp-bar">朋友圈预览 · 点右上角 ··· 选择「前往小程序」查看完整功能</view>
 </view>

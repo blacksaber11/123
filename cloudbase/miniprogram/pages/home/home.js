@@ -206,6 +206,8 @@ function parseQuoteLine(line) {
 Page({
   data: {
     tab: 'sell',
+    /* 朋友圈单页模式：只做浏览，底部提示从右上角进入完整小程序 */
+    singlePage: false,
     sortOptions: SELL_SORTS,
     sort: '综合',
     search: '',
@@ -292,8 +294,10 @@ Page({
     this.syncTabBar()
     /* 弹层没打开时保证导航栏可见（重新编译 / 异常退出弹层后自愈） */
     if (!this.data.newsPubOpen) this.setTabBarHidden(false)
-    /* 首页允许分享：分享的是公开货源信息，卡片与文案按当前视图区分 */
-    guard.enableShare()
+    /* 首页允许分享：分享的是公开货源信息，卡片与文案按当前视图区分；朋友圈同开 */
+    guard.enableShare(true)
+    const sp = guard.isSinglePage()
+    if (sp !== this.data.singlePage) this.setData({ singlePage: sp })
     /* 用户可能在「我的」里改过所在城市，回到首页时同步同城口径 */
     const lc = localCity()
     if (lc !== this.data.newsLocalCity) this.setData({ newsLocalCity: lc })
@@ -340,6 +344,21 @@ Page({
       imageUrl: '/assets/share/card-product.png',
       path: '/pages/home/home?tab=sell'
     }
+  },
+
+  /* 分享到朋友圈：单页模式只能浏览，title / query 与好友分享保持同一口径 */
+  onShareTimeline() {
+    const tab = this.data.tab
+    if (tab === 'news') {
+      return { title: '算力聚合 · 行情与避坑指南', query: 'tab=news', imageUrl: '/assets/share/card-home.png' }
+    }
+    if (tab === 'buy') {
+      return { title: '算力聚合 · 正在求购的算力需求', query: 'tab=buy', imageUrl: '/assets/share/card-demand.png' }
+    }
+    if (tab === 'market') {
+      return { title: '算力聚合 · 实时货盘与囤货榜单', query: 'tab=market', imageUrl: '/assets/share/card-biz.png' }
+    }
+    return { title: '算力聚合 · 算力货源直连', query: 'tab=sell', imageUrl: '/assets/share/card-product.png' }
   },
 
   /* 底部导航「首页 / 资讯」共用本页：首页把切视图的方法注册到全局，

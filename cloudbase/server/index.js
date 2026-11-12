@@ -290,6 +290,121 @@ async function phoneByCode(code) {
   return info.purePhoneNumber || info.phoneNumber || ''
 }
 
+/* ---------- 3.1.1 小程序码（分享海报底部二维码） ---------- */
+/* 只允许给公开页面生成，避免被拿来批量刷码；scene 用 path 查询串，页面无需额外解析 */
+const WXACODE_PAGES = new Set([
+  'pages/home/home',
+  'pages/biz/biz',
+  'pages/news/news',
+  'pages/tools/tools',
+  'pages/calc/calc',
+  'pages/finetune/finetune',
+  'pages/power/power',
+  'pages/roi/roi',
+  'pages/product/product',
+  'pages/demand/demand'
+])
+const WXACODE_TTL = 7 * 24 * 3600 * 1000
+const wxacodeCache = new Map()
+const wxacodeHits = new Map()
+
+function httpsBinary(url, payload) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(payload || {})
+    const req = https.request(url, {
+      method: 'POST',
+      timeout: 10000,
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+    }, (res) => {
+      const chunks = []
+      res.on('data', (chunk) => chunks.push(chunk))
+      res.on('end', () => {
+        const buf = Buffer.concat(chunks)
+        const type = String(res.headers['content-type'] || '')
+        if (/^image\//i.test(type)) {
+          resolve(buf)
+          return
+        }
+        let msg = ''
+        try {
+          msg = (JSON.parse(buf.toString('utf8') || '{}') || {}).errmsg || ''
+        } catch (err) { /* 非 JSON 时用默认文案 */ }
+        reject(new Error(msg || '小程序码生成失败'))
+      })
+    })
+    req.on('timeout', () => req.destroy(new Error('微信接口超时')))
+    req.on('error', reject)
+    req.write(body)
+    req.end()
+  })
+}
+
+/** 生成小程序码 base64：进程内缓存 7 天，access_token 失效时自动重试一次 */
+async function wxacodeBase64(pagePath, width) {
+  const key = pagePath + '|' + width
+  const hit = wxacodeCache.get(key)
+  if (hit && hit.expireAt > Date.now()) return hit.base64
+  const call = async () => {
+    const token = await wxAccessToken()
+    return httpsBinary(
+      'https://api.weixin.qq.com/wxa/getwxacode?access_token=' + encodeURIComponent(token),
+      { path: pagePath, width, check_path: false, env_version: 'release' }
+    )
+  }
+  let buf = null
+  try {
+    buf = await call()
+  } catch (err) {
+    /* access_token 过期 / 被刷新：清缓存后重试一次 */
+    wxTokenCache = { value: '', expireAt: 0 }
+    buf = await call()
+  }
+  const base64 = buf.toString('base64')
+  if (wxacodeCache.size > 300) wxacodeCache.clear()
+  wxacodeCache.set(key, { base64, expireAt: Date.now() + WXACODE_TTL })
+  return base64
+}
+
+/** 每个 IP 每分钟最多 30 次：海报只在用户点保存时请求，正常使用远低于该阈值 */
+function allowWxacode(ip) {
+  const now = Date.now()
+  const cur = wxacodeHits.get(ip)
+  if (!cur || cur.resetAt <= now) {
+    wxacodeHits.set(ip, { count: 1, resetAt: now + 60000 })
+    return true
+  }
+  if (cur.count >= 30) return false
+  cur.count += 1
+  return true
+}
+
+async function handleWxacode(req, res) {
+  if (!allowWxacode(clientIp(req))) {
+    sendJson(res, 429, { ok: false, code: 'RATE_LIMIT', message: '生成太频繁，请稍后再试' })
+    return
+  }
+  let body = {}
+  try {
+    body = await readBody(req)
+  } catch (err) {
+    sendJson(res, 400, { ok: false, code: 'VALIDATION', message: '请求格式有误' })
+    return
+  }
+  const raw = String(body.path || '').trim().replace(/^\/+/, '')
+  const base = raw.split('?')[0]
+  if (!raw || raw.length > 128 || !WXACODE_PAGES.has(base)) {
+    sendJson(res, 400, { ok: false, code: 'VALIDATION', message: '该页面不支持生成小程序码' })
+    return
+  }
+  const width = Math.min(430, Math.max(180, Number(body.width) || 280))
+  try {
+    const base64 = await wxacodeBase64(raw, width)
+    sendJson(res, 200, { ok: true, data: { image: 'data:image/png;base64,' + base64 } })
+  } catch (err) {
+    sendJson(res, 500, { ok: false, code: 'INTERNAL', message: '小程序码生成失败，请稍后再试' })
+  }
+}
+
 /* ---------- 3.2 微信订阅消息 ---------- */
 function beijingTime(ms) {
   const d = new Date(Number(ms || Date.now()) + 8 * 60 * 60 * 1000)
@@ -1157,6 +1272,10 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && pathname === '/api/user') {
       await handleUser(req, res)
+      return
+    }
+    if (req.method === 'POST' && pathname === '/api/wxacode') {
+      await handleWxacode(req, res)
       return
     }
     if (req.method === 'POST' && pathname === '/api/upload') {

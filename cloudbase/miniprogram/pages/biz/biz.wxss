@@ -508,6 +508,18 @@
 .op-share::after {
   border: none;
 }
+/* 海报：生成带小程序码的图并保存到相册，用于朋友圈 / 其他平台 */
+.op-save {
+  flex: none;
+  margin-left: 10rpx;
+  padding: 0 16rpx;
+  height: 44rpx;
+  line-height: 44rpx;
+  font-size: 20rpx;
+  color: #4F46E5;
+  background: rgba(79, 70, 229, 0.1);
+  border-radius: 999rpx;
+}
 .op-model {
   margin-top: 14rpx;
   font-size: 30rpx;

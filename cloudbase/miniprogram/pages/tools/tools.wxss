@@ -125,6 +125,22 @@
 .t-share::after {
   border: none;
 }
+/* 分享 / 海报两个小操作：右对齐成一组 */
+.t-acts {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+.t-save {
+  padding: 0 20rpx;
+  height: 44rpx;
+  line-height: 44rpx;
+  font-size: 20rpx;
+  color: #4F46E5;
+  background: rgba(79, 70, 229, 0.1);
+  border-radius: 999rpx;
+}
 
 .t-note {
   margin-top: 32rpx;

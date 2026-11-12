@@ -97,7 +97,9 @@ Page({
     prefDims: dimsWithValue(PREF_PRESETS.standard),
     prefLevelName: prefNameOf('standard'),
     prefOpen: false,
-    prefSaving: false
+    prefSaving: false,
+    /* 朋友圈单页模式：只做浏览，底部提示从右上角进入完整小程序 */
+    singlePage: false
   },
 
   onLoad(options) {
@@ -122,8 +124,10 @@ Page({
   },
 
   onShow() {
-    /* 商机页允许分享：分享的是公开的货盘与榜单信息 */
-    guard.enableShare()
+    /* 商机页允许分享：分享的是公开的货盘与榜单信息；朋友圈同开 */
+    guard.enableShare(true)
+    const sp = guard.isSinglePage()
+    if (sp !== this.data.singlePage) this.setData({ singlePage: sp })
     this.refresh()
   },
 
@@ -159,7 +163,35 @@ Page({
     }
   },
 
-  /* 当前可见列表与全量商机里找这一条，兼容筛选后分享已领取条目 */
+  /* 分享到朋友圈：朋友圈只能带 title / query，落到商机页整体 */
+  onShareTimeline() {
+    const focus = this.focusId ? this.findOpp(this.focusId) : null
+    if (focus) {
+      return {
+        title: guard.scrubContact([focus.kind, focus.model, focus.city].filter(Boolean).join(' · ') + ' · 算力聚合'),
+        query: 'id=' + encodeURIComponent(focus.id),
+        imageUrl: sharePoster.cached('biz', focus) || SHARE_CARD
+      }
+    }
+    return {
+      title: '算力聚合 · 实时货盘与囤货榜单',
+      query: '',
+      imageUrl: SHARE_CARD
+    }
+  },
+
+  /* 保存海报到相册：发朋友圈、发给好友或转其他平台 */
+  savePoster(e) {
+    const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
+    const opp = ds.id ? this.findOpp(ds.id) : null
+    const path = opp && opp.id ? '/pages/biz/biz?id=' + encodeURIComponent(opp.id) : '/pages/biz/biz'
+    sharePoster.save('biz', opp || { id: 'biz', badge: '商机', title: '实时货盘与囤货榜单' }, { path: path })
+      .then((ok) => {
+        if (ok) wx.showToast({ title: '海报已存到相册', icon: 'success' })
+      })
+  },
+
+
   findOpp(id) {
     const hit = (o) => o && String(o.id) === String(id)
     return (this.data.items || []).filter(hit)[0] || (this.source || []).filter(hit)[0] || null

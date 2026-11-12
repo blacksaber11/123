@@ -402,4 +402,6 @@
       <button class="btn primary" bindtap="submitNews" disabled="{{newsSubmitting}}">{{newsSubmitting ? '提交中…' : '发布'}}</button>
     </view>
   </view>
+  <!-- 朋友圈单页模式：没有底部导航与登录入口，提示从右上角进入完整小程序 -->
+  <view wx:if="{{singlePage}}" class="sp-bar">朋友圈预览 · 点右上角 ··· 选择「前往小程序」查看完整功能</view>
 </view>

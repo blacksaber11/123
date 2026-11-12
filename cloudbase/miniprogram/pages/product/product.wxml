@@ -248,11 +248,13 @@
     <view wx:if="{{isMine}}" class="row">
       <view class="cnt">我的发布 · {{product.status || '在售'}}</view>
       <button class="btn ghost share-btn" open-type="share">分享</button>
+      <button class="btn ghost share-btn" catchtap="savePoster">海报</button>
       <button class="btn ghost lg" bindtap="back">返回</button>
     </view>
     <view wx:else class="row">
       <view class="cnt"><text class="b">{{product.views}}</text> 次浏览<text wx:if="{{product.favCount}}"> · 收藏 {{product.favCount}}</text></view>
       <button class="btn ghost share-btn" open-type="share">分享</button>
+      <button class="btn ghost share-btn" catchtap="savePoster">海报</button>
       <button class="btn primary lg" bindtap="consult">联系货主</button>
     </view>
     <view class="hint">满足必须条件即可直接对话；可直接发送联系方式<text wx:if="{{!isMine}}" class="hint-report" catchtap="report">举报该商品</text></view>

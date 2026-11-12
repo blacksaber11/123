@@ -252,6 +252,23 @@ Page({
     }
   },
 
+  /* 保存海报到相册：底部带小程序码，可发朋友圈或转到其他平台 */
+  savePoster() {
+    const d = this.data.demand || {}
+    const spec = posterSpecOf(d)
+    if (!spec || !spec.id) {
+      wx.showToast({ title: '需求还在加载，稍后再试', icon: 'none' })
+      return
+    }
+    const kind = sharePoster.shareKindOf('demand', d)
+    const id = String(d.id || this.demandId || '')
+    sharePoster.save(kind, spec, {
+      path: '/pages/demand/demand?id=' + encodeURIComponent(id) + '&from=share'
+    }).then((ok) => {
+      if (ok) wx.showToast({ title: '海报已存到相册', icon: 'success' })
+    })
+  },
+
   /* 我发布的求购：响应列表优先取云端，失败回落本地演示 */
   async loadResponses() {
     const id = this.data.demand.id

@@ -44,14 +44,17 @@ const TOOLS = [
 const FALLBACK_CARD = '/assets/share/card-home.png'
 
 Page({
-  data: { tools: TOOLS },
+  data: { tools: TOOLS, singlePage: false },
 
   onLoad() {
     this.preparePosters()
   },
 
   onShow() {
-    guard.enableShare()
+    /* 工具页允许分享到好友与朋友圈：工具本身免登录即可使用 */
+    guard.enableShare(true)
+    const sp = guard.isSinglePage()
+    if (sp !== this.data.singlePage) this.setData({ singlePage: sp })
     this.preparePosters()
   },
 
@@ -91,6 +94,26 @@ Page({
       imageUrl: sharePoster.cached('tool', sharePoster.toolSpec(tool.key)) || FALLBACK_CARD,
       path: tool.url
     }
+  },
+
+  /* 分享到朋友圈：朋友圈只带标题，落到工具中心 */
+  onShareTimeline() {
+    return {
+      title: '算力工具 · 选型与预算测算（本地部署 / 微调 / 功耗 / 回本）',
+      query: '',
+      imageUrl: FALLBACK_CARD
+    }
+  },
+
+  /* 保存工具海报到相册：带小程序码，可发朋友圈或转其他平台 */
+  savePoster(e) {
+    const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
+    const tool = TOOLS.filter((t) => t.key === ds.tool)[0]
+    const spec = sharePoster.toolSpec(ds.tool) || { id: ds.tool || 'tools', badge: '工具', title: '算力工具 · 选型与预算测算' }
+    const path = tool ? tool.url : '/pages/tools/tools'
+    sharePoster.save('tool', spec, { path: path }).then((ok) => {
+      if (ok) wx.showToast({ title: '海报已存到相册', icon: 'success' })
+    })
   },
 
   openTool(e) {

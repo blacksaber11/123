@@ -482,3 +482,19 @@ button::after {
 page .safe-bottom {
   padding-bottom: calc(16rpx + env(safe-area-inset-bottom));
 }
+
+/* 朋友圈单页模式：底部固定提示（此时没有 tabBar，提示条正好占住底部） */
+.sp-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 900;
+  padding: 20rpx 32rpx calc(20rpx + env(safe-area-inset-bottom));
+  background: rgba(17, 24, 39, 0.92);
+  color: #FFFFFF;
+  font-size: 24rpx;
+  line-height: 34rpx;
+  text-align: center;
+}
+

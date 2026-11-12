@@ -255,6 +255,7 @@
           <view class="op-top-r" catchtap="noop">
             <text class="op-fee">{{item.feeText}}</text>
             <button class="op-share" open-type="share" data-id="{{item.id}}" data-type="{{item.type}}">分享</button>
+            <text class="op-save" catchtap="savePoster" data-id="{{item.id}}">海报</text>
           </view>
         </view>
         <view class="op-model">{{item.model}}</view>
@@ -385,4 +386,7 @@
     <view class="pf-note">例：只要 B300、数量少一点也能接 → 选「宽松」；只要超微品牌且库存量必须覆盖需求 → 选「严格」；4T 也能接受 3T → 把「容量」调成「容量不限」。</view>
     <button class="btn primary block pf-save" bindtap="savePref" loading="{{prefSaving}}" disabled="{{prefSaving}}">保存并重新匹配</button>
   </view>
+
+  <!-- 朋友圈单页模式：只展示被分享的这一页，领取 / 联系等入口需进入完整小程序 -->
+  <view wx:if="{{singlePage}}" class="sp-bar">朋友圈预览 · 点右上角 ··· 选择「前往小程序」查看完整功能</view>
 </view>

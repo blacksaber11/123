@@ -12,6 +12,8 @@
 
 const W = 500
 const H = 400
+/* 底部小程序码条：有码时海报整体加高，日常分享卡片仍是 5:4 */
+const QR_H = 130
 const BRAND = '算力聚合'
 const FOOTER = '长按识别查看详情'
 
@@ -58,6 +60,8 @@ const TOOL_SPECS = {
 
 const cache = new Map()
 const pending = new Map()
+
+const wxacodeFile = require('./wxacode')
 
 function hash(str) {
   const s = String(str || '')
@@ -190,18 +194,19 @@ function shareKindOf(kind, item) {
 }
 
 /** 画一张海报，返回是否成功；全部使用 2d context 接口 */
-function draw(canvas, spec) {
+function draw(canvas, spec, totalH) {
   const ctx = canvas.getContext('2d')
   if (!ctx) return false
 
+  const height = Number(totalH) || H
   const pal = PALETTES[hash(spec.id + '|' + spec.title) % PALETTES.length]
 
   /* 背景渐变 */
-  const grad = ctx.createLinearGradient(0, 0, W, H)
+  const grad = ctx.createLinearGradient(0, 0, W, height)
   grad.addColorStop(0, pal[0])
   grad.addColorStop(1, pal[1])
   ctx.fillStyle = grad
-  ctx.fillRect(0, 0, W, H)
+  ctx.fillRect(0, 0, W, height)
 
   /* 半透明圆形装饰 */
   ctx.save()
@@ -211,7 +216,7 @@ function draw(canvas, spec) {
   ctx.arc(W - 56, 62, 132, 0, Math.PI * 2)
   ctx.fill()
   ctx.beginPath()
-  ctx.arc(52, H + 18, 156, 0, Math.PI * 2)
+  ctx.arc(52, height + 18, 156, 0, Math.PI * 2)
   ctx.fill()
   ctx.restore()
 
@@ -223,10 +228,10 @@ function draw(canvas, spec) {
   for (let x = 0; x <= W; x += 50) {
     ctx.beginPath()
     ctx.moveTo(x, 0)
-    ctx.lineTo(x, H)
+    ctx.lineTo(x, height)
     ctx.stroke()
   }
-  for (let y = 0; y <= H; y += 50) {
+  for (let y = 0; y <= height; y += 50) {
     ctx.beginPath()
     ctx.moveTo(0, y)
     ctx.lineTo(W, y)
@@ -312,21 +317,51 @@ function draw(canvas, spec) {
 }
 
 /**
+ * 小程序码条：加在 5:4 主海报下方，白底 + 白字说明，扫码可直接打开对应页面。
+ * 只在图片加载成功时绘制，失败保持纯色底，不影响海报其余部分。
+ */
+function drawQrBand(ctx, img) {
+  if (!ctx || !img) return
+  const top = H
+  ctx.save()
+  ctx.fillStyle = 'rgba(0,0,0,0.26)'
+  ctx.fillRect(0, top, W, QR_H)
+  ctx.fillStyle = '#FFFFFF'
+  roundRect(ctx, 32, top + 23, 84, 84, 12)
+  ctx.fill()
+  ctx.drawImage(img, 38, top + 29, 72, 72)
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = '#FFFFFF'
+  ctx.font = 'bold 22px sans-serif'
+  ctx.fillText('扫码打开小程序', 136, top + 48)
+  ctx.font = '17px sans-serif'
+  ctx.fillStyle = 'rgba(255,255,255,0.74)'
+  ctx.fillText('长按识别 · 分享到朋友圈和更多平台', 136, top + 78)
+  ctx.restore()
+}
+
+/**
  * 生成海报，返回 Promise<临时文件路径>；失败 / 低版本返回空字符串。
+ * opts.path 传页面路径（含参数）时底部追加小程序码，用于分享到朋友圈 / 相册。
  * 同一 kind + id 命中缓存或正在生成中的任务时直接复用。
  */
-function prepare(kind, itemOrSpec) {
+function prepare(kind, itemOrSpec, opts) {
   if (!available()) return Promise.resolve('')
   const s = specOf(kind, itemOrSpec || {})
-  const key = keyOf(kind, s)
+  /* 带码 / 不带码分开缓存：分享封面用 5:4 原图，保存到相册用带小程序码的加长版 */
+  const qrTarget = opts && opts.path ? String(opts.path) : ''
+  const key = keyOf(kind, s) + (qrTarget ? ':qr' : '')
   if (cache.has(key)) return Promise.resolve(cache.get(key))
   if (pending.has(key)) return pending.get(key)
 
-  const task = new Promise((resolve) => {
+  const qrTask = qrTarget ? wxacodeFile.fileOf(qrTarget) : Promise.resolve('')
+
+  const task = qrTask.then((qrPath) => new Promise((resolve) => {
+    const height = qrPath ? H + QR_H : H
     let canvas = null
     try {
-      canvas = wx.createOffscreenCanvas({ type: '2d', width: W, height: H })
-      if (!draw(canvas, s)) {
+      canvas = wx.createOffscreenCanvas({ type: '2d', width: W, height: height })
+      if (!draw(canvas, s, height)) {
         resolve('')
         return
       }
@@ -334,27 +369,48 @@ function prepare(kind, itemOrSpec) {
       resolve('')
       return
     }
-    try {
-      wx.canvasToTempFilePath({
-        canvas: canvas,
-        x: 0,
-        y: 0,
-        width: W,
-        height: H,
-        destWidth: W,
-        destHeight: H,
-        fileType: 'png',
-        success: (res) => {
-          const path = (res && res.tempFilePath) || ''
-          if (path) cache.set(key, path)
-          resolve(path)
-        },
-        fail: () => resolve('')
-      })
-    } catch (err) {
-      resolve('')
+    const exportIt = () => {
+      try {
+        wx.canvasToTempFilePath({
+          canvas: canvas,
+          x: 0,
+          y: 0,
+          width: W,
+          height: height,
+          destWidth: W,
+          destHeight: height,
+          fileType: 'png',
+          success: (res) => {
+            const path = (res && res.tempFilePath) || ''
+            if (path) cache.set(key, path)
+            resolve(path)
+          },
+          fail: () => resolve('')
+        })
+      } catch (err) {
+        resolve('')
+      }
     }
-  })
+    if (!qrPath) {
+      exportIt()
+      return
+    }
+    try {
+      const img = canvas.createImage()
+      img.onload = () => {
+        try {
+          drawQrBand(canvas.getContext('2d'), img)
+        } catch (err) {
+          /* 码画不上时保留纯色底 */
+        }
+        exportIt()
+      }
+      img.onerror = exportIt
+      img.src = qrPath
+    } catch (err) {
+      exportIt()
+    }
+  }))
   pending.set(key, task)
   return task.then((path) => {
     pending.delete(key)
@@ -363,6 +419,40 @@ function prepare(kind, itemOrSpec) {
     pending.delete(key)
     return ''
   })
+}
+
+/**
+ * 保存海报到相册：用于发朋友圈、发给好友或转发到其他平台。
+ * 首次会申请相册权限，被拒绝时引导去设置页开启。
+ */
+function save(kind, itemOrSpec, opts) {
+  return prepare(kind, itemOrSpec, opts).then((path) => new Promise((resolve) => {
+    if (!path) {
+      wx.showToast({ title: '海报生成失败，请稍后再试', icon: 'none' })
+      resolve(false)
+      return
+    }
+    wx.saveImageToPhotosAlbum({
+      filePath: path,
+      success: () => resolve(true),
+      fail: (err) => {
+        const msg = String((err && err.errMsg) || '')
+        if (/auth|authorize|deny/i.test(msg)) {
+          wx.showModal({
+            title: '需要相册权限',
+            content: '保存海报需要「保存到相册」权限，请在设置中开启后重试',
+            confirmText: '去设置',
+            success: (res) => {
+              if (res.confirm) wx.openSetting()
+            }
+          })
+        } else if (!/cancel/i.test(msg)) {
+          wx.showToast({ title: '保存失败，请重试', icon: 'none' })
+        }
+        resolve(false)
+      }
+    })
+  }))
 }
 
 /** 同步取已生成的海报；未命中返回空字符串 */
@@ -383,6 +473,7 @@ module.exports = {
   specOf,
   shareKindOf,
   prepare,
+  save,
   cached,
   clear
 }

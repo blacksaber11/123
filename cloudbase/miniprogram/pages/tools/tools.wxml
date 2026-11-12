@@ -16,11 +16,17 @@
         <view class="t-desc">{{item.desc}}</view>
         <view class="t-foot">
           <text class="t-go">开始测算 ›</text>
-          <button class="t-share" open-type="share" data-tool="{{item.key}}" catchtap="noop">分享</button>
+          <view class="t-acts">
+            <button class="t-share" open-type="share" data-tool="{{item.key}}" catchtap="noop">分享</button>
+            <text class="t-save" catchtap="savePoster" data-tool="{{item.key}}">海报</text>
+          </view>
         </view>
       </view>
     </view>
   </view>
 
   <view class="t-note">结果按公开规格估算，用于选型与预算参考；成交前建议以实测与厂商资料为准。</view>
+
+  <!-- 朋友圈单页模式：工具可以继续查看，进入具体测算需从右上角打开完整小程序 -->
+  <view wx:if="{{singlePage}}" class="sp-bar">朋友圈预览 · 点右上角 ··· 选择「前往小程序」查看完整功能</view>
 </view>

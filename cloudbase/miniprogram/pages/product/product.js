@@ -289,6 +289,23 @@ Page({
     }
   },
 
+  /* 保存海报到相册：底部带小程序码，可发朋友圈或转到其他平台 */
+  savePoster() {
+    const p = this.data.product || {}
+    const spec = posterSpecOf(p)
+    if (!spec || !spec.id) {
+      wx.showToast({ title: '商品还在加载，稍后再试', icon: 'none' })
+      return
+    }
+    const kind = sharePoster.shareKindOf('product', p)
+    const id = String(p.id || this.productId || '')
+    sharePoster.save(kind, spec, {
+      path: '/pages/product/product?id=' + encodeURIComponent(id) + '&from=share'
+    }).then((ok) => {
+      if (ok) wx.showToast({ title: '海报已存到相册', icon: 'success' })
+    })
+  },
+
   onHide() {
     this.stopWatermarkTimer()
   },

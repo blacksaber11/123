@@ -218,6 +218,37 @@ function uploadFile(filePath, options) {
 }
 
 /**
+ * 小程序码：服务端用 access_token 调 getwxacode 生成 PNG，返回 dataURL。
+ * 只给分享海报使用；云开发模式没有该接口时返回空串，海报退回不带码的版本。
+ */
+function wxacode(path, width) {
+  const conf = httpConfig()
+  if (!conf) return Promise.resolve('')
+  const target = String(path || '').replace(/^\/+/, '')
+  if (!target) return Promise.resolve('')
+  return new Promise((resolve) => {
+    const token = readToken()
+    const header = { 'Content-Type': 'application/json' }
+    if (token) header.Authorization = 'Bearer ' + token
+    try {
+      wx.request({
+        url: conf.base + '/wxacode',
+        method: 'POST',
+        header,
+        data: { path: target, width: Number(width) || 280 },
+        success: (res) => {
+          const body = (res && res.data) || {}
+          resolve((body && body.ok && body.data && body.data.image) || '')
+        },
+        fail: () => resolve('')
+      })
+    } catch (err) {
+      resolve('')
+    }
+  })
+}
+
+/**
  * 调用云函数。
  * @param {string} scope 'user' | 'admin'
  * @param {string} action 接口名
@@ -411,4 +442,4 @@ function xpayOrder(planKey) {
   })
 }
 
-module.exports = { call, request, paging, CODE, NEED_LOGIN, safePath, clearSession, uploadFile, xpayOrder }
+module.exports = { call, request, paging, CODE, NEED_LOGIN, safePath, clearSession, uploadFile, xpayOrder, wxacode }

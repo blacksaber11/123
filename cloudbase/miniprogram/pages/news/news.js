@@ -3,6 +3,7 @@
    - 点头像 / 作者行进入作者主页（在架商品 + TA 的资讯）；
    - 关注作者复用本地 + 云端关注列表；官方资讯没有作者主页。 */
 const fav = require('../../utils/fav')
+const guard = require('../../utils/guard')
 const { request } = require('../../utils/request')
 
 Page({
@@ -20,7 +21,9 @@ Page({
     commentLoading: false,
     commentSending: false,
     commentInput: '',
-    replyTo: null
+    replyTo: null,
+    /* 朋友圈单页模式：只做浏览，底部提示从右上角进入完整小程序 */
+    singlePage: false
   },
 
   onLoad(options) {
@@ -34,6 +37,10 @@ Page({
   },
 
   onShow() {
+    /* 资讯允许分享到好友与朋友圈：内容本身是公开的 */
+    guard.enableShare(true)
+    const sp = guard.isSinglePage()
+    if (sp !== this.data.singlePage) this.setData({ singlePage: sp })
     const news = this.data.news
     if (news && news.authorKey) {
       this.setData({ following: fav.isFollowing(news.authorKey) })
@@ -195,9 +202,20 @@ Page({
   },
 
   onShareAppMessage() {
+    const news = this.data.news || {}
     return {
-      title: (this.data.news && this.data.news.title) || '资讯',
+      title: news.title || '资讯',
+      desc: guard.scrubContact(news.summary || '算力聚合 · 行情与避坑指南'),
       path: '/pages/news/news?id=' + encodeURIComponent(this.newsId || '')
+    }
+  },
+
+  /* 分享到朋友圈：朋友圈只能带 title / query，落到同一篇资讯 */
+  onShareTimeline() {
+    const news = this.data.news || {}
+    return {
+      title: (news.title || '资讯') + ' · 算力聚合',
+      query: 'id=' + encodeURIComponent(this.newsId || '')
     }
   }
 })

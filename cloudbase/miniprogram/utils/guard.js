@@ -7,6 +7,7 @@
  * 3. 图片禁止长按菜单（show-menu-by-longpress="false"），聊天图片改用页内查看器，不调用 wx.previewImage
  * 4. 不调用 wx.saveImageToPhotosAlbum / wx.saveVideoToPhotosAlbum / wx.downloadFile / wx.openDocument
  *    任何下载保存能力，材料仅在小程序内通过 canvas 渲染带水印版本
+ *    （例外：share-poster 生成的分享海报只含公开字段，允许保存到相册）
  *
  * 真正的保护在后端：材料是私有存储 + 短签名链接 + 换人换线索拒绝。
  * 客户端只做契约配合，不对用户承诺做不到的能力。
@@ -235,6 +236,36 @@ function enableShare(withTimeline) {
 }
 
 /* ============================================================
+   朋友圈单页模式（scene 1154）
+   ------------------------------------------------------------
+   从朋友圈打开时只有当前这一页，没有底部导航，也不能跳转 / 登录。
+   页面据此隐藏依赖跳转的入口，并在顶部提示「前往小程序」。
+   ============================================================ */
+
+const SINGLE_PAGE_SCENE = 1154
+
+/** 启动场景值：优先 getEnterOptionsSync（热启动也能拿到最新场景） */
+function launchScene() {
+  try {
+    const opt = (typeof wx.getEnterOptionsSync === 'function' && wx.getEnterOptionsSync()) ||
+      (typeof wx.getLaunchOptionsSync === 'function' && wx.getLaunchOptionsSync()) || {}
+    return Number(opt.scene) || 0
+  } catch (err) {
+    return 0
+  }
+}
+
+/** 是否处于朋友圈单页模式 */
+function isSinglePage() {
+  return launchScene() === SINGLE_PAGE_SCENE
+}
+
+/** 单页模式提示：微信只允许用户从右上角菜单进入完整小程序 */
+function singlePageTip() {
+  return '朋友圈预览 · 点右上角 ··· 选择「前往小程序」查看完整内容'
+}
+
+/* ============================================================
    水印：必须能唯一定位到「某一个账号」，泄漏后可定向追责
    ============================================================ */
 
@@ -296,6 +327,8 @@ module.exports = {
   forbidSaveHint,
   hideShare,
   enableShare,
+  isSinglePage,
+  singlePageTip,
   shareTitle,
   shareDesc,
   shareImage,

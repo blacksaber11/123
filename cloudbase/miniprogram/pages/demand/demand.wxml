@@ -190,11 +190,13 @@
     <view wx:if="{{isMine}}" class="row">
       <view class="cnt"><text class="b">{{responses.length}}</text> 人响应 · {{demand.status}}</view>
       <button class="btn ghost share-btn" open-type="share">分享</button>
+      <button class="btn ghost share-btn" catchtap="savePoster">海报</button>
       <button class="btn ghost lg" bindtap="back">返回</button>
     </view>
     <view wx:else class="row">
       <view class="cnt"><text class="b">{{demand.views}}</text> 次浏览</view>
       <button class="btn ghost share-btn" open-type="share">分享</button>
+      <button class="btn ghost share-btn" catchtap="savePoster">海报</button>
       <button class="btn primary lg" bindtap="respond">联系需求方</button>
     </view>
     <view class="hint">先确认必须条件，满足后直接与需求方对话</view>
