@@ -1055,6 +1055,12 @@ const DEVICE_TREE = {
     },
     长城: {
       '擎天系列': ['擎天 DF720', '擎天 RF5260']
+    },
+    中兴: {
+      'R 系列': ['R5300 G4', 'R5500 G4', 'R8500 G4']
+    },
+    烽火: {
+      'FitServer 系列': ['FitServer R2200 V5', 'FitServer R4200 V5', 'FitServer R4900 V5']
     }
   },
 
@@ -1063,8 +1069,9 @@ const DEVICE_TREE = {
     英特尔: {
       '至强 6 性能核': ['Xeon 6980P', 'Xeon 6979P', 'Xeon 6960P', 'Xeon 6952P', 'Xeon 6787P', 'Xeon 6776P', 'Xeon 6767P', 'Xeon 6730P', 'Xeon 6726P', 'Xeon 6710E', 'Xeon 6505P', 'Xeon 6511P'],
       '至强 6 能效核': ['Xeon 6780E', 'Xeon 6766E', 'Xeon 6746E', 'Xeon 6736E'],
-      '至强第 5 代': ['Xeon Platinum 8592+', 'Xeon Platinum 8593Q', 'Xeon Platinum 8580', 'Xeon Platinum 8558', 'Xeon Platinum 8558P', 'Xeon Gold 6548Y+', 'Xeon Gold 6554S', 'Xeon Gold 6530', 'Xeon Silver 4510'],
-      '至强第 4 代': ['Xeon Platinum 8490H', 'Xeon Platinum 8480+', 'Xeon Platinum 8470', 'Xeon Gold 6438Y+', 'Xeon Gold 6430', 'Xeon Gold 6416H', 'Xeon Silver 4410Y'],
+      '至强第 5 代': ['Xeon Platinum 8592+', 'Xeon Platinum 8593Q', 'Xeon Platinum 8580', 'Xeon Platinum 8570', 'Xeon Platinum 8558', 'Xeon Platinum 8558P', 'Xeon Gold 6548Y+', 'Xeon Gold 6554S', 'Xeon Gold 6538Y+', 'Xeon Gold 6530', 'Xeon Gold 6526Y', 'Xeon Silver 4514Y', 'Xeon Silver 4510'],
+      '至强第 4 代': ['Xeon Platinum 8490H', 'Xeon Platinum 8480+', 'Xeon Platinum 8470', 'Xeon Platinum 8468', 'Xeon Platinum 8452Y', 'Xeon Gold 6438Y+', 'Xeon Gold 6438N', 'Xeon Gold 6430', 'Xeon Gold 6426Y', 'Xeon Gold 6416H', 'Xeon Silver 4416+', 'Xeon Silver 4410Y'],
+      '至强第 3 代': ['Xeon Platinum 8380', 'Xeon Platinum 8358', 'Xeon Gold 6338', 'Xeon Gold 6330', 'Xeon Gold 6326', 'Xeon Silver 4314', 'Xeon Silver 4310'],
       '至强 W 工作站': ['Xeon w9-3595X', 'Xeon w9-3495X', 'Xeon w7-2495X', 'Xeon w7-3465X', 'Xeon w5-3435X'],
       '至强 6 工作站': ['Xeon 698X', 'Xeon 696X', 'Xeon 678X'],
       酷睿系列: ['Core Ultra 9 285K', 'Core Ultra 9 285', 'Core Ultra 7 265K', 'Core Ultra 5 245K', 'Core i9-14900K', 'Core i9-13900K', 'Core i7-14700K', 'Core i7-13700K', 'Core i5-14600K']
@@ -1073,7 +1080,8 @@ const DEVICE_TREE = {
       'EPYC 9005 系列': ['EPYC 9965', 'EPYC 9755', 'EPYC 9845', 'EPYC 9745', 'EPYC 9655', 'EPYC 9645', 'EPYC 9565', 'EPYC 9555', 'EPYC 9455', 'EPYC 9355', 'EPYC 9335', 'EPYC 9255', 'EPYC 9175F'],
       'EPYC 9004 系列': ['EPYC 9654', 'EPYC 9554', 'EPYC 9454', 'EPYC 9354', 'EPYC 9254', 'EPYC 9174F', 'EPYC 9124'],
       'EPYC 8004 系列': ['EPYC 8534P', 'EPYC 8324P', 'EPYC 8224P'],
-      'EPYC 7003 系列': ['EPYC 7763', 'EPYC 7713', 'EPYC 7543', 'EPYC 7443', 'EPYC 7302', 'EPYC 7313'],
+      'EPYC 7003 系列': ['EPYC 7763', 'EPYC 7713', 'EPYC 7643', 'EPYC 7543', 'EPYC 7443', 'EPYC 7313'],
+      'EPYC 7002 系列': ['EPYC 7K62', 'EPYC 7B13', 'EPYC 7R32', 'EPYC 7742', 'EPYC 7702', 'EPYC 7402', 'EPYC 7302'],
       线程撕裂者系列: ['Threadripper PRO 9995WX', 'Threadripper PRO 7995WX', 'Threadripper PRO 7985WX', 'Threadripper PRO 7975WX', 'Threadripper 9980X', 'Threadripper 9970X'],
       锐龙系列: ['Ryzen 9 9950X3D', 'Ryzen 9 9950X', 'Ryzen 9 9900X', 'Ryzen 7 9800X3D', 'Ryzen 7 9700X', 'Ryzen 5 9600X', 'Ryzen 9 7950X', 'Ryzen 7 7800X3D']
     },
@@ -1110,106 +1118,194 @@ const DEVICE_TREE = {
     华为: {
       'OceanStor 68 系列': ['OceanStor 6810 V6', 'OceanStor 6885 V6'],
       'OceanStor 53/55 系列': ['OceanStor 5310', 'OceanStor 5510'],
-      'OceanStor Dorado': ['OceanStor Dorado 5000 V6', 'OceanStor Dorado 18000 V6']
+      'OceanStor Dorado': ['OceanStor Dorado 5000 V6', 'OceanStor Dorado 18000 V6'],
+      'OceanStor Pacific': ['OceanStor Pacific 9550', 'OceanStor Pacific 9920']
     },
     浪潮: {
-      'AS 系列': ['AS5300G7', 'AS2600G7', 'AS5300G5', 'AS2600G2', 'AS2200G2']
+      'AS 系列': ['AS5300G7', 'AS2600G7', 'AS5300G5', 'AS2600G2', 'AS2200G2'],
+      'AS13000 系列': ['AS13000G7', 'AS13000G6']
     },
     联想: {
-      'ThinkSystem DE 系列': ['DE4000H', 'DE6000H', 'DE2000H']
+      'ThinkSystem DE 系列': ['DE4000H', 'DE6000H', 'DE2000H'],
+      'ThinkSystem DM 系列': ['DM5000H', 'DM7000H']
     },
-    宏杉: {
-      'MS 系列': ['MS5520', 'MS7020', 'MS3000']
-    },
-    群晖: {
-      'RS40 系列': ['RS4021xs+', 'RS2423+'],
-      'RS36 系列': ['RS3621xs+']
-    },
-    威联通: {
-      'TS 系列': ['TS-h1290FX', 'TS-873A'],
-      'TVS 系列': ['TVS-h1288X']
+    戴尔: {
+      'PowerStore 系列': ['PowerStore 1200T', 'PowerStore 3200T', 'PowerStore 500T'],
+      'PowerVault 系列': ['PowerVault ME5024', 'PowerVault ME4024']
     },
     新华三: {
       'UniStor 系列': ['UniStor X10000', 'UniStor CF22000']
     },
+    宏杉: {
+      'MS 系列': ['MS7040', 'MS5520', 'MS7020', 'MS3000']
+    },
+    NetApp: {
+      'FAS 系列': ['FAS8300', 'FAS2720'],
+      'AFF 系列': ['AFF A400', 'AFF A250'],
+      'E-Series 系列': ['E5760', 'E2860']
+    },
+    IBM: {
+      'FlashSystem 系列': ['FlashSystem 5200', 'FlashSystem 7300'],
+      'Storwize 系列': ['Storwize V5030', 'Storwize V3700']
+    },
+    曙光: {
+      'DS 系列': ['DS800-G35', 'DS800-G30'],
+      'ParaStor 系列': ['ParaStor 300N', 'ParaStor 300S']
+    },
     超聚变: {
       'FusionStorage 系列': ['FusionStorage 9000', 'OceanStor 5310 国产化']
     },
-    戴尔: {
-      'PowerStore 500 系列': ['PowerStore 500T', 'PowerStore 1200T']
+    群晖: {
+      'RS 系列': ['RS4021xs+', 'RS3621xs+', 'RS2423+'],
+      'DS 系列': ['DS1823xs+']
+    },
+    威联通: {
+      'TS 系列': ['TS-h1290FX', 'TS-873A', 'TS-464'],
+      'TVS 系列': ['TVS-h1288X']
     }
   },
 
   /* ============ 全闪存储 ============ */
   '全闪存储': {
     华为: {
-      'OceanStor Dorado 系列': ['Dorado 5000 V6', 'Dorado 6000 V6']
+      'OceanStor Dorado 系列': ['Dorado 18000 V6', 'Dorado 8000 V6', 'Dorado 6000 V6', 'Dorado 5000 V6']
     },
     戴尔: {
-      'PowerStore 系列': ['PowerStore 1200T', 'PowerStore 3200T']
+      'PowerStore 系列': ['PowerStore 9200T', 'PowerStore 5200T', 'PowerStore 3200T', 'PowerStore 1200T']
     },
     新华三: {
-      'UniStor CF 系列': ['UniStor CF22000']
+      'UniStor CF 系列': ['UniStor CF22000', 'UniStor CF10000']
     },
     浪潮: {
-      'HF 系列': ['HF18000G6']
+      'HF 系列': ['HF18000G6', 'HF5000G6']
+    },
+    NetApp: {
+      'AFF 系列': ['AFF A800', 'AFF A400', 'AFF A250']
     },
     Pure: {
-      'FlashArray 系列': ['FlashArray //X70 R3']
+      'FlashArray 系列': ['FlashArray //X70 R3', 'FlashArray //X50 R3', 'FlashArray //C60']
+    },
+    IBM: {
+      'FlashSystem 系列': ['FlashSystem 9500', 'FlashSystem 7300', 'FlashSystem 5200']
+    },
+    宏杉: {
+      'MS 系列': ['MS7040', 'MS5520']
+    },
+    曙光: {
+      'DS 系列': ['DS800-G35']
     }
   },
 
   /* ============ 交换机：算力集群必需 ============ */
   交换机: {
     华为: {
-      'CloudEngine 8800 系列': ['CloudEngine 8850-64CQ-EI', 'CloudEngine 8850-48Y6CQ'],
-      'CloudEngine 16800 系列': ['CloudEngine 16800']
+      'CloudEngine 16800 系列': ['CloudEngine 16800', 'CloudEngine 16808'],
+      'CloudEngine 12800 系列': ['CloudEngine 12800', 'CloudEngine 12808'],
+      'CloudEngine 9800 系列': ['CloudEngine 9860-8CQ 800G', 'CloudEngine 9850-4C'],
+      'CloudEngine 8800 系列': ['CloudEngine 8850-64CQ-EI', 'CloudEngine 8850-48Y6CQ', 'CloudEngine 8860-4C-EI'],
+      'CloudEngine 6800 系列': ['CloudEngine 6881-48S6CQ', 'CloudEngine 6865-48S8CQ', 'CloudEngine 6851-48S6Q']
     },
     思科: {
-      'Nexus 9000 系列': ['Nexus 9336C-FX2', 'Nexus 93180YC-FX3'],
-      'Catalyst 9000 系列': ['Catalyst 9500']
+      'Nexus 9500 系列': ['Nexus 9504', 'Nexus 9508', 'Nexus 9500 400G 模块化'],
+      'Nexus 9300 系列': ['Nexus 9364C', 'Nexus 9336C-FX2', 'Nexus 93180YC-FX3', 'Nexus 93180YC-EX', 'Nexus 92160YC-X', 'Nexus 92348GC-X'],
+      'Catalyst 9000 系列': ['Catalyst 9500', 'Catalyst 9300', 'Catalyst 9200']
     },
     新华三: {
-      'S12500 系列': ['S12516X-AF'],
-      'S6800 系列': ['S6850-56HF']
+      'S12500 系列': ['S12516X-AF', 'S12508X-AF'],
+      'S9800 系列': ['S9850-32H'],
+      'S6800 系列': ['S6850-56HF', 'S6805-54HF'],
+      'S6520 系列': ['S6520X-30QC-EI', 'S6520X-54QC-EI'],
+      'S5130 系列': ['S5130S-28P-EI', 'S5130S-52P-EI']
     },
     锐捷: {
-      'RG-N18000 系列': ['RG-N18010-X']
+      'RG-N18000 系列': ['RG-N18010-X', 'RG-N18000-X'],
+      'RG-S6500 系列': ['RG-S6510-48VS8CQ', 'RG-S6520-48VS8CQ'],
+      'RG-S6220 系列': ['RG-S6220-48XS6QXS-H'],
+      'RG-S5750 系列': ['RG-S5750-48GT4XS-HP-H'],
+      'RG-S2910 系列': ['RG-S2910-24GT4XS-E']
+    },
+    Arista: {
+      '7050X3 系列': ['7050CX3-32S', '7050SX3-48YC8'],
+      '7060X 系列': ['7060CX2-32S'],
+      '7280R 系列': ['7280R3 系列'],
+      '7500R 系列': ['7508R']
+    },
+    Juniper: {
+      'QFX 系列': ['QFX5120-32C', 'QFX5220-32CD', 'QFX5210-64C', 'QFX5100-48S6Q'],
+      'EX 系列': ['EX4650-48Y', 'EX4300-48T']
+    },
+    中兴: {
+      'ZXR10 9900 系列': ['ZXR10 9900-8'],
+      'ZXR10 5900 系列': ['ZXR10 5960-64DL', 'ZXR10 5960-56H'],
+      'ZXR10 2900 系列': ['ZXR10 2950-28TC']
+    },
+    烽火: {
+      'FitSwitch 8000 系列': ['FitSwitch 8200-64C'],
+      'FitSwitch 5900 系列': ['FitSwitch 5900-48X', 'FitSwitch 5900-28X']
     },
     迈普: {
-      'MyPower S 系列': ['MyPower S6800']
+      'MyPower S 系列': ['MyPower S6800', 'MyPower S4320']
     }
   },
 
   /* ============ 路由器 ============ */
   路由器: {
     华为: {
-      'NetEngine 8000 系列': ['NetEngine 8000 M8', 'NetEngine AR6300']
+      'NetEngine 8000 系列': ['NetEngine 8000 M14', 'NetEngine 8000 M8', 'NetEngine 8000 M6', 'NetEngine 8000 M1A'],
+      'NetEngine 40E 系列': ['NetEngine 40E-X8A', 'NetEngine 40E-X16A'],
+      'AR 系列': ['NetEngine AR6300', 'AR6280', 'AR6121']
     },
     思科: {
-      'ASR 9000 系列': ['ASR 9904']
+      'ASR 9000 系列': ['ASR 9904', 'ASR 9906', 'ASR 9912'],
+      'ASR 1000 系列': ['ASR 1001-HX', 'ASR 1002-HX'],
+      'ISR 4000 系列': ['ISR 4451', 'ISR 4331']
     },
     新华三: {
-      'CR16000 系列': ['CR16006-F']
+      'CR16000 系列': ['CR16006-F', 'CR16010-F'],
+      'CR19000 系列': ['CR19000-8'],
+      'MSR 系列': ['MSR 3660', 'MSR 2600']
     },
     锐捷: {
-      'RG-NBR 系列': ['RG-NBR8000']
+      'RG-NBR 系列': ['RG-NBR8000', 'RG-NBR6200']
+    },
+    Juniper: {
+      'MX 系列': ['MX960', 'MX480', 'MX204']
+    },
+    中兴: {
+      'M6000 系列': ['M6000-S', 'M6000-8S']
     }
   },
 
   /* ============ 防火墙 ============ */
   防火墙: {
     华为: {
-      'USG 系列': ['USG6600E', 'USG9500']
+      'USG 6000 系列': ['USG6650E', 'USG6620E', 'USG6610E'],
+      'USG 9000 系列': ['USG9500', 'USG9560'],
+      'USG 12000 系列': ['USG12000E']
     },
     深信服: {
-      'AF 系列': ['AF-2000-FH2250B', 'AF-1000-FH2200A']
+      'AF 系列': ['AF-2000-FH3200A', 'AF-2000-FH2250B', 'AF-1000-FH2200A', 'AF-1000-FH1300A']
     },
     新华三: {
-      'SecPath F 系列': ['SecPath F5000-AI']
+      'SecPath F 系列': ['SecPath F5000-AI', 'SecPath F1000-AK', 'SecPath F1060']
+    },
+    飞塔: {
+      'FortiGate 系列': ['FortiGate 3000F', 'FortiGate 1800F', 'FortiGate 600F', 'FortiGate 400F']
+    },
+    派拓网络: {
+      'PA 系列': ['PA-5220', 'PA-3440', 'PA-3260']
+    },
+    天融信: {
+      'NGFW 系列': ['NGFW-8000', 'TopGate 7000']
+    },
+    绿盟: {
+      'NF 系列': ['NF-8000', 'NF-6000']
+    },
+    奇安信: {
+      'NSG 系列': ['NSG-8000', 'NSG-5000']
     },
     山石网科: {
-      'SG 系列': ['SG-6000-E3960']
+      'SG 系列': ['SG-6000-E3960', 'SG-6000-E2860']
     }
   },
 
@@ -1249,18 +1345,50 @@ const DEVICE_TREE = {
       '400G 系列': ['400G OSFP 500m', '400G QSFP-DD DR4 500m'],
       '200G 系列': ['200G QSFP56 SR4']
     },
+    新易盛: {
+      '800G 系列': ['800G OSFP SR8', '800G OSFP DR4'],
+      '400G 系列': ['400G QSFP112 DR4']
+    },
+    光迅科技: {
+      '800G 系列': ['800G OSFP DR8', '800G OSFP 2xFR4'],
+      '400G 系列': ['400G QSFP-DD DR4', '400G QSFP-DD FR4'],
+      '200G 系列': ['200G QSFP56 FR4'],
+      '100G 系列': ['100G QSFP28 CWDM4', '100G QSFP28 SR4'],
+      '25G 系列': ['25G SFP28 SR', '25G SFP28 LR']
+    },
+    华工正源: {
+      '800G 系列': ['800G OSFP 2xFR4'],
+      '400G 系列': ['400G QSFP-DD DR4', '400G QSFP-DD FR4'],
+      '100G 系列': ['100G QSFP28 CWDM4']
+    },
+    海信宽带: {
+      '800G 系列': ['800G OSFP DR8'],
+      '400G 系列': ['400G QSFP-DD DR4'],
+      '100G 系列': ['100G QSFP28 CWDM4']
+    },
+    索尔思: {
+      '800G 系列': ['800G OSFP DR8'],
+      '400G 系列': ['400G QSFP-DD DR4', '400G QSFP-DD FR4'],
+      '100G 系列': ['100G QSFP28 LR4']
+    },
+    Coherent: {
+      '800G 系列': ['800G OSFP 2xFR4', '800G OSFP DR8'],
+      '400G 系列': ['400G QSFP-DD FR4']
+    },
     华为: {
       '1.6T 系列': ['1.6T OSFP 2km'],
+      '800G 系列': ['800G OSFP DR8 500m', '800G OSFP 2xFR4 2km'],
       '400G 系列': ['400G QSFP-DD 10km', '400G QSFP-DD 2km', '400G QSFP-DD ZR 80km'],
-      '200G 系列': ['200G QSFP56 2km']
+      '200G 系列': ['200G QSFP56 2km', '200G QSFP56 SR4'],
+      '100G 系列': ['100G QSFP28 CWDM4 2km', '100G QSFP28 SR4 100m']
+    },
+    思科: {
+      '400G 系列': ['400G QSFP-DD DR4'],
+      '100G 系列': ['100G QSFP28 LR4', '100G QSFP28 SR4']
     },
     立讯: {
       'AOC 系列': ['1.6T AOC 30m', '800G AOC 30m', '400G AOC 30m'],
       'DAC 系列': ['800G DAC 2m', '400G DAC 3m']
-    },
-    新易盛: {
-      '800G 系列': ['800G OSFP SR8', '800G OSFP DR4'],
-      '400G 系列': ['400G QSFP112 DR4']
     }
   },
 
@@ -1406,16 +1534,25 @@ const DEVICE_TREE = {
   /* ============ 分布式存储 ============ */
   '分布式存储': {
     华为: {
-      'OceanStor Pacific 系列': ['OceanStor Pacific 9550', 'OceanStor Pacific 9920']
+      'OceanStor Pacific 系列': ['OceanStor Pacific 9950', 'OceanStor Pacific 9550', 'OceanStor Pacific 9920']
     },
     曙光: {
       'ParaStor 系列': ['ParaStor 300N', 'ParaStor 300S']
     },
     浪潮: {
-      'AS13000 系列': ['AS13000G6', 'AS13000G5']
+      'AS13000 系列': ['AS13000G7', 'AS13000G6', 'AS13000G5']
     },
     新华三: {
-      'UniStor X10000 系列': ['UniStor X10516']
+      'UniStor X10000 系列': ['UniStor X10516', 'UniStor X10000']
+    },
+    深信服: {
+      'EDS 系列': ['EDS 5000', 'EDS 2000']
+    },
+    星辰天合: {
+      'XSKY 系列': ['XEDP 统一存储', 'XEOS 对象存储']
+    },
+    杉岩: {
+      'MOS 系列': ['MOS 分布式存储', 'SandStone MOS']
     }
   },
 
