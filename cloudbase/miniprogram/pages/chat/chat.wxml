@@ -184,7 +184,7 @@
         <view wx:if="{{cardDetail.city}}" class="cs-line"><text class="cs-k">城市</text><text class="cs-v">{{cardDetail.city}}</text></view>
       </view>
 
-      <view class="cs-tip">名片信息由对方主动发送，请通过平台完成交易，谨防私下转账。</view>
+      <view class="cs-tip">名片信息由对方主动发送，请先核验对方身份与资质；签约与付款由双方线下完成，注意保留凭证。</view>
       <view class="cs-wm">{{wmText}}</view>
       <view class="cs-btns">
         <button class="btn sm" bindtap="closeCard">关闭</button>
