@@ -97,12 +97,12 @@ window.DEVICE_CATALOG = {
       'L 系列': ['L40S 48G', 'L40 48G', 'L20 48G', 'L4 24G'],
       'RTX 50 系': ['RTX 5090 32G', 'RTX 5080 16G', 'RTX 5070 Ti 16G', 'RTX 5070 12G', 'RTX 5060 Ti 16G', 'RTX 5060 Ti 8G', 'RTX 5060 8G', 'RTX 5050 8G'],
       'RTX 40 系': ['RTX 4090 24G', 'RTX 4090D 24G', 'RTX 4080 SUPER 16G', 'RTX 4070 Ti SUPER 16G'],
-      'RTX PRO 系列': ['RTX PRO 6000 Blackwell 96G', 'RTX PRO 6000 Max-Q 72G', 'RTX PRO 5000 Blackwell 48G', 'RTX PRO 4000 Blackwell 24G', 'RTX PRO 2000 Blackwell 16G'],
-      'RTX 专业卡': ['RTX 6000 Ada 48G', 'RTX 5000 Ada 32G', 'RTX A6000 48G', 'RTX A5000 24G'],
+      'RTX PRO 系列': ['RTX PRO 6000 Blackwell 96G', 'RTX PRO 6000 Max-Q 72G', 'RTX PRO 5000 Blackwell 48G', 'RTX PRO 4500 Blackwell 32G', 'RTX PRO 4000 Blackwell 24G', 'RTX PRO 2000 Blackwell 16G', 'RTX PRO 6000D 84G', 'RTX PRO 6000 服务器版', 'RTX PRO 6000 工作站版', 'RTX PRO 5000 72G'],
+      'RTX 专业卡': ['RTX 6000 Ada 48G', 'RTX 5880 Ada 48G', 'RTX 5000 Ada 32G', 'RTX 4500 Ada 24G', 'RTX 4000 Ada 20G', 'RTX A6000 48G', 'RTX A5000 24G'],
       'GB200 / GB300 系列': ['GB300 Grace Blackwell Superchip', 'GB200 Grace Blackwell Superchip', 'GB300 NVL72 计算托盘'],
       'T4 系列': ['T4 16G'],
       'A 系列（推理 / 虚拟化）': ['A40 48G', 'A30 24G', 'A10 24G', 'A16 16G', 'A2 16G'],
-      'RTX A 专业卡': ['RTX A4000 16G', 'RTX A2000 12G', 'RTX A2000 6G'],
+      'RTX A 专业卡': ['RTX A5000 24G', 'RTX A4500 20G', 'RTX A4000 16G', 'RTX A2000 12G', 'RTX A2000 6G', 'RTX A1000 8G', 'RTX A400 4G'],
       '涡轮改装卡': ['RTX 5090 32G 涡轮', 'RTX 5080 16G 涡轮', 'RTX 5070 Ti 16G 涡轮', 'RTX 4090 48G 涡轮', 'RTX 4080 32G 改装'],
       'V100 系列': ['V100 32G SXM2', 'V100 16G PCIe']
     },
@@ -396,7 +396,7 @@ window.DEVICE_CATALOG = {
     英特尔: {
       '至强 6 性能核': ['Xeon 6980P', 'Xeon 6979P', 'Xeon 6960P', 'Xeon 6952P', 'Xeon 6787P', 'Xeon 6776P', 'Xeon 6767P', 'Xeon 6730P', 'Xeon 6726P', 'Xeon 6710E', 'Xeon 6505P', 'Xeon 6511P'],
       '至强 6 能效核': ['Xeon 6780E', 'Xeon 6766E', 'Xeon 6746E', 'Xeon 6736E'],
-      '至强第 5 代': ['Xeon Platinum 8592+', 'Xeon Platinum 8593Q', 'Xeon Platinum 8580', 'Xeon Gold 6548Y+', 'Xeon Gold 6554S', 'Xeon Gold 6530', 'Xeon Silver 4510'],
+      '至强第 5 代': ['Xeon Platinum 8592+', 'Xeon Platinum 8593Q', 'Xeon Platinum 8580', 'Xeon Platinum 8558', 'Xeon Gold 6548Y+', 'Xeon Gold 6554S', 'Xeon Gold 6530', 'Xeon Silver 4510'],
       '至强第 4 代': ['Xeon Platinum 8490H', 'Xeon Platinum 8480+', 'Xeon Platinum 8470', 'Xeon Gold 6438Y+', 'Xeon Gold 6430', 'Xeon Gold 6416H', 'Xeon Silver 4410Y'],
       '至强 W 工作站': ['Xeon w9-3595X', 'Xeon w9-3495X', 'Xeon w7-2495X', 'Xeon w7-3465X', 'Xeon w5-3435X'],
       '至强 6 工作站': ['Xeon 698X', 'Xeon 696X', 'Xeon 678X'],
@@ -906,32 +906,41 @@ window.DEVICE_CATALOG = {
 
   '消费级显卡': {
     华硕: {
-      'ROG STRIX 系列': ['ROG STRIX RTX 5090 O32G', 'ROG STRIX RTX 5080 O16G', 'ROG STRIX RTX 5070 Ti O16G', 'ROG STRIX RTX 4090 O24G'],
-      'TUF 系列': ['TUF RTX 5070 Ti O16G', 'TUF RTX 4070 Ti SUPER O16G'],
-      'Dual 系列': ['Dual RTX 4060 O8G', 'Dual RX 7800 XT O16G']
+      'ROG STRIX 系列': ['ROG STRIX RTX 5090 O32G', 'ROG STRIX RTX 5080 O16G', 'ROG STRIX RTX 5070 Ti O16G', 'ROG STRIX RTX 5070 O12G', 'ROG STRIX RTX 5060 Ti O16G', 'ROG STRIX RTX 4090 O24G'],
+      'TUF 系列': ['TUF RTX 5080 O16G', 'TUF RTX 5070 Ti O16G', 'TUF RTX 5070 O12G', 'TUF RTX 5060 Ti O16G', 'TUF RTX 4070 Ti SUPER O16G'],
+      'ProArt 系列（大师）': ['ProArt RTX 5080 16G', 'ProArt RTX 5070 Ti 16G', 'ProArt RTX 5070 12G', 'ProArt RTX 4060 Ti 16G'],
+      'Dual 系列（雪豹）': ['Dual RTX 5060 Ti O16G', 'Dual RTX 5060 O8G', 'Dual RTX 4060 O8G', 'Dual RX 7800 XT O16G'],
+      '巨齿鲨系列': ['巨齿鲨 ATS RTX 5070 Ti O16G', '巨齿鲨 ATS RTX 5060 Ti O16G']
     },
     微星: {
-      'SUPRIM 系列': ['SUPRIM RTX 5090 32G', 'SUPRIM RTX 5080 16G'],
-      'GAMING TRIO 系列': ['GAMING TRIO RTX 5070 Ti 16G', 'GAMING TRIO RX 9070 XT 16G'],
-      'VENTUS 系列': ['VENTUS RTX 5060 Ti 16G', 'VENTUS RTX 4060 8G']
+      'SUPRIM 系列': ['SUPRIM RTX 5090 32G', 'SUPRIM RTX 5080 16G', 'SUPRIM RTX 5070 Ti 16G'],
+      'GAMING TRIO 系列（魔龙）': ['GAMING TRIO RTX 5090 32G', 'GAMING TRIO RTX 5080 16G', 'GAMING TRIO RTX 5070 Ti 16G', 'GAMING TRIO RTX 5070 12G', 'GAMING TRIO RTX 5060 Ti 16G', 'GAMING TRIO RX 9070 XT 16G'],
+      'VENTUS 系列（万图师）': ['VENTUS 3X RTX 5080 16G', 'VENTUS 3X RTX 5070 Ti 16G', 'VENTUS 3X RTX 5070 12G', 'VENTUS 3X RTX 5060 Ti 16G', 'VENTUS 2X RTX 5060 Ti 8G', 'VENTUS 2X RTX 5060 8G', 'VENTUS 2X RTX 5050 8G', 'VENTUS RTX 4060 8G'],
+      'SHADOW 系列（幻影）': ['SHADOW 3X RTX 5070 12G', 'SHADOW 2X RTX 5060 8G'],
+      '入门系列': ['RTX 3050 6G VENTUS 2X', 'RTX 3050 6G AERO ITX']
     },
     技嘉: {
-      'AORUS 系列': ['AORUS RTX 5090 MASTER 32G', 'AORUS RTX 5080 MASTER 16G'],
-      'GAMING OC 系列': ['GAMING OC RTX 5070 12G', 'GAMING OC RX 7800 XT 16G'],
-      'EAGLE 系列': ['EAGLE RTX 4060 8G']
+      'AORUS 系列': ['AORUS RTX 5090 MASTER 32G', 'AORUS RTX 5080 MASTER 16G', 'AORUS RTX 5070 Ti MASTER 16G'],
+      'GAMING OC 系列（魔鹰）': ['GAMING OC RTX 5080 16G', 'GAMING OC RTX 5070 Ti 16G', 'GAMING OC RTX 5070 12G', 'GAMING OC RTX 5060 Ti 16G', 'GAMING OC RTX 5060 8G', 'GAMING OC RX 7800 XT 16G'],
+      'EAGLE 系列（猎鹰）': ['EAGLE RTX 5080 16G', 'EAGLE RTX 5070 Ti 16G', 'EAGLE RTX 5070 12G', 'EAGLE RTX 5060 8G', 'EAGLE RTX 4060 8G'],
+      'WINDFORCE 系列（风魔）': ['WINDFORCE RTX 5080 16G', 'WINDFORCE RTX 5070 Ti 16G', 'WINDFORCE RTX 5070 12G', 'WINDFORCE RTX 5060 Ti 16G', 'WINDFORCE RTX 5060 8G', 'WINDFORCE RTX 3050 6G'],
+      'GAMING 系列': ['GAMING RTX 5060 8G MAX', 'GAMING RTX 3050 6G']
     },
     七彩虹: {
-      'iGame 系列': ['iGame RTX 5090 Vulcan OC', 'iGame RTX 5080 Ultra W', 'iGame RTX 4070 SUPER Advanced'],
-      '战斧系列': ['战斧 RTX 5060 Ti 豪华版', '战斧 RTX 4060 8G'],
+      'iGame 系列': ['iGame RTX 5090 Vulcan OC', 'iGame RTX 5080 Vulcan OC', 'iGame RTX 5080 Ultra W 白', 'iGame RTX 5080 Ultra 黑', 'iGame RTX 5070 Ti Ultra W', 'iGame RTX 5070 Ultra W', 'iGame RTX 4070 SUPER Advanced'],
+      '战斧系列': ['战斧 RTX 5080 16G', '战斧 RTX 5070 Ti 16G', '战斧 RTX 5070 12G', '战斧 RTX 5060 Ti 豪华版', '战斧 RTX 5060 8G', '战斧 RTX 4060 8G', '战斧 RTX 3050 6G'],
       '经典系列': ['战斧 RTX 4090D 24G', '战斧 RTX 4080 SUPER 16G', '战斧 RTX 3090 24G', '战斧 RTX 3080 10G', '战斧 RTX 2080 Ti 22G']
     },
     影驰: {
-      '星曜系列': ['星曜 RTX 5070 Ti 16G', '星曜 RTX 4070 SUPER 12G'],
-      '金属大师系列': ['金属大师 RTX 5080 16G']
+      '星曜系列': ['星曜 RTX 5080 16G', '星曜 RTX 5070 Ti 16G', '星曜 RTX 5070 12G 大星耀', '星曜 RTX 5070 12G 小星耀', '星曜 RTX 5060 Ti 16G 三风', '星曜 RTX 5060 8G 三风', '星曜 RTX 4070 SUPER 12G'],
+      '金属大师系列': ['金属大师 RTX 5080 16G', '金属大师 RTX 5070 Ti 16G', '金属大师 RTX 5060 Ti 16G'],
+      '将系列': ['黑将 RTX 5060 8G', '大将 RTX 5070 12G']
     },
     索泰: {
       'AMP 系列': ['AMP Extreme RTX 5090 32G', 'AMP AIRO RTX 5080 16G'],
-      '天启系列': ['天启 RTX 5070 Ti 16G']
+      'TRINITY 系列（三风）': ['TRINITY RTX 5080 16G', 'TRINITY RTX 5070 Ti 16G', 'TRINITY RTX 5070 12G', 'TRINITY RTX 5060 Ti 16G', 'TRINITY RTX 5060 8G', 'TRINITY RTX 5050 8G'],
+      '天启系列': ['天启 RTX 5080 16G', '天启 RTX 5070 Ti 16G'],
+      'X-GAMING 系列': ['X-GAMING RTX 5060 Ti 16G', 'X-GAMING RTX 5060 8G']
     },
     蓝宝石: {
       'NITRO+ 系列': ['NITRO+ RX 9070 XT 16G', 'NITRO+ RX 7900 XTX 24G'],
@@ -946,14 +955,30 @@ window.DEVICE_CATALOG = {
     },
     铭瑄: {
       'iCraft 系列': ['iCraft RTX 5080 16G', 'iCraft RTX 5070 Ti 16G'],
-      '终结者系列': ['终结者 RTX 5060 Ti 16G', '终结者 RTX 4060 8G']
+      '终结者系列': ['终结者 RTX 5070 12G', '终结者 RTX 5060 Ti 16G', '终结者 RTX 4060 8G']
     },
     盈通: {
       '花嫁系列': ['花嫁 RTX 5070 12G', '花嫁 RX 9070 XT 16G'],
       '游戏高手系列': ['游戏高手 RTX 5060 8G']
     },
     耕升: {
-      '炫光系列': ['炫光 RTX 5080 16G', '炫光 RTX 5070 Ti 16G']
+      '炫光系列': ['炫光 RTX 5080 16G', '炫光 RTX 5070 Ti 16G'],
+      '追风系列（三风）': ['追风 RTX 5080 16G', '追风 RTX 5070 Ti 16G', '追风 RTX 5070 12G', '追风 RTX 5060 Ti 16G', '追风 RTX 5050 8G'],
+      '踏雪系列': ['踏雪 RTX 5070 12G', '踏雪 RTX 5060 8G']
+    },
+    PNY: {
+      'RTX 50 系列': ['PNY RTX 5080 16G 三风', 'PNY RTX 5070 Ti 16G 三风', 'PNY RTX 5070 12G 三风', 'PNY RTX 5060 Ti 16G 三风', 'PNY RTX 5060 8G 三风'],
+      '专业卡系列': ['PNY RTX 6000 Ada 48G', 'PNY RTX 5000 Ada 32G', 'PNY RTX A5000 24G', 'PNY RTX A4000 16G']
+    },
+    映众: {
+      'RTX 50 系列': ['映众 RTX 5080 16G 三风', '映众 RTX 5070 Ti 16G 三风', '映众 RTX 5070 12G 双风', '映众 RTX 5060 Ti 16G 双风', '映众 RTX 5060 8G 双风'],
+      '冰龙系列': ['冰龙 RTX 5080 16G', '冰龙 RTX 5070 Ti 16G', '冰龙 RTX 5060 Ti 16G']
+    },
+    万丽: {
+      'RTX 50 系列': ['万丽 RTX 5080 16G 三风', '万丽 RTX 5070 Ti 16G 三风', '万丽 RTX 5070 12G 三风', '万丽 RTX 5060 Ti 16G 三风', '万丽 RTX 5060 8G 三风']
+    },
+    同德: {
+      'RTX 50 系列': ['同德 RTX 5080 16G 三风', '同德 RTX 5070 Ti 16G 三风', '同德 RTX 5070 12G 三风', '同德 RTX 5060 Ti 16G 三风', '同德 RTX 5060 8G 三风']
     }
   },
 
@@ -978,7 +1003,7 @@ window.DEVICE_CATALOG = {
     三星: {
       '台式机内存': ['DDR5 5600 32G', 'DDR5 5600 16G', 'DDR5 4800 32G', 'DDR5 4800 16G', 'DDR4 3200 16G'],
       '笔记本内存': ['DDR5 5600 32G SODIMM', 'DDR5 4800 16G SODIMM', 'DDR4 3200 16G SODIMM'],
-      '服务器内存': ['DDR5 5600 256G RDIMM', 'DDR5 5600 128G RDIMM', 'DDR5 5600 96G RDIMM', 'DDR5 5600 64G RDIMM', 'DDR5 5600 32G RDIMM', 'DDR5 5600 16G RDIMM', 'DDR5 4800 128G RDIMM', 'DDR5 4800 64G RDIMM', 'DDR5 4800 32G RDIMM', 'DDR5 4800 16G RDIMM', 'DDR5 5600 64G LRDIMM', 'DDR5 6400 64G RDIMM', 'DDR4 3200 64G RDIMM', 'DDR4 3200 32G RDIMM', 'DDR4 2666 32G RDIMM']
+      '服务器内存': ['DDR5 6400 128G RDIMM', 'DDR5 6400 96G RDIMM', 'DDR5 5600 256G RDIMM', 'DDR5 5600 128G RDIMM', 'DDR5 5600 96G RDIMM', 'DDR5 5600 64G RDIMM', 'DDR5 5600 32G RDIMM', 'DDR5 5600 16G RDIMM', 'DDR5 4800 128G RDIMM', 'DDR5 4800 64G RDIMM', 'DDR5 4800 32G RDIMM', 'DDR5 4800 16G RDIMM', 'DDR5 5600 64G LRDIMM', 'DDR5 6400 64G RDIMM', 'DDR4 3200 64G RDIMM', 'DDR4 3200 32G RDIMM', 'DDR4 2666 32G RDIMM']
     },
     英睿达: {
       'Pro 系列': ['Pro DDR5 5600 32G', 'Pro DDR5 4800 16G', 'Pro DDR4 3200 16G'],
@@ -993,7 +1018,7 @@ window.DEVICE_CATALOG = {
       'DDR4 系列': ['DDR4 3200 32G', 'DDR4 3200 16G', 'DDR4 2666 16G']
     },
     海力士: {
-      '服务器内存': ['DDR5 5600 256G RDIMM', 'DDR5 5600 128G RDIMM', 'DDR5 5600 96G RDIMM', 'DDR5 5600 64G RDIMM', 'DDR5 5600 32G RDIMM', 'DDR5 5600 16G RDIMM', 'DDR5 4800 128G RDIMM', 'DDR5 4800 96G RDIMM', 'DDR5 4800 64G RDIMM', 'DDR5 4800 32G RDIMM', 'DDR5 4800 16G RDIMM', 'DDR5 6400 256G RDIMM', 'DDR5 6400 64G RDIMM', 'DDR5 5600 64G LRDIMM', 'MRDIMM 8800 64G', 'DDR4 3200 64G RDIMM', 'DDR4 3200 32G RDIMM', 'DDR4 2666 32G RDIMM'],
+      '服务器内存': ['DDR5 6400 256G RDIMM', 'DDR5 6400 128G RDIMM', 'DDR5 6400 96G RDIMM', 'DDR5 6400 64G RDIMM', 'DDR5 5600 256G RDIMM', 'DDR5 5600 128G RDIMM', 'DDR5 5600 96G RDIMM', 'DDR5 5600 64G RDIMM', 'DDR5 5600 32G RDIMM', 'DDR5 5600 16G RDIMM', 'DDR5 4800 128G RDIMM', 'DDR5 4800 96G RDIMM', 'DDR5 4800 64G RDIMM', 'DDR5 4800 32G RDIMM', 'DDR5 4800 16G RDIMM', 'DDR5 5600 64G LRDIMM', 'MRDIMM 8800 64G', 'DDR4 3200 64G RDIMM', 'DDR4 3200 32G RDIMM', 'DDR4 2666 32G RDIMM'],
       '消费内存': ['DDR5 6400 32G(16G×2)', 'DDR5 5600 32G(16G×2)', 'DDR4 3200 16G(8G×2)']
     },
     美光: {
@@ -1053,7 +1078,7 @@ window.DEVICE_CATALOG = {
       '9100 系列': ['9100 PRO 8TB NVMe', '9100 PRO 4TB NVMe', '9100 PRO 2TB NVMe'],
       '990 系列': ['990 PRO 4TB NVMe', '990 PRO 2TB NVMe', '990 PRO 1TB NVMe', '990 EVO Plus 4TB NVMe', '990 EVO Plus 2TB NVMe'],
       '870 系列': ['870 EVO 4TB SATA', '870 EVO 1TB SATA', '870 QVO 8TB SATA', '870 QVO 2TB SATA'],
-      '企业级系列': ['PM1743 15.36TB U.2', 'PM9A3 7.68TB U.2', 'PM9D3a 7.68TB U.2']
+      '企业级系列': ['PM1743 15.36TB U.2', 'PM9A3 7.68TB U.2', 'PM9A3 3.84TB U.2', 'PM9D3a 7.68TB U.2']
     },
     西部数据: {
       '黑盘系列': ['SN8100 4TB NVMe', 'SN850X 8TB NVMe', 'SN850X 4TB NVMe', 'SN850X 2TB NVMe', 'SN7100 2TB NVMe', 'SN770 1TB NVMe'],
@@ -1095,8 +1120,11 @@ window.DEVICE_CATALOG = {
       '消费级系列': ['Extreme PRO 2TB NVMe', 'Extreme PRO 4TB NVMe']
     },
     Solidigm: {
-      'D7 系列': ['D7-PS1010 15.36TB U.2', 'D7-P5520 7.68TB U.2'],
+      'D7 系列': ['D7-PS1010 15.36TB U.2', 'D7-P5520 7.68TB U.2', 'D7-P5520 3.84TB U.2'],
       'D5 系列': ['D5-P5336 61.44TB U.2', 'D5-P5430 15.36TB U.2']
+    },
+    江波龙: {
+      '企业级系列': ['RSZE4836P 3.84TB U.2', 'ORCA 4836 7.68TB U.2']
     },
     忆恒创源: {
       'PBlaze 系列': ['PBlaze7 7940 7.68TB U.2', 'PBlaze6 6930 15.36TB U.2', 'PBlaze6 6541 3.84TB U.2']
