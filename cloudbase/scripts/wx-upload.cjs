@@ -3,6 +3,9 @@
  *
  * 用法：
  *   NODE_OPTIONS=--no-experimental-webstorage node cloudbase/scripts/wx-upload.cjs 1.5.1 "本次改动说明"
+ *   NODE_OPTIONS=--no-experimental-webstorage node cloudbase/scripts/wx-upload.cjs "" "本次改动说明"
+ *   第二参数传空字符串时按上次上传的版本自动 +1（1.00 → 1.01），版本记录存在
+ *   cloudbase/.dev-data/wx-version.json（不进 git、不打进小程序包）。
  *
  * 说明：
  * 1. Node 25 自带 localStorage 桩（无 getItem），会让 miniprogram-ci 内部报错，先清掉；
@@ -27,8 +30,37 @@ function loadCi() {
 }
 const ci = loadCi()
 
-const version = process.argv[2] || ''
+/* 版本号记录：每次上传成功后写回，下次不传版本号时在它的基础上 +1 */
+const versionFile = path.join(__dirname, '..', '.dev-data', 'wx-version.json')
+
+function readLastVersion() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(versionFile, 'utf8') || '{}')
+    return String(saved.version || '')
+  } catch (err) {
+    return ''
+  }
+}
+
+/* 末位数字 +1：1.00 → 1.01、1.01 → 1.02，保留原位数（1.9 → 1.10） */
+function bumpVersion(v) {
+  const parts = String(v).split('.')
+  const i = parts.length - 1
+  const seg = parts[i] || '0'
+  parts[i] = String(Number(seg) + 1).padStart(seg.length, '0')
+  return parts.join('.')
+}
+
 const desc = process.argv[3] || '常规更新'
+let version = String(process.argv[2] || '').trim()
+const lastVersion = readLastVersion()
+if (!version) {
+  if (!lastVersion) {
+    console.error('没有历史版本记录，请显式传版本号：node cloudbase/scripts/wx-upload.cjs 1.00 "说明"')
+    process.exit(2)
+  }
+  version = bumpVersion(lastVersion)
+}
 const appid = process.env.CI_APPID || 'wxe21e1b8732bfb4a3'
 const projectPath = process.env.CI_PROJECT || path.join(__dirname, '..')
 const keyCandidates = [
@@ -38,10 +70,6 @@ const keyCandidates = [
 ].filter(Boolean)
 const privateKeyPath = keyCandidates.filter((p) => fs.existsSync(p))[0] || ''
 
-if (!version) {
-  console.error('用法：node cloudbase/scripts/wx-upload.cjs <版本号> "<描述>"')
-  process.exit(2)
-}
 if (!privateKeyPath) {
   console.error('未找到上传密钥，请放到 ~/.wxci/private.' + appid + '.key 或用 CI_KEY 指定')
   process.exit(2)
@@ -63,6 +91,13 @@ if (!privateKeyPath) {
     onProgressTask: () => {}
   })
   console.log('UPLOAD_OK ' + JSON.stringify({ version, privateKeyPath, result }))
+  /* 上传成功才前进版本号，失败下次仍用同一个号重试 */
+  try {
+    fs.mkdirSync(path.dirname(versionFile), { recursive: true })
+    fs.writeFileSync(versionFile, JSON.stringify({ version, uploadedAt: new Date().toISOString() }, null, 2) + '\n')
+  } catch (err) {
+    console.error('版本号记录写入失败（不影响本次上传）：' + (err && err.message))
+  }
 })().catch((err) => {
   console.error('UPLOAD_FAIL ' + (err && (err.message || err)))
   process.exit(1)
