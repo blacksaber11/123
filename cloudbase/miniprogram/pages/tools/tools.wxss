@@ -99,20 +99,31 @@
   align-items: center;
   justify-content: space-between;
   gap: 16rpx;
+  flex-wrap: nowrap;
 }
+/* 「开始测算 ›」只占一行：宽度不够时先压缩这一项，不换行 */
 .t-go {
+  flex: 1;
+  min-width: 0;
   font-size: 22rpx;
   color: var(--brand);
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* 分享按钮固定小尺寸：宽高、字号、行高全部锁死，不受原生 button 默认值影响 */
+/* 分享 / 海报固定小尺寸：宽高、字号、行高全部锁死，不受原生 button 默认值影响 */
 .t-share {
   flex: none;
-  width: auto;
-  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 88rpx;
+  min-width: 88rpx;
+  max-width: 88rpx;
   margin: 0;
-  padding: 0 20rpx;
+  padding: 0;
   height: 44rpx;
   line-height: 44rpx;
   font-size: 20rpx;
@@ -133,13 +144,21 @@
   gap: 12rpx;
 }
 .t-save {
-  padding: 0 20rpx;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 88rpx;
+  min-width: 88rpx;
+  max-width: 88rpx;
+  padding: 0;
   height: 44rpx;
   line-height: 44rpx;
   font-size: 20rpx;
   color: #4F46E5;
   background: rgba(79, 70, 229, 0.1);
   border-radius: 999rpx;
+  box-sizing: border-box;
 }
 
 .t-note {

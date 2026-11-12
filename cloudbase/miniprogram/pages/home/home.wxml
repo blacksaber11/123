@@ -1,23 +1,17 @@
-<view class="home {{noTab ? 'home-full' : ''}}">
+<view class="home">
   <!-- 固定头部：Tab 切换 + 搜索栏 -->
   <view class="home-hd">
     <!-- 资讯视图不再显示「资讯圈」标签，头部直接是搜索栏 -->
     <view wx:if="{{tab !== 'news'}}" class="seg-tabs">
-      <block wx:if="{{tab === 'market'}}">
-        <view class="seg seg-back" bindtap="exitMarket">‹ 在售货源</view>
-        <view class="seg on">实时货盘</view>
-      </block>
-      <block wx:else>
-        <view class="seg {{tab === 'sell' ? 'on' : ''}}" data-tab="sell" bindtap="switchTab">在售货源</view>
-        <view class="seg {{tab === 'buy' ? 'on' : ''}}" data-tab="buy" bindtap="switchTab">求购需求</view>
-      </block>
+      <view class="seg {{tab === 'sell' ? 'on' : ''}}" data-tab="sell" bindtap="switchTab">在售货源</view>
+      <view class="seg {{tab === 'buy' ? 'on' : ''}}" data-tab="buy" bindtap="switchTab">求购需求</view>
     </view>
 
     <view class="searchbar">
       <view class="search-field">
         <image class="s-ico" src="/assets/icons/ic-search.png" mode="aspectFit" />
         <input class="s-input" value="{{search}}" bindinput="onSearch" confirm-type="search"
-               placeholder="{{tab === 'sell' ? '搜型号 / 品牌 / 城市，如 H100 80G 深圳' : (tab === 'buy' ? '搜型号 / 品牌 / 城市，如 A100 北京' : (tab === 'news' ? '搜资讯标题 / 品类 / 发布城市' : '搜产品：型号 / 品类 / 城市'))}}"/>
+               placeholder="{{tab === 'sell' ? '搜型号 / 品牌 / 城市，如 H100 80G 深圳' : (tab === 'buy' ? '搜型号 / 品牌 / 城市，如 A100 北京' : '搜资讯标题 / 品类 / 发布城市')}}"/>
         <text wx:if="{{search}}" class="s-clear" bindtap="clearSearch">✕</text>
       </view>
     </view>
@@ -30,7 +24,7 @@
       <view class="ht-tt">算力工具</view>
       <view class="ht-ds">4 个测算工具</view>
     </view>
-    <view class="ht-item" data-tab="market" bindtap="switchTab">
+    <view class="ht-item" bindtap="goMarket">
       <view class="ht-ico"><image class="ht-img" src="/assets/icons/ht-board.png" mode="aspectFit" /></view>
       <view class="ht-tt">实时货盘</view>
       <view class="ht-ds">买卖价对比</view>
@@ -49,7 +43,7 @@
   </view>
 
   <!-- 排序 + 筛选条 -->
-  <view wx:if="{{tab !== 'market'}}" class="sortbar">
+  <view class="sortbar">
     <scroll-view scroll-x="true" class="sort-scroll" enhanced show-scrollbar="{{false}}">
       <view class="sort-items">
         <view wx:for="{{sortOptions}}" wx:key="*this"
@@ -132,57 +126,6 @@
       </view>
     </block>
 
-    <!-- 实时货盘：在售商品与用户报价聚合；代采 / 代售只在商机池展示 -->
-    <block wx:elif="{{tab === 'market'}}">
-      <view class="q-stats">
-        <view class="qs-l">
-          <view class="qs-t">实时货盘 {{boardStats.count}} 个产品</view>
-          <view class="qs-d">更新于 {{boardStats.updatedAt || '—'}} · 卖价综合在售商品与用户报价；代采 / 代售只在商机池展示</view>
-        </view>
-        <button class="btn sm primary" bindtap="openPaste">补充报价</button>
-      </view>
-
-      <scroll-view scroll-x="true" class="board-cats" enhanced show-scrollbar="{{false}}">
-        <view class="board-cats-in">
-          <view wx:for="{{boardCats}}" wx:key="*this"
-                class="bc-chip {{boardCat === item ? 'on' : ''}}"
-                data-v="{{item}}" bindtap="pickBoardCat">{{item}}</view>
-        </view>
-      </scroll-view>
-
-      <view wx:for="{{items}}" wx:key="id" class="b-card">
-        <view class="b-top">
-          <view class="q-cat">{{item.cat}}</view>
-          <view class="b-spread">{{item.spreadText}}<text wx:if="{{item.spreadPct}}" class="b-pct">{{item.spreadPct}}%</text></view>
-        </view>
-        <view class="b-model">{{item.model}}</view>
-        <view class="b-prices">
-          <view class="bp buy">
-            <view class="bp-k">买方预算</view>
-            <view class="bp-v">{{item.buyText}}</view>
-            <view class="bp-sub">{{item.buyCount || 0}} 台求购预算</view>
-          </view>
-          <view class="bp sell">
-            <view class="bp-k">卖方报价</view>
-            <view class="bp-v">{{item.sellText}}</view>
-            <view class="bp-sub">{{item.sellCount || 0}} 台在售 / 报价参考</view>
-          </view>
-        </view>
-        <view wx:if="{{item.priceLevelText}}" class="b-level">
-          <view class="b-level-main">
-            <text class="b-level-k">平台参考价</text>
-            <text class="b-level-v">{{item.priceLevelText}}</text>
-          </view>
-          <text class="b-level-s">{{item.priceRangeText}} · 置信度 {{item.confidenceText}}{{item.sourceText ? ' · ' + item.sourceText : ''}}</text>
-        </view>
-        <view class="b-meta">{{item.city}} · 更新 {{item.updated}}</view>
-        <view class="b-foot">
-          <text class="q-note">仅展示价格与城市，委托方身份不公开</text>
-          <button class="btn sm primary" data-target="{{item.model}}" catchtap="openDaicai">委托代采</button>
-        </view>
-      </view>
-    </block>
-
     <!-- 资讯圈：官方资讯 + 用户发布，按发布地址筛选 -->
     <block wx:elif="{{tab === 'news'}}">
       <view wx:for="{{items}}" wx:key="id" class="n-card" data-id="{{item.id}}" bindtap="openNews">
@@ -248,11 +191,10 @@
 
     <view wx:if="{{!loading && items.length === 0}}" class="empty">
       <image class="big-img" src="/assets/icons/empty-inbox.png" mode="aspectFit" />
-      <view class="ttl">{{tab === 'market' ? '实时货盘暂无价格参考' : (tab === 'news' ? '这个范围内还没有资讯' : '当前条件下没有匹配' + (tab === 'sell' ? '货源' : '需求'))}}</view>
-      <view class="ds">{{tab === 'market' ? '在售商品与用户报价会进入货盘参考；代采 / 代售委托只在商机池展示。' : (tab === 'news' ? '可以切换到全国，或自己发布一条资讯。' : '可以放宽条件，或发布' + (tab === 'sell' ? '求购需求' : '商品') + '等待对方来找你。')}}</view>
+      <view class="ttl">{{tab === 'news' ? '这个范围内还没有资讯' : '当前条件下没有匹配' + (tab === 'sell' ? '货源' : '需求')}}</view>
+      <view class="ds">{{tab === 'news' ? '可以切换到全国，或自己发布一条资讯。' : '可以放宽条件，或发布' + (tab === 'sell' ? '求购需求' : '商品') + '等待对方来找你。'}}</view>
       <view class="acts">
         <button wx:if="{{tab === 'sell' || tab === 'buy'}}" class="btn sm" bindtap="clearFilter">清空筛选条件</button>
-        <button wx:if="{{tab === 'market'}}" class="btn sm primary" bindtap="openPaste">补充报价</button>
         <button wx:if="{{tab === 'news'}}" class="btn sm primary" bindtap="openNewsPub">发布资讯</button>
         <button wx:if="{{tab === 'sell' || tab === 'buy'}}" class="btn sm primary" bindtap="goPublish">{{tab === 'sell' ? '发布需求' : '发布商品'}}</button>
       </view>
@@ -313,37 +255,6 @@
     <view class="fs-ft safe-bottom">
       <button class="btn" bindtap="resetFilter">重置</button>
       <button class="btn primary" bindtap="closeFilter">查看 {{items.length}} 条结果</button>
-    </view>
-  </view>
-
-  <!-- 粘贴发布报价（内存商轻路径）：长文本 → 解析预览 → 确认发布 -->
-  <view wx:if="{{pasteOpen}}" class="filter-mask" bindtap="closePaste"></view>
-  <view wx:if="{{pasteOpen}}" class="filter-sheet tall{{kbH ? ' kb' : ''}}" style="{{kbH ? 'bottom:' + kbH + 'px' : ''}}">
-    <view class="fs-hd">
-      <view class="fs-tt">粘贴发布报价</view>
-      <view class="fs-sub">复制群里的报价文字，一行一条；发布后补充到实时货盘卖方报价</view>
-      <view class="fs-x" bindtap="closePaste">✕</view>
-    </view>
-    <scroll-view scroll-y="true" class="fs-bd">
-      <textarea class="pa-ta" value="{{pasteText}}" maxlength="2000" bindinput="onPasteInput" adjust-position="{{false}}"
-                placeholder="示例：&#10;DDR5 64G 6400 金百达 ¥1850 200根 杭州&#10;H100 SXM 22万 8张 上海"></textarea>
-      <view class="pa-count">{{pasteText.length || 0}} / 2000 字</view>
-      <view class="pa-hint">解析不到的字段会留空，可在预览里逐条确认、删掉不想要的。</view>
-      <button class="btn sm pa-parse" bindtap="parsePaste">解析预览</button>
-      <view wx:if="{{pastePreview.length}}" class="pv-list">
-        <view class="pv-head">解析出 {{pastePreview.length}} 条报价，发布后 24 小时自动过期</view>
-        <view wx:for="{{pastePreview}}" wx:key="id" class="pv-item">
-          <view class="pv-l">
-            <view class="pv-model">{{item.model}}</view>
-            <view class="pv-sub">{{item.priceText}} / {{item.unit}} · {{item.qty}}{{item.unit}} · {{item.city}}</view>
-          </view>
-          <view class="pv-x" data-i="{{index}}" bindtap="removePreview">✕</view>
-        </view>
-      </view>
-    </scroll-view>
-    <view class="fs-ft safe-bottom">
-      <button class="btn" bindtap="closePaste">取消</button>
-      <button class="btn primary" bindtap="confirmPaste">发布 {{pastePreview.length || 0}} 条</button>
     </view>
   </view>
 

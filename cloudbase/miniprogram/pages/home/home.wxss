@@ -4,10 +4,6 @@
   background: var(--paper);
   min-height: 100vh;
 }
-/* 实时货盘隐藏了底部导航：不留导航空白，只留安全区 */
-.home-full {
-  padding-bottom: calc(32rpx + env(safe-area-inset-bottom));
-}
 
 /* 固定头部：Tab + 搜索栏不随列表滑动 */
 .home-hd {
@@ -42,13 +38,6 @@
   background: #fff;
   color: var(--ink);
   box-shadow: 0 2rpx 8rpx rgba(16, 24, 40, .1);
-}
-/* 货盘页的返回：沿用分段控件外形，但不当成可切换的 tab */
-.seg-tabs .seg-back {
-  color: var(--brand);
-  font-weight: 500;
-  background: transparent;
-  box-shadow: none;
 }
 
 /* 搜索栏 */
@@ -652,13 +641,9 @@
 .fs-ft .btn {
   flex: 1;
 }
-/* 粘贴发布 / 代采表单内容更长，比分筛选面板给更高的可视区 */
+/* 城市选择 / 代采表单内容更长，比分筛选面板给更高的可视区 */
 .filter-sheet.tall .fs-bd {
   height: 62vh;
-}
-/* 键盘弹起：弹层整体上移，正文区同步收缩，保证底部「发布」按钮不被键盘盖住 */
-.filter-sheet.kb .fs-bd {
-  height: 34vh;
 }
 
 /* 资讯投稿弹层：固定高度 + 正文自适应滚动，底部「取消 / 发布」永远在弹层内可见，
@@ -676,38 +661,9 @@
 }
 
 /* ============================================================
-   现货盘（阶段一）：今日行情条 + 脱敏报价卡片
+   现货盘（阶段一）：脱敏报价卡片
    报价卡不展示报价方身份，只留「报价方信息仅平台可见」提示
    ============================================================ */
-.q-stats {
-  display: flex;
-  align-items: center;
-  gap: 20rpx;
-  padding: 28rpx;
-  background: #fff;
-  border: 1rpx solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-}
-.q-stats .qs-l {
-  flex: 1;
-  min-width: 0;
-}
-.q-stats .qs-t {
-  font-size: 28rpx;
-  font-weight: 700;
-  color: var(--ink);
-  line-height: 1.4;
-}
-.q-stats .qs-d {
-  margin-top: 6rpx;
-  font-size: 20rpx;
-  color: var(--muted);
-  line-height: 1.6;
-}
-.q-stats .btn {
-  flex: none;
-}
 .q-card {
   background: #fff;
   border: 1rpx solid var(--line);
@@ -839,7 +795,7 @@
 }
 
 /* ============================================================
-   粘贴发布报价：文本域 → 解析预览 → 发布
+   弹层内表单：文本域 + 提示（发布资讯共用）
    ============================================================ */
 .pa-ta {
   width: 100%;
@@ -854,66 +810,11 @@
   line-height: 1.7;
   color: var(--ink);
 }
-.pa-count {
-  margin-top: 8rpx;
-  text-align: right;
-  font-size: 20rpx;
-  color: var(--muted);
-}
 .pa-hint {
   margin-top: 4rpx;
   font-size: 20rpx;
   color: var(--muted);
   line-height: 1.6;
-}
-.pa-parse {
-  width: 100%;
-  margin: 18rpx 0 0;
-}
-.pv-list {
-  margin-top: 18rpx;
-}
-.pv-head {
-  font-size: 20rpx;
-  color: var(--muted);
-  padding-bottom: 12rpx;
-}
-.pv-item {
-  display: flex;
-  align-items: center;
-  gap: 12rpx;
-  padding: 16rpx 20rpx;
-  margin-bottom: 12rpx;
-  border: 1rpx solid var(--line);
-  border-radius: 16rpx;
-}
-.pv-l {
-  flex: 1;
-  min-width: 0;
-}
-.pv-model {
-  font-size: 26rpx;
-  font-weight: 600;
-  color: var(--ink);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.pv-sub {
-  margin-top: 4rpx;
-  font-size: 20rpx;
-  color: var(--muted);
-}
-.pv-x {
-  flex: none;
-  width: 48rpx;
-  height: 48rpx;
-  line-height: 48rpx;
-  text-align: center;
-  border-radius: 12rpx;
-  background: var(--line-2);
-  color: var(--ink-2);
-  font-size: 22rpx;
 }
 
 /* ============================================================
@@ -1140,162 +1041,6 @@
   border-color: var(--brand-line);
   color: var(--brand);
   font-weight: 600;
-}
-
-/* ============================================================
-   实时货盘：产品筛选 + 买价 / 卖价双列
-   ============================================================ */
-.board-cats {
-  /* scroll-view 在 .feed 的列向 flex 里必须给显式高度，否则会被压成 0 高度看不到分类 */
-  flex: none;
-  height: 60rpx;
-  margin-top: 4rpx;
-  white-space: nowrap;
-}
-.board-cats-in {
-  display: inline-flex;
-  align-items: center;
-  height: 60rpx;
-  gap: 10rpx;
-  padding: 0 4rpx;
-}
-.bc-chip {
-  flex: none;
-  padding: 8rpx 18rpx;
-  border: 1rpx solid var(--line);
-  border-radius: 12rpx;
-  background: #fff;
-  color: var(--ink-2);
-  font-size: 22rpx;
-}
-.bc-chip.on {
-  background: var(--brand-soft);
-  border-color: var(--brand-line);
-  color: var(--brand);
-  font-weight: 600;
-}
-.b-card {
-  padding: 28rpx;
-  border: 1rpx solid var(--line);
-  border-radius: var(--radius);
-  background: #fff;
-  box-shadow: var(--shadow);
-}
-.b-top {
-  display: flex;
-  align-items: center;
-  gap: 12rpx;
-}
-.b-card .q-cat {
-  padding: 0 12rpx;
-  border-radius: 8rpx;
-  background: var(--brand-soft);
-  color: var(--brand);
-  font-size: 20rpx;
-  font-weight: 600;
-  line-height: 34rpx;
-}
-.b-spread {
-  margin-left: auto;
-  padding: 4rpx 12rpx;
-  border-radius: 8rpx;
-  background: var(--brand-soft);
-  color: var(--brand);
-  font-size: 20rpx;
-  font-weight: 600;
-}
-.b-pct {
-  margin-left: 6rpx;
-}
-.b-model {
-  margin-top: 14rpx;
-  font-size: 28rpx;
-  font-weight: 600;
-  line-height: 1.5;
-  color: var(--ink);
-}
-.b-prices {
-  display: flex;
-  gap: 14rpx;
-  margin-top: 16rpx;
-}
-.bp {
-  flex: 1;
-  min-width: 0;
-  padding: 16rpx 18rpx;
-  border-radius: 16rpx;
-  background: var(--line-2);
-}
-.bp.buy {
-  background: var(--info-soft);
-}
-.bp.sell {
-  background: var(--warn-soft);
-}
-.bp-k {
-  font-size: 20rpx;
-  color: var(--muted);
-}
-.bp-v {
-  margin-top: 6rpx;
-  font-size: 30rpx;
-  font-weight: 700;
-  line-height: 1.25;
-  color: var(--ink);
-  letter-spacing: -.01em;
-}
-.bp-sub {
-  margin-top: 4rpx;
-  font-size: 19rpx;
-  color: var(--muted);
-}
-.b-level {
-  margin-top: 14rpx;
-  padding: 12rpx 16rpx;
-  border-radius: 12rpx;
-  background: rgba(255, 255, 255, 0.04);
-}
-.b-level-main {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-}
-.b-level-k {
-  font-size: 21rpx;
-  color: var(--muted);
-}
-.b-level-v {
-  font-size: 30rpx;
-  font-weight: 600;
-  color: var(--brand, #3d7bff);
-}
-.b-level-s {
-  display: block;
-  margin-top: 4rpx;
-  font-size: 19rpx;
-  color: var(--muted);
-}
-.b-meta {
-  margin-top: 14rpx;
-  font-size: 20rpx;
-  color: var(--muted);
-}
-.b-foot {
-  display: flex;
-  align-items: center;
-  gap: 16rpx;
-  margin-top: 16rpx;
-  padding-top: 14rpx;
-  border-top: 1rpx dashed var(--line-2);
-}
-.b-card .q-note {
-  flex: 1;
-  min-width: 0;
-  font-size: 20rpx;
-  color: var(--muted);
-}
-.b-foot .btn {
-  flex: none;
 }
 
 /* 测算结果 */

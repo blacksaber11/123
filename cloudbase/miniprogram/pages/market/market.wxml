@@ -1,0 +1,100 @@
+<view class="mk">
+  <!-- 顶部搜索：固定在页面上方，滚动时保持可用 -->
+  <view class="mk-hd">
+    <view class="search-field">
+      <image class="s-ico" src="/assets/icons/ic-search.png" mode="aspectFit" />
+      <input class="s-input" value="{{search}}" bindinput="onSearch" confirm-type="search"
+             placeholder="搜产品：型号 / 品类 / 城市"/>
+      <text wx:if="{{search}}" class="s-clear" bindtap="clearSearch">✕</text>
+    </view>
+  </view>
+
+  <view class="mk-bd">
+    <view class="q-stats">
+      <view class="qs-l">
+        <view class="qs-t">实时货盘 {{stats.count}} 个产品</view>
+        <view class="qs-d">更新于 {{stats.updatedAt || '—'}} · 卖价综合在售商品与用户报价；代采 / 代售只在商机池展示</view>
+      </view>
+      <button class="btn sm primary" bindtap="openPaste">补充报价</button>
+    </view>
+
+    <scroll-view scroll-x="true" class="board-cats" enhanced show-scrollbar="{{false}}">
+      <view class="board-cats-in">
+        <view wx:for="{{cats}}" wx:key="*this"
+              class="bc-chip {{cat === item ? 'on' : ''}}"
+              data-v="{{item}}" bindtap="pickCat">{{item}}</view>
+      </view>
+    </scroll-view>
+
+    <view wx:if="{{loading}}" class="loading">加载中…</view>
+
+    <view wx:for="{{items}}" wx:key="id" class="b-card">
+      <view class="b-top">
+        <view class="q-cat">{{item.cat}}</view>
+        <view class="b-spread">{{item.spreadText}}<text wx:if="{{item.spreadPct}}" class="b-pct">{{item.spreadPct}}%</text></view>
+      </view>
+      <view class="b-model">{{item.model}}</view>
+      <view class="b-prices">
+        <view class="bp buy">
+          <view class="bp-k">买方预算</view>
+          <view class="bp-v">{{item.buyText}}</view>
+          <view class="bp-sub">{{item.buyCount || 0}} 台求购预算</view>
+        </view>
+        <view class="bp sell">
+          <view class="bp-k">卖方报价</view>
+          <view class="bp-v">{{item.sellText}}</view>
+          <view class="bp-sub">{{item.sellCount || 0}} 台在售 / 报价参考</view>
+        </view>
+      </view>
+      <view wx:if="{{item.priceLevelText}}" class="b-level">
+        <view class="b-level-main">
+          <text class="b-level-k">平台参考价</text>
+          <text class="b-level-v">{{item.priceLevelText}}</text>
+        </view>
+        <text class="b-level-s">{{item.priceRangeText}} · 置信度 {{item.confidenceText}}{{item.sourceText ? ' · ' + item.sourceText : ''}}</text>
+      </view>
+      <view class="b-meta">{{item.city}} · 更新 {{item.updated}}</view>
+      <view class="b-foot">
+        <text class="q-note">仅展示价格与城市，委托方身份不公开</text>
+        <button class="btn sm primary" data-target="{{item.model}}" catchtap="openDaicai">委托代采</button>
+      </view>
+    </view>
+
+    <view wx:if="{{!loading && !items.length}}" class="empty">
+      <view class="big">没有匹配的报价</view>
+      <view class="ds">换个品类或关键字试试，也可以补充一条报价</view>
+      <button class="btn primary mt" bindtap="openPaste">补充报价</button>
+    </view>
+  </view>
+
+  <!-- 粘贴发布报价（内存商轻路径）：长文本 → 解析预览 → 确认发布 -->
+  <view wx:if="{{pasteOpen}}" class="filter-mask" bindtap="closePaste"></view>
+  <view wx:if="{{pasteOpen}}" class="filter-sheet tall{{kbH ? ' kb' : ''}}" style="{{kbH ? 'bottom:' + kbH + 'px' : ''}}">
+    <view class="fs-hd">
+      <view class="fs-tt">粘贴发布报价</view>
+      <view class="fs-sub">复制群里的报价文字，一行一条；发布后补充到实时货盘卖方报价</view>
+      <view class="fs-x" bindtap="closePaste">✕</view>
+    </view>
+    <scroll-view scroll-y="true" class="fs-bd">
+      <textarea class="pa-ta" value="{{pasteText}}" maxlength="2000" bindinput="onPasteInput" adjust-position="{{false}}"
+                placeholder="示例：&#10;DDR5 64G 6400 金百达 ¥1850 200根 杭州&#10;H100 SXM 22万 8张 上海"></textarea>
+      <view class="pa-count">{{pasteText.length || 0}} / 2000 字</view>
+      <view class="pa-hint">解析不到的字段会留空，可在预览里逐条确认、删掉不想要的。</view>
+      <button class="btn sm pa-parse" bindtap="parsePaste">解析预览</button>
+      <view wx:if="{{pastePreview.length}}" class="pv-list">
+        <view class="pv-head">解析出 {{pastePreview.length}} 条报价，发布后 24 小时自动过期</view>
+        <view wx:for="{{pastePreview}}" wx:key="id" class="pv-item">
+          <view class="pv-l">
+            <view class="pv-model">{{item.model}}</view>
+            <view class="pv-sub">{{item.priceText}} / {{item.unit}} · {{item.qty}}{{item.unit}} · {{item.city}}</view>
+          </view>
+          <view class="pv-x" data-i="{{index}}" bindtap="removePreview">✕</view>
+        </view>
+      </view>
+    </scroll-view>
+    <view class="fs-ft safe-bottom">
+      <button class="btn" bindtap="closePaste">取消</button>
+      <button class="btn primary" bindtap="confirmPaste">发布 {{pastePreview.length || 0}} 条</button>
+    </view>
+  </view>
+</view>

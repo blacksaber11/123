@@ -1,10 +1,11 @@
-/* 首页：四个视图（在售货源 / 求购需求 / 实时货盘 / 资讯圈）+ 工具入口 + 搜索 + 排序筛选条 */
+/* 首页：三个视图（在售货源 / 求购需求 / 资讯圈）+ 工具入口 + 搜索 + 排序筛选条 */
 const { gate, getUser } = require('../../utils/auth')
 const guard = require('../../utils/guard')
 const M = require('../../utils/mock')
 const fav = require('../../utils/fav')
 const shop = require('../../utils/shop')
 const { request } = require('../../utils/request')
+const { CITY_TREE, CITY_FLAT, matchKeyword } = require('../../utils/board')
 
 const SELL_SORTS = ['综合', '价格升序', '价格降序', '最新', '成交优先']
 const DEMAND_SORTS = ['最新发布', '预算从高到低', '预算从低到高']
@@ -43,20 +44,6 @@ const FILTER_DEFS = {
   ]
 }
 
-/* 交易城市：大区 → 城市两级菜单，城市取自算力设备交易与机房资源集中的区域，
-   除一线城市外也覆盖廊坊、张家口、芜湖等数据中心枢纽。城市筛选由专用菜单渲染，
-   因此 city 的 opts 留空，由 CITY_TREE 提供选项。 */
-const CITY_TREE = [
-  { p: '热门', cities: ['深圳', '北京', '上海', '杭州', '成都', '广州', '武汉', '南京', '苏州', '西安', '重庆', '东莞'] },
-  { p: '华北', cities: ['北京', '天津', '石家庄', '廊坊', '张家口', '太原', '呼和浩特'] },
-  { p: '东北', cities: ['沈阳', '大连', '长春', '哈尔滨', '大庆'] },
-  { p: '华东', cities: ['上海', '南京', '苏州', '无锡', '常州', '南通', '杭州', '宁波', '温州', '嘉兴', '合肥', '芜湖', '福州', '厦门', '泉州', '济南', '青岛', '南昌', '赣州'] },
-  { p: '华中', cities: ['武汉', '宜昌', '襄阳', '长沙', '株洲', '郑州', '洛阳'] },
-  { p: '华南', cities: ['广州', '深圳', '东莞', '佛山', '珠海', '惠州', '中山', '汕头', '南宁', '桂林', '海口', '三亚'] },
-  { p: '西南', cities: ['成都', '绵阳', '重庆', '贵阳', '昆明', '拉萨'] },
-  { p: '西北', cities: ['西安', '咸阳', '兰州', '西宁', '银川', '乌鲁木齐'] }
-]
-
 /* 城市口径统一：后端存「深圳市」，演示数据存「深圳」，两种都能互相匹配 */
 function cityOf(item) {
   return String(item.city || '').replace(/(市|地区|盟|自治州)$/, '')
@@ -86,45 +73,7 @@ function matchFilter(x, f, isDemand) {
   return true
 }
 
-/* 关键字匹配：空格分词，全部命中才算匹配 */
-function matchKeyword(x, kw) {
-  const words = String(kw || '').trim().split(/\s+/).filter(Boolean)
-  if (!words.length) return true
-  const hay = [x.title, x.cat, x.brand, x.model, x.city, x.subText, x.note].join(' ').toLowerCase()
-  return words.every((w) => hay.indexOf(w.toLowerCase()) >= 0)
-}
-
-/* ============================================================
-   实时货盘：自动聚合平台在售商品与用户粘贴的报价，按产品类型筛选。
-   代采 / 代售委托只在商机池展示，不进入货盘。
-   云端 agency.board / quote.paste 就绪前回落本地演示数据，
-   与 consult 页「本地演示、云端到达后覆盖」同一模式。
-   ============================================================ */
-const MARKET_SORTS = ['最新', '价格升序', '价格降序']
 const NEWS_SORTS = ['最新发布', '官方优先']
-
-/* 实时货盘：卖价来自平台在售商品与用户报价；代采 / 代售只在商机池展示。 */
-const BOARD_DEMO = [
-  { id: 'b1', cat: 'GPU 加速卡', model: 'H100 80G SXM', buyPrice: 215000, sellPrice: 228000, buyCount: 6, sellCount: 4, city: '上海', updated: '3 分钟前' },
-  { id: 'b2', cat: 'GPU 加速卡', model: 'A100 80G PCIE', buyPrice: 96000, sellPrice: 102000, buyCount: 4, sellCount: 7, city: '深圳', updated: '12 分钟前' },
-  { id: 'b3', cat: 'GPU 加速卡', model: 'RTX 4090 24G', buyPrice: 15400, sellPrice: 16300, buyCount: 11, sellCount: 9, city: '东莞', updated: '25 分钟前' },
-  { id: 'b4', cat: 'GPU 服务器', model: '8 卡 H100 HGX 整机', buyPrice: 1780000, sellPrice: 1890000, buyCount: 2, sellCount: 1, city: '张家口', updated: '40 分钟前' },
-  { id: 'b5', cat: '内存条', model: 'DDR5 64G 6400 金百达', buyPrice: 1780, sellPrice: 1880, buyCount: 8, sellCount: 12, city: '杭州', updated: '1 小时前' },
-  { id: 'b6', cat: '内存条', model: 'DDR5 RDIMM 96G 5600', buyPrice: 3850, sellPrice: 4050, buyCount: 5, sellCount: 3, city: '北京', updated: '1 小时前' },
-  { id: 'b7', cat: '服务器整机', model: '4 卡 L40S 推理整机', buyPrice: 420000, sellPrice: 448000, buyCount: 3, sellCount: 2, city: '成都', updated: '2 小时前' },
-  { id: 'b8', cat: '其他配件', model: '企业级 SSD 3.84T NVMe', buyPrice: 2050, sellPrice: 2180, buyCount: 6, sellCount: 5, city: '南京', updated: '2 小时前' }
-]
-
-/* 实时货盘分类：固定主品类打底，再合并货盘里出现的品类。
-   货盘为空（云端还没数据 / 接口不可用）时也要有分类可筛，不能只剩「全部」 */
-const BOARD_MAIN_CATS = ['GPU 服务器', 'GPU 加速卡', 'AI 一体机', '推理服务器', 'CPU 服务器', 'NPU 加速卡', '消费级显卡', 'AI 工作站', '内存条', '服务器配件']
-
-function boardCatList(list) {
-  const cats = ['全部']
-  BOARD_MAIN_CATS.forEach((c) => { if (cats.indexOf(c) < 0) cats.push(c) })
-  ;(list || []).forEach((b) => { if (b.cat && cats.indexOf(b.cat) < 0) cats.push(b.cat) })
-  return cats
-}
 
 /* 资讯圈：官方资讯 + 用户发布，按发布地址做全国 / 同城 / 指定城市筛选 */
 const NEWS_DEMO = [
@@ -137,9 +86,6 @@ const NEWS_DEMO = [
   { id: 'nw7', official: false, cat: '求购', title: '成都求购 DDR5 64G 6400 内存 200 根', summary: '品牌不限，要求原厂颗粒、可开专票，单价 1800 元以内，一周内到货。', city: '成都', author: '西南智算', published: '2 天前', views: 348 }
 ]
 
-const CITY_FLAT = []
-CITY_TREE.forEach((g) => g.cities.forEach((c) => { if (CITY_FLAT.indexOf(c) < 0) CITY_FLAT.push(c) }))
-
 /* 同城口径：优先取登录用户资料里的所在城市；未登录时给一个可切换的默认值 */
 function localCity() {
   try {
@@ -151,63 +97,9 @@ function localCity() {
   }
 }
 
-function fmtPrice(n) {
-  return String(Number(n) || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-}
-
-function fmtClock() {
-  const d = new Date()
-  return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2)
-}
-
-/* 按型号猜品类：内存商粘贴的大多是小货，猜不中的归「其他配件」 */
-function guessCat(model) {
-  const s = String(model || '')
-  if (/DDR\d|内存/i.test(s)) return '内存条'
-  if (/H100|A100|B200|B300|4090|加速卡|显卡/i.test(s)) return 'GPU 加速卡'
-  if (/整机|服务器|HGX/i.test(s)) return '服务器整机'
-  return '其他配件'
-}
-
-/* 粘贴解析（演示口径）：一行 = 一条报价，提取型号 / 价格 / 数量 / 城市。
-   解析不到的字段留空，交给发布者在预览里确认后删除，宁可少提取不乱猜。 */
-function parseQuoteLine(line) {
-  const ln = String(line || '').replace(/^\s*[\d]+[\.、)）]\s*/, '').trim()
-  if (!ln) return null
-  let price = 0
-  const pm = ln.match(/[¥￥]\s*([\d,]+)|([\d,]{3,})\s*(?:元|块)/)
-  if (pm) price = Number((pm[1] || pm[2]).replace(/,/g, ''))
-  let qty = ''
-  let unit = '件'
-  const qm = ln.match(/(\d+)\s*(根|条|张|片|台|块|个|组)/)
-  if (qm) { qty = qm[1]; unit = qm[2] }
-  let city = ''
-  CITY_FLAT.forEach((c) => { if (!city && ln.indexOf(c) >= 0) city = c })
-  let model = ln
-  if (pm) model = model.split(pm[0])[0]
-  model = model.replace(/[¥￥][\d,.]*\s*(?:元|块)?/g, ' ')
-    .replace(/\d+\s*(根|条|张|片|台|块|个|组)/g, ' ')
-  if (city) model = model.split(city).join(' ')
-  model = model.replace(/[-–—|｜,，、;；:：\s]+/g, ' ').trim()
-  if (!model && !price) return null
-  return {
-    title: model || '未命名报价',
-    cat: guessCat(model),
-    model: model || '未命名报价',
-    price,
-    priceText: price > 0 ? '¥ ' + fmtPrice(price) : '价格面议',
-    qty: qty || '面议',
-    unit,
-    city: city || '城市未填写',
-    hoursLeft: 24
-  }
-}
-
 Page({
   data: {
     tab: 'sell',
-    /* 实时货盘为全屏视图：隐藏底部导航，并去掉为导航预留的底部留白 */
-    noTab: false,
     /* 朋友圈单页模式：只做浏览，底部提示从右上角进入完整小程序 */
     singlePage: false,
     sortOptions: SELL_SORTS,
@@ -238,21 +130,12 @@ Page({
     /* 资讯私密发布：默认关闭；开启后不显示发布人、不进主页 */
     newsPrivate: false,
     newsSubmitting: false,
-    /* 实时货盘：买价 / 卖价 + 产品类型筛选（先展示主品类，云端数据回来再合并） */
-    boardCats: boardCatList([]),
-    boardCat: '全部',
-    boardStats: { count: 0, updatedAt: '' },
-    /* 粘贴发布弹层：长文本 → 解析预览 → 确认发布（补充卖方报价） */
-    pasteOpen: false,
-    pasteText: '',
-    pastePreview: [],
-    /* 键盘高度：弹层整块抬到键盘上方，底部「发布」按钮始终可见 */
+    /* 键盘高度：发布资讯弹层随键盘抬升，底部「发布」按钮始终可见 */
     kbH: 0
   },
 
   onLoad(options) {
     this.initState()
-    /* 弹层内输入时系统会把固定定位的底部按钮压到键盘下方，这里按键盘高度抬升弹层 */
     if (typeof wx.onKeyboardHeightChange === 'function') {
       this.onKbChange = (res) => {
         this.setData({ kbH: Math.max(0, Number(res && res.height) || 0) })
@@ -261,9 +144,14 @@ Page({
     }
     this.registerHomeSwitch()
     this.setData(Object.assign(this.filterPatch('sell'), { newsLocalCity: localCity() }))
-    /* 分享落地链接带 tab 参数：直接落到对应视图（货源 / 求购 / 货盘 / 资讯） */
+    /* 分享落地链接带 tab 参数：直接落到对应视图（货源 / 求购 / 资讯） */
     const want = String((options && options.tab) || '')
-    if (want && ['sell', 'buy', 'market', 'news'].indexOf(want) >= 0) {
+    /* 旧版货盘链接：货盘已独立成页，转发出去的旧链接也要能打开 */
+    if (want === 'market') {
+      wx.navigateTo({ url: '/pages/market/market' })
+      return
+    }
+    if (want && ['sell', 'buy', 'news'].indexOf(want) >= 0) {
       this.setData({ tab: want, sortOptions: this.sortOptionsOf(want), sort: this.sortStore[want] })
     }
     this.loadList()
@@ -272,20 +160,19 @@ Page({
   /* 各视图的排序选项：与 goTab 保持同一份口径 */
   sortOptionsOf(tab) {
     return tab === 'sell' ? SELL_SORTS
-      : tab === 'buy' ? DEMAND_SORTS
-        : tab === 'market' ? MARKET_SORTS : NEWS_SORTS
+      : tab === 'buy' ? DEMAND_SORTS : NEWS_SORTS
   },
 
   /* 各视图的关键字、筛选条件与排序各自保存；onLoad / onShow 都要能安全调用 */
   initState() {
     if (!this.filters) {
-      this.keywords = { sell: '', buy: '', market: '', news: '' }
-      this.filters = { sell: {}, buy: {}, market: {}, news: {} }
-      this.sortStore = { sell: SELL_SORTS[0], buy: DEMAND_SORTS[0], market: MARKET_SORTS[0], news: NEWS_SORTS[0] }
+      this.keywords = { sell: '', buy: '', news: '' }
+      this.filters = { sell: {}, buy: {}, news: {} }
+      this.sortStore = { sell: SELL_SORTS[0], buy: DEMAND_SORTS[0], news: NEWS_SORTS[0] }
     }
     /* 各视图最近一次的渲染结果：切视图时先用它立刻铺满，再静默刷新，
        避免旧视图的列表残留在屏幕上（切过去还要「等一小会儿」才变） */
-    if (!this.tabCache) this.tabCache = { sell: null, buy: null, market: null, news: null }
+    if (!this.tabCache) this.tabCache = { sell: null, buy: null, news: null }
   },
 
   onShow() {
@@ -294,9 +181,8 @@ Page({
     /* 底部导航带来的落点会自己触发一次加载，避免和下面的刷新重复请求 */
     const switched = this.applyHomeTab()
     this.syncTabBar()
-    /* 弹层没打开时保证导航栏可见（重新编译 / 异常退出弹层后自愈）；
-       实时货盘视图保持底部导航隐藏 */
-    this.syncTabBarHidden()
+    /* 弹层没打开时保证导航栏可见（重新编译 / 异常退出弹层后自愈） */
+    this.setTabBarHidden(this.data.newsPubOpen === true)
     /* 首页允许分享：分享的是公开货源信息，卡片与文案按当前视图区分；朋友圈同开 */
     guard.enableShare(true)
     const sp = guard.isSinglePage()
@@ -333,14 +219,6 @@ Page({
         path: '/pages/home/home?tab=buy'
       }
     }
-    if (tab === 'market') {
-      return {
-        title: '算力聚合 · 实时货盘与囤货榜单',
-        desc: '按品类与型号汇总的买卖盘口，帮你判断囤货方向',
-        imageUrl: '/assets/share/card-biz.png',
-        path: '/pages/home/home?tab=market'
-      }
-    }
     return {
       title: '算力聚合 · 算力货源直连',
       desc: 'GPU 服务器 / 内存 / 整机，先确认条件再与货主直接对话',
@@ -357,9 +235,6 @@ Page({
     }
     if (tab === 'buy') {
       return { title: '算力聚合 · 正在求购的算力需求', query: 'tab=buy', imageUrl: '/assets/share/card-demand.png' }
-    }
-    if (tab === 'market') {
-      return { title: '算力聚合 · 实时货盘与囤货榜单', query: 'tab=market', imageUrl: '/assets/share/card-biz.png' }
     }
     return { title: '算力聚合 · 算力货源直连', query: 'tab=sell', imageUrl: '/assets/share/card-product.png' }
   },
@@ -397,15 +272,7 @@ Page({
     if (bar && bar.setData) bar.setData({ selected: t === 'news' ? 1 : 0 })
   },
 
-  /* 实时货盘按全屏浏览处理：进入即隐藏底部导航，首屏只留货盘内容；
-     页内「‹ 在售货源」可退出，其它视图与资讯发布弹层关闭后恢复显示 */
-  syncTabBarHidden(tab) {
-    const hide = (tab || this.data.tab) === 'market' || this.data.newsPubOpen === true
-    this.setTabBarHidden(hide)
-    if (hide !== this.data.noTab) this.setData({ noTab: hide })
-  },
-
-  // 从详情页返回时同步收藏状态（资讯 / 货盘没有收藏）
+  // 从详情页返回时同步收藏状态（资讯没有收藏）
   refreshFav() {
     if (this.data.tab !== 'sell' && this.data.tab !== 'buy') return
     if (!this.data.items.length) return
@@ -418,22 +285,19 @@ Page({
     this.goTab(e.currentTarget.dataset.tab)
   },
 
-  /* 货盘页隐藏了底部导航，用头部返回退到在售货源 */
-  exitMarket() {
-    this.goTab('sell')
+  /* 实时货盘：独立页面，返回走原生导航栏箭头 / iOS 侧滑 */
+  goMarket() {
+    wx.navigateTo({ url: '/pages/market/market' })
   },
 
   /* 切视图：各视图的关键字、筛选条件与排序各自保存 */
   goTab(tab) {
     if (!tab) return
-    /* 底部导航把「首页」传 sell、「资讯」传 news；未知落点统一回在售货源。
-       页内「实时货盘 / 求购需求」入口仍按 market / buy 正常切换。 */
-    const target = ['sell', 'buy', 'market', 'news'].indexOf(tab) >= 0 ? tab : 'sell'
+    /* 底部导航把「首页」传 sell、「资讯」传 news；未知落点统一回在售货源。 */
+    const target = ['sell', 'buy', 'news'].indexOf(tab) >= 0 ? tab : 'sell'
     this.initState()
     /* 先同步高亮：即使目标视图与当前一致，点击也要有可见反馈 */
     this.syncTabBar(target)
-    /* 实时货盘隐藏底部导航，其它视图恢复 */
-    this.syncTabBarHidden(target)
     if (target === this.data.tab) return
     this.keywords[this.data.tab] = this.data.search
     this.sortStore[this.data.tab] = this.data.sort
@@ -449,13 +313,6 @@ Page({
       items: cached ? cached.items : [],
       loading: !cached
     }, this.filterPatch(target))
-    if (cached && target === 'market') {
-      Object.assign(patch, {
-        boardCats: cached.boardCats,
-        boardCat: cached.boardCat,
-        boardStats: cached.boardStats
-      })
-    }
     /* 资讯头部的统计条同步到目标视图的筛选范围，不能沿用上一个视图的城市 */
     if (target === 'news') {
       patch.newsStats = cached ? cached.newsStats : { city: cityOf({ city: this.newsTargetCity() }) || '全国' }
@@ -490,7 +347,7 @@ Page({
   // 生成筛选面板的分组与选中态；品牌随已选设备类型联动
   buildGroups(tab) {
     const f = this.filters[tab] || {}
-    /* 资讯圈 / 实时货盘没有筛选面板：返回空分组，排序条上的筛选入口同步隐藏 */
+    /* 资讯圈没有筛选面板：返回空分组，排序条上的筛选入口同步隐藏 */
     if (!FILTER_DEFS[tab]) return []
     return FILTER_DEFS[tab].map((d) => {
       const opts = d.key === 'brand' ? brandOptsOf(f.cat) : d.opts
@@ -704,11 +561,6 @@ Page({
       this.fetchNews(seq)
       return
     }
-    /* 实时货盘：价格来自在售商品与用户报价，云端就绪前回落本地演示数据 */
-    if (this.data.tab === 'market') {
-      this.fetchQuotes(seq)
-      return
-    }
     this.page = 1
     this.hasMore = false
     const source = await this.loadFromCloud(isDemand, 1)
@@ -721,7 +573,7 @@ Page({
     this.applyList(list, isDemand)
   },
 
-  /* 触底加载下一页：只对货源 / 求购生效，货盘与资讯一次取回 */
+  /* 触底加载下一页：只对货源 / 求购生效，资讯一次取回 */
   onReachBottom() {
     if (this.data.tab === 'sell' || this.data.tab === 'buy') this.loadMore()
   },
@@ -765,57 +617,6 @@ Page({
     } catch (e) {
       return null
     }
-  },
-
-  /* 实时货盘：聚合平台在售商品与 24 小时内的卖方报价，代采 / 代售只进商机池 */
-  async fetchQuotes(seq) {
-    let list = null
-    try {
-      const res = await request('user', 'agency.board', { page: 1, limit: 50 }, { silent: true })
-      if (res && Array.isArray(res.items)) list = res.items.map((b) => Object.assign({}, b))
-    } catch (e) {}
-    if (seq !== this.listSeq || this.data.tab !== 'market') return
-    if (list === null) list = BOARD_DEMO.map((b) => Object.assign({}, b))
-    /* 产品类型筛选：主品类打底 + 云端数据里出现的品类；已选品类失效时回到「全部」 */
-    const cats = boardCatList(list)
-    const cat = cats.indexOf(this.data.boardCat) >= 0 ? this.data.boardCat : '全部'
-    this.boardSource = list
-    this.setData({
-      boardCats: cats,
-      boardCat: cat,
-      boardStats: { count: list.length, updatedAt: fmtClock() }
-    })
-    this.applyBoard()
-  },
-
-  /* 买价 = 货盘最高预算，卖价 = 货盘最低报价；价差按卖价 - 买价计算 */
-  applyBoard() {
-    const cat = this.data.boardCat
-    const kw = this.data.search
-    let list = (this.boardSource || []).filter((b) => (cat === '全部' || b.cat === cat) && matchKeyword(b, kw))
-    list = list.map((b) => {
-      const buy = Number(b.buyPrice) || 0
-      const sell = Number(b.sellPrice) || 0
-      const spread = (buy > 0 && sell > 0) ? sell - buy : 0
-      return Object.assign({}, b, {
-        buyText: buy > 0 ? '¥ ' + fmtPrice(buy) : '待补充',
-        sellText: sell > 0 ? '¥ ' + fmtPrice(sell) : '待补充',
-        spreadText: (buy > 0 && sell > 0) ? (spread >= 0 ? '价差 +' : '价差 ') + fmtPrice(spread) : '待撮合',
-        spreadPct: (buy > 0 && sell > 0) ? (spread / buy * 100).toFixed(1) : ''
-      })
-    })
-    this.setData({ items: list, loading: false })
-    this.tabCache.market = {
-      items: list,
-      boardCats: this.data.boardCats,
-      boardCat: cat,
-      boardStats: this.data.boardStats
-    }
-  },
-
-  pickBoardCat(e) {
-    this.setData({ boardCat: e.currentTarget.dataset.v })
-    this.applyBoard()
   },
 
   /* ---------- 资讯圈 ---------- */
@@ -931,7 +732,7 @@ Page({
 
   closeNewsPub() {
     this.setData({ newsPubOpen: false })
-    this.syncTabBarHidden()
+    this.setTabBarHidden(false)
   },
 
   /* 自定义 tabBar 的显隐：发布资讯弹层打开时隐藏，关闭后恢复 */
@@ -993,85 +794,6 @@ Page({
     wx.navigateTo({ url: '/pages/tools/tools' })
   },
 
-  /* 粘贴发布：长文本 → 解析预览 → 补充卖方报价（云端 quote.paste 就绪前为演示态） */
-  openPaste() {
-    this.setData({ pasteOpen: true, pasteText: '', pastePreview: [] })
-  },
-
-  closePaste() {
-    this.setData({ pasteOpen: false })
-  },
-
-  onPasteInput(e) {
-    this.setData({ pasteText: e.detail.value })
-  },
-
-  parsePaste() {
-    if (!String(this.data.pasteText || '').trim()) {
-      wx.showToast({ title: '先粘贴一段报价文字', icon: 'none' })
-      return
-    }
-    const lines = String(this.data.pasteText).split(/[\n;；]+/)
-    const rows = lines.map((l) => parseQuoteLine(l)).filter(Boolean)
-    if (!rows.length) {
-      wx.showToast({ title: '没有解析出报价，请检查文字格式', icon: 'none' })
-      return
-    }
-    this.setData({
-      pastePreview: rows.map((r, i) => Object.assign({ id: 'pv' + (i + 1) }, r))
-    })
-  },
-
-  removePreview(e) {
-    const i = Number(e.currentTarget.dataset.i) || 0
-    const rows = this.data.pastePreview.slice()
-    rows.splice(i, 1)
-    this.setData({ pastePreview: rows })
-  },
-
-  async confirmPaste() {
-    const rows = this.data.pastePreview
-    if (!rows.length) {
-      wx.showToast({ title: '先解析出至少一条报价', icon: 'none' })
-      return
-    }
-    /* 先落库再加进货盘：接口失败时保留弹层，不能「本地显示了、服务端没有」 */
-    try {
-      await request('user', 'quote.paste', { raw: this.data.pasteText, items: rows }, { silent: false })
-    } catch (err) {
-      /* request 已提示具体原因（频控 / 字段不合规），留在弹层修改 */
-      return
-    }
-    /* 报价并入实时货盘的卖方一侧 */
-    const merged = rows.map((r) => ({
-      id: 'q' + Date.now() + '-' + r.id,
-      cat: r.cat,
-      model: r.model,
-      buyPrice: 0,
-      sellPrice: Number(r.price) || 0,
-      buyCount: 0,
-      sellCount: 1,
-      city: r.city,
-      updated: '刚刚'
-    })).concat(this.boardSource || [])
-    this.boardSource = merged
-    this.setData({
-      pasteOpen: false,
-      pasteText: '',
-      pastePreview: [],
-      boardCats: boardCatList(merged),
-      boardStats: { count: merged.length, updatedAt: fmtClock() }
-    })
-    this.applyBoard()
-    wx.showToast({ title: '已发布 ' + rows.length + ' 条报价，24 小时后自动过期', icon: 'none' })
-  },
-
-  /* 委托代采：首页货盘上的入口直接进发布页的代采表单，主体核验与缴费都在那边完成 */
-  openDaicai(e) {
-    const target = String(e.currentTarget.dataset.target || '')
-    wx.navigateTo({ url: '/pages/publish/publish?agency=buy&target=' + encodeURIComponent(target) })
-  },
-
   /* 首页工具入口「我的库存」：维护现货清单，用于商机自动匹配 */
   goStock() {
     wx.navigateTo({ url: '/pages/stock/stock' })
@@ -1124,8 +846,8 @@ Page({
 
   openDetail(e) {
     const id = e.currentTarget.dataset.id
-    /* 货盘 / 资讯卡片不跳详情页 */
-    if (this.data.tab === 'market' || this.data.tab === 'news') return
+    /* 资讯卡片不跳详情页 */
+    if (this.data.tab === 'news') return
     if (this.data.tab === 'sell') {
       wx.navigateTo({ url: '/pages/product/product?id=' + id })
     } else {

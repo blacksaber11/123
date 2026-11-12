@@ -704,15 +704,17 @@
   font-size: 21rpx;
   color: var(--muted);
 }
-/* 四档套餐卡片：2 列排布，选中态描边高亮 */
+/* 套餐固定两列两行：用 space-between 收口，不用 gap + calc(50% - x)，
+   否则 iOS 亚像素取整会把第二张卡挤到下一行变成一列 */
 .ms-plans {
   display: flex;
   flex-wrap: wrap;
-  gap: 16rpx;
+  justify-content: space-between;
   margin-top: 20rpx;
 }
 .ms-plan {
-  width: calc(50% - 8rpx);
+  width: 48.5%;
+  margin-bottom: 16rpx;
   box-sizing: border-box;
   padding: 18rpx 20rpx;
   border: 2rpx solid var(--line-2);

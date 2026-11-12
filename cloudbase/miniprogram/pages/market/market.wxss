@@ -1,0 +1,411 @@
+/* 实时货盘：独立页面，原生导航栏负责返回，页面只做内容区 */
+
+.mk {
+  min-height: 100vh;
+  padding-bottom: calc(32rpx + env(safe-area-inset-bottom));
+  background: var(--paper);
+}
+
+/* 顶部搜索：固定吸顶 */
+.mk-hd {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding: 20rpx 32rpx;
+  background: #fff;
+  border-bottom: 1rpx solid var(--line);
+  box-shadow: 0 6rpx 24rpx rgba(16, 24, 40, .04);
+}
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  height: 76rpx;
+  padding: 0 24rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 18rpx;
+  background: #fff;
+  color: var(--muted);
+  font-size: 26rpx;
+  box-shadow: 0 2rpx 8rpx rgba(16, 24, 40, .04);
+}
+.search-field .s-ico {
+  flex: none;
+  width: 28rpx;
+  height: 28rpx;
+  display: block;
+}
+.search-field .s-input {
+  flex: 1;
+  font-size: 26rpx;
+  color: var(--ink);
+}
+.search-field .s-clear {
+  flex: none;
+  font-size: 22rpx;
+  color: var(--muted);
+  padding: 0 6rpx;
+}
+
+.mk-bd {
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+  padding: 20rpx 24rpx 0;
+}
+
+/* 今日行情条 */
+.q-stats {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding: 28rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.q-stats .qs-l {
+  flex: 1;
+  min-width: 0;
+}
+.q-stats .qs-t {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.4;
+}
+.q-stats .qs-d {
+  margin-top: 6rpx;
+  font-size: 20rpx;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.q-stats .btn {
+  flex: none;
+}
+
+/* 品类筛选 */
+.board-cats {
+  /* scroll-view 在列向 flex 里必须给显式高度，否则会被压成 0 高度看不到分类 */
+  flex: none;
+  height: 60rpx;
+  margin-top: 4rpx;
+  white-space: nowrap;
+}
+.board-cats-in {
+  display: inline-flex;
+  align-items: center;
+  height: 60rpx;
+  gap: 10rpx;
+  padding: 0 4rpx;
+}
+.bc-chip {
+  flex: none;
+  padding: 8rpx 18rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 12rpx;
+  background: #fff;
+  color: var(--ink-2);
+  font-size: 22rpx;
+}
+.bc-chip.on {
+  background: var(--brand-soft);
+  border-color: var(--brand-line);
+  color: var(--brand);
+  font-weight: 600;
+}
+
+/* 盘口卡片 */
+.b-card {
+  padding: 28rpx;
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+.b-top {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+.b-card .q-cat {
+  padding: 0 12rpx;
+  border-radius: 8rpx;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 20rpx;
+  font-weight: 600;
+  line-height: 34rpx;
+}
+.b-spread {
+  margin-left: auto;
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 20rpx;
+  font-weight: 600;
+}
+.b-pct {
+  margin-left: 6rpx;
+}
+.b-model {
+  margin-top: 14rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.b-prices {
+  display: flex;
+  gap: 14rpx;
+  margin-top: 16rpx;
+}
+.bp {
+  flex: 1;
+  min-width: 0;
+  padding: 16rpx 18rpx;
+  border-radius: 16rpx;
+  background: var(--line-2);
+}
+.bp.buy {
+  background: var(--info-soft);
+}
+.bp.sell {
+  background: var(--warn-soft);
+}
+.bp-k {
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.bp-v {
+  margin-top: 6rpx;
+  font-size: 30rpx;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--ink);
+  letter-spacing: -.01em;
+}
+.bp-sub {
+  margin-top: 4rpx;
+  font-size: 19rpx;
+  color: var(--muted);
+}
+.b-level {
+  margin-top: 14rpx;
+  padding: 12rpx 16rpx;
+  border-radius: 12rpx;
+  background: var(--line-2);
+}
+.b-level-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.b-level-k {
+  font-size: 21rpx;
+  color: var(--muted);
+}
+.b-level-v {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--brand, #3d7bff);
+}
+.b-level-s {
+  display: block;
+  margin-top: 4rpx;
+  font-size: 19rpx;
+  color: var(--muted);
+}
+.b-meta {
+  margin-top: 14rpx;
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.b-foot {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-top: 16rpx;
+  padding-top: 14rpx;
+  border-top: 1rpx dashed var(--line-2);
+}
+.b-card .q-note {
+  flex: 1;
+  min-width: 0;
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.b-foot .btn {
+  flex: none;
+}
+
+.loading {
+  text-align: center;
+  color: var(--muted);
+  font-size: 26rpx;
+  padding: 80rpx 0;
+}
+.empty .btn {
+  margin-top: 24rpx;
+}
+
+/* ============================================================
+   底部弹层（补充报价）
+   ============================================================ */
+.filter-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(24, 24, 27, .4);
+  z-index: 90;
+}
+.filter-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 91;
+  background: #fff;
+  border-radius: 28rpx 28rpx 0 0;
+  display: flex;
+  flex-direction: column;
+  /* 底部安全区只由 .fs-ft.safe-bottom 负责，这里不再叠加，否则会多出一倍空白 */
+  animation: sheet-up .22s ease-out;
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(60rpx);
+    opacity: .4;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+.fs-hd {
+  position: relative;
+  padding: 28rpx 32rpx 18rpx;
+  border-bottom: 1rpx solid var(--line-2);
+}
+.fs-tt {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: var(--ink);
+}
+.fs-sub {
+  font-size: 22rpx;
+  color: var(--muted);
+  margin-top: 4rpx;
+}
+.fs-x {
+  position: absolute;
+  right: 28rpx;
+  top: 26rpx;
+  width: 56rpx;
+  height: 56rpx;
+  line-height: 56rpx;
+  text-align: center;
+  border-radius: 14rpx;
+  background: var(--line-2);
+  color: var(--ink-2);
+  font-size: 24rpx;
+}
+.fs-bd {
+  height: 46vh;
+  padding: 4rpx 32rpx 0;
+  box-sizing: border-box;
+}
+.fs-ft {
+  display: flex;
+  gap: 16rpx;
+  padding: 16rpx 32rpx;
+  border-top: 1rpx solid var(--line-2);
+}
+.fs-ft .btn {
+  flex: 1;
+}
+/* 粘贴发布内容更长，比分筛选面板给更高的可视区 */
+.filter-sheet.tall .fs-bd {
+  height: 62vh;
+}
+/* 键盘弹起：弹层整体上移，正文区同步收缩，保证底部「发布」按钮不被键盘盖住 */
+.filter-sheet.kb .fs-bd {
+  height: 34vh;
+}
+
+/* 粘贴发布报价：文本域 → 解析预览 → 发布 */
+.pa-ta {
+  width: 100%;
+  box-sizing: border-box;
+  height: 240rpx;
+  margin-top: 20rpx;
+  padding: 20rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 16rpx;
+  background: var(--line-2);
+  font-size: 24rpx;
+  line-height: 1.7;
+  color: var(--ink);
+}
+.pa-count {
+  margin-top: 8rpx;
+  text-align: right;
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.pa-hint {
+  margin-top: 4rpx;
+  font-size: 20rpx;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.pa-parse {
+  width: 100%;
+  margin: 18rpx 0 0;
+}
+.pv-list {
+  margin-top: 18rpx;
+}
+.pv-head {
+  font-size: 20rpx;
+  color: var(--muted);
+  padding-bottom: 12rpx;
+}
+.pv-item {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 16rpx 20rpx;
+  margin-bottom: 12rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 16rpx;
+}
+.pv-l {
+  flex: 1;
+  min-width: 0;
+}
+.pv-model {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pv-sub {
+  margin-top: 4rpx;
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.pv-x {
+  flex: none;
+  width: 48rpx;
+  height: 48rpx;
+  line-height: 48rpx;
+  text-align: center;
+  border-radius: 12rpx;
+  background: var(--line-2);
+  color: var(--ink-2);
+  font-size: 22rpx;
+}
