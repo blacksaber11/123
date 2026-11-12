@@ -20,6 +20,7 @@
     "pages/board/board",
     "pages/profile/profile",
     "pages/privacy/privacy",
+    "pages/about/about",
     "pages/msg/msg",
     "pages/chat/chat",
     "pages/userhome/userhome",

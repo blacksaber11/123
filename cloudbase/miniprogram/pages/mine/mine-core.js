@@ -1233,6 +1233,11 @@ const BASE = {
     wx.navigateTo({ url: '/pages/privacy/privacy?type=privacy' })
   },
 
+  /* 关于平台：平台介绍 + 版本介绍 */
+  goAbout() {
+    wx.navigateTo({ url: '/pages/about/about' })
+  },
+
   /* 账号注销：先查最新一条申请，待处理时展示撤回入口 */
   async loadDeleteStatus() {
     try {

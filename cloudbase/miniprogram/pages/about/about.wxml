@@ -1,0 +1,40 @@
+<view class="ab">
+  <view class="ab-hd">
+    <view class="ab-logo">算</view>
+    <view class="ab-name">算力聚合</view>
+    <view class="ab-slogan">算力资源交易与需求对接平台</view>
+    <view class="ab-ver">v{{version}}</view>
+  </view>
+
+  <view class="ab-hero">
+    <text class="ah-t">让算力找到需求，让需求找到算力</text>
+    <text class="ah-d">平台提供信息展示与撮合对接，不参与交易资金；先浏览、再联系、后成交。</text>
+  </view>
+
+  <view wx:for="{{sections}}" wx:key="h" class="ab-sec">
+    <text class="as-h">{{item.h}}</text>
+    <text wx:for="{{item.ps}}" wx:for-item="p" wx:key="*this" class="as-p">{{p}}</text>
+  </view>
+
+  <view class="ab-sec">
+    <text class="as-h">版本介绍</text>
+    <view wx:for="{{changelog}}" wx:key="v" wx:for-item="log" class="ab-log">
+      <view class="al-hd">
+        <text class="al-v">v{{log.v}}</text>
+        <text class="al-at">{{log.at}}</text>
+      </view>
+      <view wx:for="{{log.items}}" wx:key="*this" wx:for-item="li" class="al-li">
+        <text class="al-dot">·</text>
+        <text class="al-t">{{li}}</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="ab-links">
+    <text class="ab-link" bindtap="openTerms">《用户协议》</text>
+    <text class="ab-link" bindtap="openPrivacy">《隐私政策》</text>
+    <text class="ab-link" bindtap="goService">在线客服</text>
+  </view>
+
+  <view class="ab-ft">算力聚合 · v{{version}} · 更新于 {{updated}}</view>
+</view>

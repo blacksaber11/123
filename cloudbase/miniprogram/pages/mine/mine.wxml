@@ -658,9 +658,13 @@
             </view>
             <text class="sr-go">›</text>
           </view>
-          <view class="set-row">
-            <text class="sr-nm">关于平台</text>
-            <text class="sr-val">算力聚合 v1.0</text>
+          <view class="set-row" bindtap="goAbout">
+            <view class="sr-main">
+              <view class="sr-nm">关于平台</view>
+              <view class="sr-d">平台介绍与版本说明</view>
+            </view>
+            <text class="sr-val">算力聚合 v1.00</text>
+            <text class="sr-go">›</text>
           </view>
         </view>
       </view>
