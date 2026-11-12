@@ -26,14 +26,14 @@ const LOCAL_PLANS = withTerm(biz.PLANS)
 
 /* 提示力度：三档预设与后端 BIZ_PREF_PRESETS 同口径，离线预览时也能用 */
 const PREF_PRESETS = {
-  loose: { level: 'loose', brand: 'any', model: 'series', qty: 'any', cap: 'any' },
-  standard: { level: 'standard', brand: 'any', model: 'core', qty: 'meet', cap: 'same' },
-  strict: { level: 'strict', brand: 'same', model: 'exact', qty: 'exceed', cap: 'same' }
+  loose: { level: 'loose', brand: 'any', model: 'series', qty: 'any', cap: 'any', price: 'any', city: 'any', cond: 'any', tax: 'any', supply: 'any' },
+  standard: { level: 'standard', brand: 'any', model: 'core', qty: 'meet', cap: 'same', price: 'any', city: 'any', cond: 'same', tax: 'any', supply: 'any' },
+  strict: { level: 'strict', brand: 'same', model: 'exact', qty: 'exceed', cap: 'same', price: 'fit', city: 'same', cond: 'same', tax: 'same', supply: 'same' }
 }
 const PREF_LEVELS = [
-  { key: 'loose', name: '宽松', desc: '同系列即可，数量和容量不限，看到的商机最多' },
-  { key: 'standard', name: '标准', desc: '同核心型号、容量一致，数量达到起订量（默认）' },
-  { key: 'strict', name: '严格', desc: '只接指定品牌、型号完全一致，且库存量要覆盖需求量' }
+  { key: 'loose', name: '宽松', desc: '同系列即可，价格、城市、成色、税费都不限，看到的商机最多' },
+  { key: 'standard', name: '标准', desc: '同核心型号、容量一致，数量达到起订量（默认，价格与地区不限）' },
+  { key: 'strict', name: '严格', desc: '指定品牌、型号完全一致，库存量覆盖需求，只接同城且税费 / 现货口径一致' }
 ]
 const PREF_DIMS = [
   { key: 'brand', name: '品牌', options: [{ key: 'any', label: '不限品牌' }, { key: 'same', label: '只接指定品牌' }] },
@@ -51,6 +51,31 @@ const PREF_DIMS = [
     key: 'cap',
     name: '容量',
     options: [{ key: 'any', label: '容量不限' }, { key: 'fit', label: '不低于需求' }, { key: 'same', label: '容量相同' }]
+  },
+  {
+    key: 'price',
+    name: '价格',
+    options: [{ key: 'any', label: '价格不限' }, { key: 'fit', label: '报价在预算内' }, { key: 'near', label: '可上浮 10%' }]
+  },
+  {
+    key: 'city',
+    name: '城市',
+    options: [{ key: 'any', label: '不限地区' }, { key: 'same', label: '只接同城' }]
+  },
+  {
+    key: 'cond',
+    name: '成色',
+    options: [{ key: 'any', label: '成色不限' }, { key: 'same', label: '成色一致' }]
+  },
+  {
+    key: 'tax',
+    name: '税费',
+    options: [{ key: 'any', label: '税费不限' }, { key: 'same', label: '税费口径有交集' }]
+  },
+  {
+    key: 'supply',
+    name: '供给',
+    options: [{ key: 'any', label: '现货 / 期货不限' }, { key: 'same', label: '现货期货一致' }]
   }
 ]
 const prefNameOf = (level) => ((PREF_LEVELS.filter((l) => l.key === level)[0] || {}).name || '自定义')
@@ -91,7 +116,7 @@ Page({
     mineMode: false,
     /* 已领取 / 不满足独立列表页：只展示对应状态并按类别筛选，不展示概览与榜单 */
     listMode: false,
-    /* 提示力度：三档预设 + 品牌 / 型号 / 数量 / 容量四维微调 */
+    /* 提示力度：三档预设 + 品牌 / 型号 / 数量 / 容量 / 价格 / 城市 / 成色 / 税费 / 供给九维微调 */
     prefs: Object.assign({}, PREF_PRESETS.standard),
     prefLevels: PREF_LEVELS,
     prefDims: dimsWithValue(PREF_PRESETS.standard),

@@ -330,32 +330,53 @@ function catalogSeriesOf(cat, model) {
 }
 
 /**
- * 商机提示力度：把「品牌 / 型号 / 数量 / 容量」四个维度做成可调档位，
+ * 商机提示力度：把「品牌 / 型号 / 数量 / 容量 / 价格 / 城市 / 成色 / 税费 / 供给」做成可调档位，
  * 用户可以在商机页设置自己接单的口径，避免过松（一堆不相关）或过严（漏掉能做的单）。
  *
  * 预设三档（用户可在此基础上单独微调任一维度）：
- * - 宽松 loose   ：同系列即可、数量与容量都不限（「只要是 B300 都要，少一点也行」）
- * - 标准 standard：同核心型号、数量达到起订量、容量相同（默认，与历史口径一致）
- * - 严格 strict  ：指定品牌、型号完全一致、库存量要覆盖需求量、容量相同（「只要超微且量要比需求大」）
+ * - 宽松 loose   ：同系列即可，数量 / 容量 / 价格 / 城市 / 成色 / 税费 / 供给都不限
+ * - 标准 standard：同核心型号、数量达到起订量、容量相同、成色一致（默认，价格与地区不限）
+ * - 严格 strict  ：指定品牌、型号完全一致、库存量覆盖需求量、报价在预算内、
+ *                  只接同城、成色一致、税费口径有交集、现货只配现货
  *
  * 维度取值：
- * - brand: any 不限品牌 / same 只接指定品牌
- * - model: series 同系列 / core 同核心型号 / exact 型号完全一致
- * - qty  : any 数量不限 / meet 达到起订量 / exceed 库存量需覆盖需求量
- * - cap  : any 容量不限 / same 容量相同 / fit 容量不低于需求（可接受容量更大的货）
+ * - brand : any 不限品牌 / same 只接指定品牌
+ * - model : series 同系列 / core 同核心型号 / exact 型号完全一致
+ * - qty   : any 数量不限 / meet 达到起订量 / exceed 库存量需覆盖需求量
+ * - cap   : any 容量不限 / same 容量相同 / fit 容量不低于需求（可接受容量更大的货）
+ * - price : any 不限价格 / fit 报价不高于对方预算 / near 报价可上浮 10% 以内
+ * - city  : any 不限地区 / same 只接同城
+ * - cond  : any 不限成色 / same 成色族一致（全新只配全新，二手可配二手 / 拆机 / 翻新）
+ * - tax   : any 不限税费 / same 税费口径至少一项相同（含税 / 专票等）
+ * - supply: any 不限现货期货 / same 现货只配现货、期货只配期货
  */
 const BIZ_PREF_PRESETS = Object.freeze({
-  loose: Object.freeze({ level: 'loose', brand: 'any', model: 'series', qty: 'any', cap: 'any' }),
-  standard: Object.freeze({ level: 'standard', brand: 'any', model: 'core', qty: 'meet', cap: 'same' }),
-  strict: Object.freeze({ level: 'strict', brand: 'same', model: 'exact', qty: 'exceed', cap: 'same' })
+  loose: Object.freeze({
+    level: 'loose', brand: 'any', model: 'series', qty: 'any', cap: 'any',
+    price: 'any', city: 'any', cond: 'any', tax: 'any', supply: 'any'
+  }),
+  standard: Object.freeze({
+    level: 'standard', brand: 'any', model: 'core', qty: 'meet', cap: 'same',
+    price: 'any', city: 'any', cond: 'same', tax: 'any', supply: 'any'
+  }),
+  strict: Object.freeze({
+    level: 'strict', brand: 'same', model: 'exact', qty: 'exceed', cap: 'same',
+    price: 'fit', city: 'same', cond: 'same', tax: 'same', supply: 'same'
+  })
 })
 const BIZ_PREF_DEFAULT = BIZ_PREF_PRESETS.standard
 const BIZ_PREF_ENUMS = Object.freeze({
   brand: ['any', 'same'],
   model: ['series', 'core', 'exact'],
   qty: ['any', 'meet', 'exceed'],
-  cap: ['any', 'same', 'fit']
+  cap: ['any', 'same', 'fit'],
+  price: ['any', 'fit', 'near'],
+  city: ['any', 'same'],
+  cond: ['any', 'same'],
+  tax: ['any', 'same'],
+  supply: ['any', 'same']
 })
+const BIZ_PREF_KEYS = Object.freeze(Object.keys(BIZ_PREF_ENUMS))
 
 function bizPrefPick(value, options, fallback) {
   const v = String(value == null ? '' : value).trim()
@@ -363,7 +384,7 @@ function bizPrefPick(value, options, fallback) {
 }
 
 function bizPrefSame(a, b) {
-  return a.brand === b.brand && a.model === b.model && a.qty === b.qty && a.cap === b.cap
+  return BIZ_PREF_KEYS.every((key) => a[key] === b[key])
 }
 
 /** 归一化提示力度：命中预设直接返回预设，否则按维度裁剪成自定义档（缺省回落到标准） */
@@ -372,18 +393,36 @@ function normalizeBizPrefs(input) {
   if (!src) return Object.assign({}, BIZ_PREF_DEFAULT)
   const level = String(src.level == null ? '' : src.level).trim()
   if (level && BIZ_PREF_PRESETS[level]) return Object.assign({}, BIZ_PREF_PRESETS[level])
-  const out = {
-    level: 'custom',
-    brand: bizPrefPick(src.brand, BIZ_PREF_ENUMS.brand, BIZ_PREF_DEFAULT.brand),
-    model: bizPrefPick(src.model, BIZ_PREF_ENUMS.model, BIZ_PREF_DEFAULT.model),
-    qty: bizPrefPick(src.qty, BIZ_PREF_ENUMS.qty, BIZ_PREF_DEFAULT.qty),
-    cap: bizPrefPick(src.cap, BIZ_PREF_ENUMS.cap, BIZ_PREF_DEFAULT.cap)
-  }
+  const out = { level: 'custom' }
+  BIZ_PREF_KEYS.forEach((key) => {
+    out[key] = bizPrefPick(src[key], BIZ_PREF_ENUMS[key], BIZ_PREF_DEFAULT[key])
+  })
   for (const key of Object.keys(BIZ_PREF_PRESETS)) {
     const preset = BIZ_PREF_PRESETS[key]
     if (bizPrefSame(out, preset)) return Object.assign({}, preset)
   }
   return out
+}
+
+/** 城市归一：忽略「市」与空格，深圳 / 深圳市 视为同城；任一方未填视为不限制 */
+function cityCoreOf(value) {
+  return String(value == null ? '' : value).trim().replace(/市$/, '').replace(/\s+/g, '')
+}
+
+/** 税费口径拆词：「含税 · 可开专票」→ ['含税', '可开专票'] */
+function taxTokensOf(value) {
+  return String(value == null ? '' : value).split(/[·、,，/|\s]+/).filter(Boolean)
+}
+
+/** 价格档位：any 不限 / fit 报价不高于预算 / near 报价可上浮 10%；任一方没写价格都放行 */
+function bizPriceAllowed(level, needPrice, needPriceMax, stockPrice) {
+  if (level === 'any') return true
+  const base = Number(needPrice) || 0
+  const top = Number(needPriceMax) || 0
+  const mine = Number(stockPrice) || 0
+  if (!(base > 0) || !(mine > 0)) return true
+  const cap = top > base ? top : base
+  return level === 'near' ? mine <= cap * 1.1 : mine <= cap
 }
 
 /** 容量数值（GB）：支持 80G / 4T，用于提示力度里的容量档位比较 */
@@ -404,7 +443,8 @@ function bizCapAllowed(level, needGb, stockGb) {
 }
 
 /**
- * 库存匹配：按「设备类型 + 核心型号 + 新二手 + 起订量」筛选，品牌与城市不参与。
+ * 库存匹配：按「设备类型 + 核心型号 + 新二手 + 起订量」筛选，再按提示力度叠加
+ * 价格 / 城市 / 成色 / 税费 / 现货期货等档位。
  *
  * 1. 设备类型是硬条件：需求写明了设备类型，就不跨类型匹配
  *    （B300 整机不会被 B300 内存条或其它品类命中）；
@@ -412,14 +452,21 @@ function bizCapAllowed(level, needGb, stockGb) {
  *    客户不需要知道具体型号；双方都写了显存容量且不同才算不同规格；
  * 3. 型号文本对不上但系列相同时（如「B300 系列」下不同写法）视为同族，容量冲突时仍然排除；
  * 4. 新二手：需求填了成色才比对，全新只配全新，二手可配二手 / 拆机件 / 翻新；
- * 5. 起订量：库存可用量要达到起订量，且对方需求量不能小于起订量，否则这单做不成。
+ * 5. 起订量：库存可用量要达到起订量，且对方需求量不能小于起订量，否则这单做不成；
+ * 6. 提示力度额外档位：价格（预算内 / 可上浮 10%）、城市（同城）、税费（口径有交集）、
+ *    现货期货（一致）；任一方没写该字段时都按「不限制」放行，避免资料不全漏掉商机。
  * 没有对应库存、库存低于起订量、或需求量小于起订量时直接不命中，
  * 不会给商家推送自己无法满足的商机，也不会给买家看到自己起订量接不下的货源。
  *
- * brand     : 保留参数位，品牌默认不限（客户要 B300 时不限定厂商）
- * opts.qty  : 对方需要的数量（用于起订量校验与展示文案）
- * opts.cond : 对方要求的成色（全新 / 二手，「不限」视为未填）
- * opts.series: 对方选择的系列（可选，用于同族兜底）
+ * brand       : 保留参数位，品牌默认不限（客户要 B300 时不限定厂商）
+ * opts.qty    : 对方需要的数量（用于起订量校验与展示文案）
+ * opts.price  : 对方预算单价（价格档位用，未填视为不限）
+ * opts.priceMax: 对方预算上限（填了区间时取上限）
+ * opts.cond   : 对方要求的成色（全新 / 二手，「不限」视为未填）
+ * opts.city   : 对方所在城市（同城档用）
+ * opts.tax    : 对方税费口径（含税 / 专票等，用于税费交集判断）
+ * opts.supply : 对方供给类型（现货 / 期货）
+ * opts.series : 对方选择的系列（可选，用于同族兜底）
  */
 function stockMatch(stocks, cat, model, brand, opts) {
   const need = opts || {}
@@ -429,6 +476,9 @@ function stockMatch(stocks, cat, model, brand, opts) {
   const needCap = model ? capacityOf(model) : ''
   const needCapGb = model ? capacityGbOf(model) : 0
   const needBrand = String(brand == null ? '' : brand).trim().toLowerCase()
+  const needCity = cityCoreOf(need.city)
+  const needSupply = String(need.supply == null ? '' : need.supply).trim()
+  const needTaxTokens = taxTokensOf(need.tax)
   /* 提示力度：未设置时按「标准」档，保证与历史口径一致 */
   const pref = normalizeBizPrefs(need.pref)
   const matched = []
@@ -464,7 +514,24 @@ function stockMatch(stocks, cat, model, brand, opts) {
       /* 设备类型与型号都没填，无法判断是否匹配，直接跳过 */
       continue
     }
-    if (needCond && stock.cond && condFamily(stock.cond) !== needCond) continue
+    /* 成色档位：只接同成色时，双方都填了才比对 */
+    if (pref.cond === 'same' && needCond && stock.cond && condFamily(stock.cond) !== needCond) continue
+    /* 城市档位：只接同城时，深圳 / 深圳市 视为同城；任一方没填都放行 */
+    if (pref.city === 'same' && needCity) {
+      const stockCity = cityCoreOf(stock.city)
+      if (stockCity && stockCity !== needCity) continue
+    }
+    /* 价格档位：我的报价 vs 对方预算，任一方没写价格都放行 */
+    if (!bizPriceAllowed(pref.price, need.price, need.priceMax, stock.price)) continue
+    /* 税费档位：双方税费口径至少有一项相同（含税 / 专票等） */
+    if (pref.tax === 'same' && needTaxTokens.length) {
+      const stockTaxTokens = taxTokensOf(stock.tax)
+      if (stockTaxTokens.length && !needTaxTokens.some((t) => stockTaxTokens.indexOf(t) >= 0)) continue
+    }
+    /* 现货 / 期货档位：双方都写了类型才比对 */
+    if (pref.supply === 'same' && needSupply && stock.supply) {
+      if (String(stock.supply).trim() !== needSupply) continue
+    }
     /* 可用量低于起订量＝这单发不出去，不算有货 */
     if ((Number(stock.qty) || 0) < moqOf(stock)) continue
     if (pref.qty === 'exceed') {
@@ -582,7 +649,9 @@ async function notifyNewBizMatch(repo, subscribe, options) {
     if (kind === 'demand') {
       for (const row of ownerRows) {
         const rowHit = stockMatch([row], doc.cat, doc.model, doc.brand, {
-          qty: doc.qty, cond: doc.cond, series: doc.series, pref
+          qty: doc.qty, price: doc.budget, priceMax: doc.budgetMax,
+          cond: doc.cond, city: doc.city, tax: doc.tax, supply: doc.supply,
+          series: doc.series, pref
         }).ok
         if (!rowHit) continue
         hit = true
@@ -594,7 +663,9 @@ async function notifyNewBizMatch(repo, subscribe, options) {
     } else {
       for (const demandRow of ownerRows) {
         const rowHit = stockMatch([doc], demandRow.cat, demandRow.model, demandRow.brand, {
-          qty: demandRow.qty, cond: demandRow.cond, series: demandRow.series, pref
+          qty: demandRow.qty, price: demandRow.budget, priceMax: demandRow.budgetMax,
+          cond: demandRow.cond, city: demandRow.city, tax: demandRow.tax, supply: demandRow.supply,
+          series: demandRow.series, pref
         }).ok
         if (rowHit) { hit = true; break }
       }
@@ -3431,8 +3502,12 @@ function createMarketUserHandlers(deps) {
         if (!poolProfileMap.has(demand.ownerId)) continue
         const match = stockMatch(stocks, demand.cat, demand.model, demand.brand, {
           qty: demand.qty,
+          price: demand.budget,
+          priceMax: demand.budgetMax,
           city: demand.city,
           cond: demand.cond,
+          tax: demand.tax,
+          supply: demand.supply,
           series: demand.series,
           pref: prefs
         })
@@ -3477,6 +3552,7 @@ function createMarketUserHandlers(deps) {
         /* 代采 / 代售由平台居中对接，不按个人主体曝光口径过滤 */
         const match = stockMatch(stocks, agency.itemCat || '', agency.item, agency.brand, {
           qty: agency.qty,
+          /* 委托价格口径与供需不同（可能含服务费 / 整单），价格档位只作用于求购与货源 */
           city: agency.city,
           series: agency.series,
           pref: prefs
@@ -3512,8 +3588,12 @@ function createMarketUserHandlers(deps) {
         for (const demand of myDemands) {
           const match = stockMatch([product], demand.cat, demand.model, demand.brand, {
             qty: demand.qty,
+            price: demand.budget,
+            priceMax: demand.budgetMax,
             city: demand.city,
             cond: demand.cond,
+            tax: demand.tax,
+            supply: demand.supply,
             series: demand.series,
             pref: prefs
           })
@@ -3734,8 +3814,12 @@ function createMarketUserHandlers(deps) {
         if (!demandOwners.has(demand.ownerId)) return
         const match = stockMatch(stocks, demand.cat, demand.model, demand.brand, {
           qty: demand.qty,
+          price: demand.budget,
+          priceMax: demand.budgetMax,
           city: demand.city,
           cond: demand.cond,
+          tax: demand.tax,
+          supply: demand.supply,
           series: demand.series,
           pref: prefs
         })
@@ -3753,6 +3837,7 @@ function createMarketUserHandlers(deps) {
           if (agency.ownerId === uid) return
           const match = stockMatch(stocks, agency.itemCat || '', agency.item, agency.brand, {
             qty: agency.qty,
+            /* 委托价格口径与供需不同（可能含服务费 / 整单），价格档位只作用于求购与货源 */
             city: agency.city,
             series: agency.series,
             pref: prefs
@@ -3784,8 +3869,12 @@ function createMarketUserHandlers(deps) {
           if (!productOwners.has(product.ownerId)) return
           const hit = myDemands.some((demand) => stockMatch([product], demand.cat, demand.model, demand.brand, {
             qty: demand.qty,
+            price: demand.budget,
+            priceMax: demand.budgetMax,
             city: demand.city,
             cond: demand.cond,
+            tax: demand.tax,
+            supply: demand.supply,
             series: demand.series,
             pref: prefs
           }).ok)
@@ -3867,8 +3956,12 @@ function createMarketUserHandlers(deps) {
         }
         const match = stockMatch(stocks, demand.cat, demand.model, demand.brand, {
           qty: demand.qty,
+          price: demand.budget,
+          priceMax: demand.budgetMax,
           city: demand.city,
           cond: demand.cond,
+          tax: demand.tax,
+          supply: demand.supply,
           series: demand.series,
           pref: prefs
         })
@@ -3899,8 +3992,12 @@ function createMarketUserHandlers(deps) {
         }, { limit: 50 })
         const hit = myDemands.some((demand) => stockMatch([product], demand.cat, demand.model, demand.brand, {
           qty: demand.qty,
+          price: demand.budget,
+          priceMax: demand.budgetMax,
           city: demand.city,
           cond: demand.cond,
+          tax: demand.tax,
+          supply: demand.supply,
           series: demand.series,
           pref: prefs
         }).ok)
@@ -4094,6 +4191,7 @@ function createMarketUserHandlers(deps) {
       const prefs = normalizeBizPrefs(await repo.get('bizPrefs', uid))
       const match = stockMatch(stocks, agency.itemCat || '', agency.item, agency.brand, {
         qty: agency.qty,
+        /* 委托价格口径与供需不同（可能含服务费 / 整单），价格档位只作用于求购与货源 */
         city: agency.city,
         series: agency.series,
         pref: prefs

@@ -354,7 +354,7 @@
     <view wx:if="{{!remote}}" class="ms-demo" bindtap="demoActivate">原型演示：模拟客服已开通</view>
   </view>
 
-  <!-- 提示力度设置：三档预设 + 品牌 / 型号 / 数量 / 容量微调 -->
+  <!-- 提示力度设置：三档预设 + 品牌 / 型号 / 数量 / 容量 / 价格 / 城市 / 成色 / 税费 / 供给微调 -->
   <view wx:if="{{prefOpen}}" class="m-mask" bindtap="closePref"></view>
   <view wx:if="{{prefOpen}}" class="m-sheet">
     <view class="ms-hd">
@@ -383,7 +383,7 @@
         </view>
       </view>
     </view>
-    <view class="pf-note">例：只要 B300、数量少一点也能接 → 选「宽松」；只要超微品牌且库存量必须覆盖需求 → 选「严格」；4T 也能接受 3T → 把「容量」调成「容量不限」。</view>
+    <view class="pf-note">例：只要 B300、数量少一点也能接 → 选「宽松」；只顾同城、报价必须在预算内 → 把「城市」「价格」分别调紧；4T 也能接受 3T → 把「容量」调成「容量不限」。价格按对方预算 / 采购价比对，任一方没填价格时不作限制。</view>
     <button class="btn primary block pf-save" bindtap="savePref" loading="{{prefSaving}}" disabled="{{prefSaving}}">保存并重新匹配</button>
   </view>
 
