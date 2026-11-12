@@ -2,6 +2,8 @@
 
   <!-- 分享落地提示：内容与平台内一致，只是再强调一次联系方式不对外 -->
   <view wx:if="{{fromShare}}" class="share-tip">来自好友分享 · 满足必须条件后可与需求方直接对话</view>
+  <!-- 朋友圈单页模式：没有底部导航与登录入口，提示从右上角进入完整小程序 -->
+  <view wx:if="{{singlePage}}" class="sp-inline">朋友圈预览 · 点右上角 ··· 选择「前往小程序」后可响应需求</view>
 
   <!-- 私密发布＝匿名公开：内容照常展示，发布人完全匿名 -->
   <view wx:if="{{privateShare}}" class="callout warn private-tip">匿名发布 · 内容公开展示，但不显示发布人，也无法从这里进入对方主页</view>

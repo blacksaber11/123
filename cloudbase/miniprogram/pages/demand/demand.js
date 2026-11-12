@@ -95,7 +95,9 @@ Page({
     /* 需求方自愿公开的联系电话 */
     ownerPhone: '',
     /* 需求方公开了电话但当前用户不是商机会员：显示开通引导 */
-    memberOnlyContact: false
+    memberOnlyContact: false,
+    /* 朋友圈单页模式：只能浏览，页面内提示从右上角进入完整小程序 */
+    singlePage: false
   },
 
   onLoad(options) {
@@ -187,6 +189,8 @@ Page({
     if (gate(this.route || 'pages/demand/demand', this.options)) {
       /* 需求是公开信息，允许「发送给朋友」与分享到朋友圈；响应详情、联系方式仍不下发 */
       guard.enableShare(true)
+      const sp = guard.isSinglePage()
+      if (sp !== this.data.singlePage) this.setData({ singlePage: sp })
     }
     /* 返回本页 / 首次进入时数据已就绪：补生成一次海报（同 id 命中缓存不重画） */
     if (this.data.demand) this.prepareShare(this.data.demand)

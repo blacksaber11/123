@@ -107,7 +107,9 @@ Page({
     /* 货主自愿公开的联系电话：确认条件后可直接拨号 */
     ownerPhone: '',
     /* 货主公开了电话但当前用户不是商机会员：显示开通引导 */
-    memberOnlyContact: false
+    memberOnlyContact: false,
+    /* 朋友圈单页模式：只能浏览，页面内提示从右上角进入完整小程序 */
+    singlePage: false
   },
 
   onLoad(options) {
@@ -230,6 +232,8 @@ Page({
     if (!gate(this.route || 'pages/product/product', this.options)) return
     /* 货架信息本身对所有人可见，允许「发送给朋友」与分享到朋友圈；线索、材料查看层仍禁止转发 */
     guard.enableShare(true)
+    const sp = guard.isSinglePage()
+    if (sp !== this.data.singlePage) this.setData({ singlePage: sp })
     /* 水印开关可能在设置里改过：回到商品页立即生效 */
     this.setData({ wmOn: prefs.watermarkOn() })
     /* 返回本页 / 首次进入时数据已就绪：补生成一次海报（同 id 命中缓存不重画） */

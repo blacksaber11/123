@@ -4,6 +4,7 @@
    - 关注作者复用本地 + 云端关注列表；官方资讯没有作者主页。 */
 const fav = require('../../utils/fav')
 const guard = require('../../utils/guard')
+const sharePoster = require('../../utils/share-poster')
 const { request } = require('../../utils/request')
 
 Page({
@@ -217,5 +218,26 @@ Page({
       title: (news.title || '资讯') + ' · 算力聚合',
       query: 'id=' + encodeURIComponent(this.newsId || '')
     }
+  },
+
+  /* 保存资讯海报到相册：底部带小程序码，可直接发朋友圈 */
+  savePoster() {
+    const news = this.data.news || {}
+    if (!news.id) {
+      wx.showToast({ title: '资讯还在加载，稍后再试', icon: 'none' })
+      return
+    }
+    const spec = {
+      id: String(news.id),
+      badge: '资讯',
+      title: news.title || '资讯',
+      desc: news.summary || '',
+      tag: news.cat || ''
+    }
+    sharePoster.save('news', spec, {
+      path: '/pages/news/news?id=' + encodeURIComponent(news.id)
+    }).then((ok) => {
+      if (ok) wx.showToast({ title: '海报已存到相册', icon: 'success' })
+    })
   }
 })

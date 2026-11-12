@@ -803,6 +803,17 @@
   border-bottom: 1rpx solid var(--line);
 }
 
+/* 朋友圈单页模式：底部已有固定咨询栏，提示放在页面顶部，避免遮挡 */
+.sp-inline {
+  padding: 14rpx 28rpx;
+  font-size: 22rpx;
+  line-height: 1.4;
+  text-align: center;
+  color: #fff;
+  background: rgba(17, 24, 39, 0.92);
+  border-bottom: 1rpx solid var(--line);
+}
+
 /* 底部咨询栏 */
 .sticky-consult {
   position: fixed;
