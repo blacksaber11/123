@@ -1,20 +1,47 @@
 /* 商机：按我的库存自动匹配平台核验后的代采 / 代售委托与求购需求，99 元 / 月开通 */
 const biz = require('../../utils/biz')
 const guard = require('../../utils/guard')
+const fav = require('../../utils/fav')
 const sharePoster = require('../../utils/share-poster')
 const { request, xpayOrder } = require('../../utils/request')
 const { goThread } = require('../../utils/chat')
 
+/* 收藏类型：求购需求 / 代采代售委托 / 货源分开存，避免不同集合的 id 混淆 */
+function favTypeOf(o) {
+  if (!o) return 'product'
+  if (o.type === 'demand') return 'demand'
+  if (o.type === 'agency') return 'agency'
+  return 'product'
+}
+
 /* 分享图兜底：海报未生成 / 低版本基础库时用静态商机底图 */
 const SHARE_CARD = '/assets/share/card-biz.png'
+
+/* 列表封面：与普通商品列表同一口径，优先第一张图片，只有视频时用视频封面 */
+function coverOfItem(o) {
+  const list = (o && Array.isArray(o.media) ? o.media : []).filter(Boolean)
+  const items = list.map((m) => ({
+    kind: m.kind === 'video' || /^video\//i.test(String(m.type || m.mime || '')) ? 'video' : 'image',
+    url: m.url || m.fileId || m.src || '',
+    poster: m.poster || m.cover || ''
+  })).filter((m) => m.url)
+  const img = items.filter((m) => m.kind === 'image')[0]
+  return {
+    cover: img ? img.url : ((items[0] && items[0].poster) || ''),
+    mediaCount: items.length
+  }
+}
 
 
 const FILTERS = [
   { key: 'all', label: '全部' },
+  { key: '出租', label: '出租' },
+  { key: '出售', label: '出售' },
+  { key: '求购', label: '购买' },
+  { key: '租赁', label: '租赁' },
   { key: '代采', label: '代采' },
   { key: '代售', label: '代售' },
-  { key: 'demand', label: '求购 / 租赁' },
-  { key: 'supply', label: '匹配我需求的货源' }
+  { key: 'supply', label: '匹配货源' }
 ]
 
 /* 套餐时长按自然月展示：月度即 1 个月，不写「30 天」 */
@@ -82,6 +109,28 @@ const prefNameOf = (level) => ((PREF_LEVELS.filter((l) => l.key === level)[0] ||
 /* 维度当前选中值冗余到 options 外层，避免 WXML 里做对象动态取值 */
 const dimsWithValue = (prefs) => PREF_DIMS.map((d) => Object.assign({}, d, { value: (prefs && prefs[d.key]) || '' }))
 
+/* 显示时间：与后端 BIZ_PREF_DAYS 同口径，3 / 7 / 30 天，也可手动填 1-90 天 */
+const DAY_OPTIONS = [
+  { key: 3, label: '3 天内' },
+  { key: 7, label: '一周内' },
+  { key: 30, label: '一个月内' }
+]
+const dayLabelOf = (days) => {
+  const n = Math.floor(Number(days) || 0)
+  if (n === 3) return '3 天内'
+  if (n === 7) return '一周内'
+  if (n === 30) return '一个月内'
+  return n > 0 ? n + ' 天内' : '一个月内'
+}
+
+/* 排序：与后端 BIZ_PREF_SORTS 同口径 */
+const SORT_OPTIONS = [
+  { key: 'latest', label: '最新发布' },
+  { key: 'match', label: '库存优先' },
+  { key: 'qty', label: '数量优先' }
+]
+const sortLabelOf = (sort) => ((SORT_OPTIONS.filter((s) => s.key === sort)[0] || SORT_OPTIONS[0]).label)
+
 Page({
   data: {
     plan: biz.PLAN.label,
@@ -103,8 +152,25 @@ Page({
     state: 'open',
     filters: FILTERS,
     filter: 'all',
+    filterLabel: '全部',
+    /* 筛选栏展开态：cat / sort / model，同一时刻只展开一个，可叠加筛选 */
+    filterMenu: '',
     items: [],
     total: 0,
+    /* 列表默认只展示 10 条，下滑继续加载；型号筛选只能从本次匹配到的型号里选 */
+    showCount: 10,
+    matchModels: [],
+    modelFilter: '',
+    filteredCount: 0,
+    /* 未开通宣传页：只放脱敏预览，固定 10 条高度内部滑动 */
+    teaserItems: [],
+    /* 手动天数输入框里的临时值，点「确定」才写入偏好 */
+    daysInput: '',
+    dayOptions: DAY_OPTIONS,
+    sortOptions: SORT_OPTIONS,
+    dayLabel: '一个月内',
+    sortLabel: '最新发布',
+    daysCustom: false,
     /* 平台对接按钮 loading：同一时刻只允许提交一张卡片 */
     consultingId: '',
     sheetOpen: false,
@@ -284,21 +350,45 @@ Page({
       .sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0))
       .map((o) => {
         const platformOnly = o.type === 'agency'
+        const media = coverOfItem(o)
+        /* 条件标签与普通商品卡同口径：信息行里取成色 / 税费 / 供给类型 */
+        const info = Array.isArray(o.info) ? o.info : []
+        const infoVal = function () {
+          for (let i = 0; i < arguments.length; i++) {
+            const hit = info.filter((it) => it && it.k === arguments[i])[0]
+            if (hit && hit.v) return String(hit.v)
+          }
+          return ''
+        }
         const merged = Object.assign({}, o, {
           unit: o.unit || '台',
+          /* 列表封面：点开前就能看到实拍图，与普通商品列表一致 */
+          cover: o.cover || media.cover,
+          mediaCount: o.mediaCount || media.mediaCount,
+          /* 租赁 / 出售判断与普通商品卡一致，用于缩略图配色和成色标签显隐 */
+          isRent: o.isRent === true || /租/.test(String(o.kind || '')),
+          cond: o.cond || infoVal('成色', '成色要求'),
+          taxShort: o.taxShort || infoVal('税费', '税费要求'),
+          supply: o.supply || infoVal('供给类型'),
+          /* 与普通商品卡一致的副信息行：品牌 · 城市 */
+          cardSub: [o.brand || infoVal('品牌'), o.city].filter(Boolean).join(' · '),
+          views: Number(o.views) || 0,
           isAgency: platformOnly,
           platformOnly: platformOnly,
-          feeText: o.feeText || (platformOnly ? '成交后支付' : (o.type === 'supply' ? '需求匹配' : '求购需求')),
-          /* 代采 / 代售由平台代为对接：不下发对方电话，也不开放自助领取 */
+          /* 代采 / 代售与普通商品卡一致：型号、数量、金额直接展示 */
+          feeText: o.feeText || '',
+          /* 代采 / 代售由平台统一对接：不展示个人联系方式 */
           contact: platformOnly ? '平台代为对接' : o.contact,
           phone: platformOnly ? '' : o.phone,
           contactVisible: platformOnly ? false : !!o.contactVisible,
           /* 已标记不满足：仍留在列表「不满足」分类里，不再提醒也不可自助领取 */
           unsatisfied: !!o.unsatisfied,
-          canClaim: platformOnly ? false : !!o.canClaim,
+          canClaim: !!o.canClaim,
           /* 已领取的求购 / 货源即使对方没留联系方式，也要能发起站内对话 */
           canChat: !o.closed && (o.type === 'demand' || o.type === 'supply') && (!!o.claimed || !!o.contactVisible),
-          consulted: !!(o.consulted || biz.isConsulted(o.id))
+          consulted: !!(o.consulted || biz.isConsulted(o.id)),
+          /* 右上角收藏：与首页商品卡同一套本地缓存 + 云端同步 */
+          fav: fav.isFav(favTypeOf(o), o.id)
         })
         merged.stockHint = biz.matchHint(merged)
         return merged
@@ -330,6 +420,9 @@ Page({
       prefs,
       prefLevelName: prefNameOf(prefs.level),
       prefDims: dimsWithValue(prefs),
+      dayLabel: dayLabelOf(prefs.days),
+      sortLabel: sortLabelOf(prefs.sort),
+      showCount: 10,
       expireText: res.expireText || '',
       daysLeft: Number(res.daysLeft) || 0,
       plan: (selectedPlan && selectedPlan.label) || (res.plan && res.plan.label) || this.data.plan,
@@ -338,9 +431,10 @@ Page({
       planKey: keep,
       selectedPlan,
       total: all.length,
-      items: this.filterItems(all),
       stats
     })
+    /* 排序偏好刚更新，先 setData 再建列表，保证首屏就按选定排序 */
+    this.applyList()
     if (!this.mineMode) this.preparePosters(this.data.items)
     this.applyFocus(all)
   },
@@ -357,21 +451,27 @@ Page({
       wx.showToast({ title: '该商机已下架或已领取', icon: 'none' })
       return
     }
-    this.setData({ state: 'all', filter: 'all', focusId: hit.id, items: [hit] })
+    this.setData({ state: 'all', filter: 'all', filterLabel: '全部', focusId: hit.id, items: [hit], filteredCount: 1 })
   },
 
   /* 退出分享定位，恢复完整商机列表 */
   clearFocus() {
     this.focusShown = true
     this.focusId = ''
-    this.setData({ focusId: '', state: 'open', filter: 'all' })
-    this.setData({ items: this.filterItems(this.source || []) })
+    this.setData({ focusId: '', state: 'open', filter: 'all', filterLabel: '全部', showCount: 10 })
+    this.applyList()
   },
 
   /* 云端不可用时的本地演示数据（仅未登录预览） */
   applyLocal() {
     this.remote = false
-    const all = biz.opportunities()
+    /* 与云端卡片同口径：补齐浏览量 / 品牌·城市副信息，卡片不出现空字段 */
+    const all = biz.opportunities().map((o) => Object.assign({
+      unit: o.unit || '台',
+      views: Number(o.views) || 0,
+      cardSub: [o.brand, o.city].filter(Boolean).join(' · '),
+      fav: fav.isFav(favTypeOf(o), o.id)
+    }, o))
     this.source = all
     const info = biz.unlockInfo()
     const stats = biz.stats()
@@ -384,10 +484,33 @@ Page({
       daysLeft: Number(info.daysLeft) || 0,
       stats,
       total: all.length,
-      items: this.filterItems(all)
+      showCount: 10
     })
+    this.applyList()
     this.preparePosters(this.data.items)
     this.applyFocus(all)
+  },
+
+  /* 列表分页：先按分类 / 领取状态 / 型号筛选，再排序，最后只截取前 showCount 条 */
+  buildList(all) {
+    const base = this.filterItems(all)
+    const model = this.data.modelFilter
+    const picked = model ? base.filter((o) => String(o.matchModel || '') === model) : base
+    this.filtered = this.sortItems(picked)
+    return this.filtered.slice(0, this.data.showCount)
+  },
+
+  /* 排序方式：最新发布 / 库存匹配优先（有匹配型号的在前）/ 数量从大到小 */
+  sortItems(list) {
+    const sort = (this.data.prefs && this.data.prefs.sort) || 'latest'
+    const at = (o) => Number(o.at) || 0
+    const arr = (list || []).slice()
+    if (sort === 'match') {
+      arr.sort((a, b) => ((b.matchModel ? 1 : 0) - (a.matchModel ? 1 : 0)) || (at(b) - at(a)))
+    } else if (sort === 'qty') {
+      arr.sort((a, b) => ((Number(b.qty) || 0) - (Number(a.qty) || 0)) || (at(b) - at(a)))
+    }
+    return arr
   },
 
   filterItems(all) {
@@ -404,7 +527,6 @@ Page({
         return false
       }
       if (filter === 'all') return true
-      if (filter === 'demand') return o.kind === '求购' || o.kind === '租赁'
       if (filter === 'supply') return o.type === 'supply'
       return o.kind === filter
     })
@@ -432,14 +554,118 @@ Page({
     wx.redirectTo({ url: '/pages/biz/biz' })
   },
 
+  /* 分类筛选：全部 / 出租 / 出售 / 购买 / 租赁 / 代采 / 代售 / 匹配货源，选完收起面板 */
   switchFilter(e) {
-    this.setData({ filter: e.currentTarget.dataset.key })
-    /* 已加载过数据就本地切筛选，不必每次切 Tab 都重新请求云端 */
+    const key = String(e.currentTarget.dataset.key || 'all')
+    const hit = FILTERS.filter((f) => f.key === key)[0]
+    this.setData({
+      filter: key,
+      filterLabel: (hit && hit.label) || '全部',
+      filterMenu: '',
+      showCount: 10
+    })
+    /* 已加载过数据就本地切筛选，不必每次切分类都重新请求云端 */
     if (this.source) {
-      this.setData({ items: this.filterItems(this.source) })
+      this.applyList()
       return
     }
     this.refresh()
+  },
+
+  /* 分类 / 排序 / 型号三个展开按钮：点同一个收起，点另一个直接切换 */
+  toggleMenu(e) {
+    const menu = String(e.currentTarget.dataset.menu || '')
+    this.setData({ filterMenu: this.data.filterMenu === menu ? '' : menu })
+  },
+
+  /* 点遮罩收起下拉面板 */
+  closeMenu() {
+    if (this.data.filterMenu) this.setData({ filterMenu: '' })
+  },
+
+  /* 本地筛选 / 排序变化后重新截取前 showCount 条，不重新请求云端 */
+  applyList() {
+    if (!this.source) return
+    /* 型号选项只取当前分类 + 领取状态下真实存在的型号，选了一定有商机 */
+    const base = this.filterItems(this.source)
+    const models = this.modelsOf(base)
+    const modelFilter = models.indexOf(this.data.modelFilter) >= 0 ? this.data.modelFilter : ''
+    this.setData({ matchModels: models, modelFilter: modelFilter, teaserItems: this.sortItems(base).slice(0, 50) })
+    this.setData({ items: this.buildList(this.source) })
+    this.setData({ filteredCount: (this.filtered || []).length })
+  },
+
+  /* 型号去重：同一型号只出现一次，最多展示 50 个 */
+  modelsOf(list) {
+    const seen = {}
+    const out = []
+    ;(list || []).forEach((o) => {
+      const m = String(o.matchModel || '').trim()
+      if (!m || seen[m]) return
+      seen[m] = true
+      out.push(m)
+    })
+    return out.slice(0, 50)
+  },
+
+  /* 下滑加载更多：每次多展示 10 条，直到全部加载完 */
+  onReachBottom() {
+    const all = this.filtered || []
+    const shown = (this.data.items || []).length
+    if (all.length <= shown) return
+    const showCount = this.data.showCount + 10
+    this.setData({ showCount: showCount, items: all.slice(0, showCount) })
+  },
+
+  /* 型号筛选：只能从本次匹配到的型号里选，选「全部型号」清空 */
+  pickModel(e) {
+    const key = String(e.currentTarget.dataset.key || '')
+    this.setData({ modelFilter: key, filterMenu: '', showCount: 10 })
+    this.applyList()
+  },
+
+  /* 显示时间：3 天内 / 一周内 / 一个月内 / 手动设置 */
+  pickDays(e) {
+    const key = e.currentTarget.dataset.key
+    if (String(key) === 'custom') {
+      this.setData({ daysCustom: true, daysInput: String(this.data.prefs.days || 30) })
+      return
+    }
+    const prefs = Object.assign({}, this.data.prefs, { days: Number(key) || 30 })
+    this.setData({ prefs, daysCustom: false, dayLabel: dayLabelOf(prefs.days) })
+  },
+
+  /* 手动天数：输入框只暂存，点「确定」才生效，避免边输边跳 */
+  bindDaysInput(e) {
+    this.setData({ daysInput: String(e.detail.value || '') })
+  },
+
+  confirmDays() {
+    const n = Math.floor(Number(this.data.daysInput) || 0)
+    if (n < 1 || n > 90) {
+      wx.showToast({ title: '请输入 1-90 天', icon: 'none' })
+      return
+    }
+    const prefs = Object.assign({}, this.data.prefs, { days: n })
+    this.setData({ prefs, dayLabel: dayLabelOf(n), daysInput: String(n) })
+    wx.showToast({ title: '已设为 ' + n + ' 天内', icon: 'none' })
+  },
+
+  /* 排序方式：最新发布 / 库存匹配优先 / 数量从大到小，选完立即重排并收起面板 */
+  pickSort(e) {
+    const key = String(e.currentTarget.dataset.key || 'latest')
+    const prefs = Object.assign({}, this.data.prefs, { sort: key })
+    this.setData({ prefs, sortLabel: sortLabelOf(prefs.sort), filterMenu: '', showCount: 10 })
+    this.applyList()
+    this.persistSort(prefs)
+  },
+
+  /* 排序偏好在服务端留档，下次进入仍按上次选的顺序；保存失败不影响当前列表 */
+  async persistSort(prefs) {
+    if (!this.remote && !guard.boundToAccount()) return
+    try {
+      await request('user', 'biz.prefs', Object.assign({ save: true }, prefs), { silent: true })
+    } catch (e) { /* 排序只是展示顺序，保存失败不回滚 */ }
   },
 
   /* 商机榜单：独立页面查看多个榜单，不在本页展开顶掉商机列表 */
@@ -477,7 +703,9 @@ Page({
     const key = e.currentTarget.dataset.key
     const preset = PREF_PRESETS[key]
     if (!preset) return
-    this.setData({ prefs: Object.assign({}, preset), prefDims: dimsWithValue(preset) })
+    /* 切档位不重置显示时间与排序：这两项在同一个设置面板里独立选择 */
+    const prefs = Object.assign({}, preset, { days: this.data.prefs.days, sort: this.data.prefs.sort })
+    this.setData({ prefs: prefs, prefDims: dimsWithValue(prefs) })
   },
 
   pickPrefDim(e) {
@@ -501,9 +729,12 @@ Page({
           prefs,
           prefLevelName: prefNameOf(prefs.level),
           prefDims: dimsWithValue(prefs),
+          dayLabel: dayLabelOf(prefs.days),
+          sortLabel: sortLabelOf(prefs.sort),
+          showCount: 10,
           prefOpen: false
         })
-        wx.showToast({ title: '已保存，正在按新力度重新匹配', icon: 'none' })
+        wx.showToast({ title: '已保存，正在按新设置重新匹配', icon: 'none' })
         this.refresh()
         return
       }
@@ -511,7 +742,10 @@ Page({
       this.setData({
         prefOpen: false,
         prefLevelName: prefNameOf(this.data.prefs.level),
-        prefDims: dimsWithValue(this.data.prefs)
+        prefDims: dimsWithValue(this.data.prefs),
+        dayLabel: dayLabelOf(this.data.prefs.days),
+        sortLabel: sortLabelOf(this.data.prefs.sort),
+        showCount: 10
       })
       wx.showToast({ title: '演示：提示力度已切换', icon: 'none' })
     } catch (err) {
@@ -537,8 +771,9 @@ Page({
   },
 
   /**
-   * 查看商机：列表上不再直接领取，统一进入商机页逐项确认必须条件，
-   * 全部满足后才允许领取；不满足可标记，商机仍保留在「不满足」分类里。
+   * 查看商机：需求 / 货源直接复用普通发布点进去的详情页（展示完全一致），
+   * 在详情页逐项确认必须条件后领取并开始对话。
+   * 求购 / 代采代售也统一走普通商品详情页，不再单独维护商机详情页。
    */
   viewOpp(e) {
     const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
@@ -547,9 +782,48 @@ Page({
       this.openSheet()
       return
     }
-    const url = '/pages/bizdetail/bizdetail?id=' + encodeURIComponent(ds.id) +
-      (ds.type ? '&type=' + encodeURIComponent(ds.type) : '')
-    wx.navigateTo({ url })
+    const type = String(ds.type || '')
+    const id = encodeURIComponent(ds.id)
+    /* 我的商机 / 已领取：详情页直接展示领取时解锁的联系方式 */
+    const mine = this.mineMode || this.data.state === 'claimed' ? '&mine=1' : ''
+    const biz = type === 'demand' || type === 'agency' ? type : 'supply'
+    wx.navigateTo({ url: '/pages/product/product?id=' + id + '&biz=' + biz + mine })
+  },
+
+  /* 删除我领取的商机：只移除本人领取记录，商机回到池里可重新领取 */
+  async deleteOpp(e) {
+    const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
+    const id = String(ds.id || '')
+    if (!id || this.deleting) return
+    const opp = (this.source || []).filter((o) => String(o.id) === id)[0] || {}
+    const type = String(ds.type || opp.type || '')
+    const ok = await new Promise((resolve) => {
+      wx.showModal({
+        title: '删除商机',
+        content: '删除后将从「我的商机」移除，可在商机池重新领取。',
+        confirmText: '删除',
+        confirmColor: '#e04b4b',
+        success: (r) => resolve(!!r.confirm),
+        fail: () => resolve(false)
+      })
+    })
+    if (!ok) return
+    this.deleting = true
+    try {
+      if (type) await biz.deleteRemote(type, id)
+      biz.unclaim(id)
+    } catch (err) {
+      this.deleting = false
+      return
+    }
+    this.deleting = false
+    const rest = (this.source || []).filter((o) => String(o.id) !== id)
+    this.source = rest
+    const stats = Object.assign({}, this.data.stats)
+    stats.claimed = rest.filter((o) => o.claimed).length
+    this.setData({ total: rest.length, stats })
+    this.applyList()
+    wx.showToast({ title: '已删除', icon: 'none' })
   },
 
   /* 打开站内对话：条件已在商机页逐项确认，直接带确认结果开通会话 */
@@ -597,6 +871,11 @@ Page({
       wx.showToast({ title: '不能响应自己发布的需求', icon: 'none' })
       return
     }
+    /* 先领取再对接：未领取的代采 / 代售先跳详情页确认条件并领取 */
+    if (opp.platformOnly && !opp.claimed) {
+      this.viewOpp({ currentTarget: { dataset: { id: opp.id, type: opp.type } } })
+      return
+    }
     if (opp.consulted || this.consulting) return
     this.consulting = true
     this.setData({ consultingId: id })
@@ -641,13 +920,16 @@ Page({
     const mark = (o) => (o.id === id ? Object.assign({}, o, { consulted: true }) : o)
     const src = (this.source && this.source.length) ? this.source : (this.data.items || [])
     this.source = src.map(mark)
-    this.setData({ items: this.filterItems(this.source) })
+    this.setData({ items: this.buildList(this.source) })
+    this.setData({ filteredCount: (this.filtered || []).length })
   },
 
   /* 已领取后再发起对话：条件已在领取时逐项确认，直接用商机页的结果开聊 */
   chatOpp(e) {
     const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
-    const opp = (this.data.items || []).filter((o) => o.id === ds.id)[0] || this.findOpp(ds.id)
+    const opp = (this.source || []).filter((o) => o.id === ds.id)[0]
+      || (this.data.items || []).filter((o) => o.id === ds.id)[0]
+      || this.findOpp(ds.id)
     if (!opp) return
     if (!opp.claimed) {
       /* 未领取：先进入商机页逐项确认条件并领取 */
@@ -661,6 +943,21 @@ Page({
   openDetail(e) {
     const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
     this.viewOpp({ currentTarget: { dataset: ds } })
+  },
+
+  /* 右上角收藏：本地立即生效，云端后台同步，不触发整卡点击 */
+  toggleFav(e) {
+    const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
+    const id = String(ds.id || '')
+    if (!id) return
+    const targetFav = ds.type === 'demand' ? 'demand' : (ds.type === 'agency' ? 'agency' : 'product')
+    const on = fav.toggleFav(targetFav, id)
+    const all = (this.source || []).map((o) => (
+      String(o.id) === id ? Object.assign({}, o, { fav: on }) : o
+    ))
+    this.source = all
+    this.applyList()
+    wx.showToast({ title: on ? '已收藏' : '已取消收藏', icon: 'none' })
   },
 
   copyPhone(e) {

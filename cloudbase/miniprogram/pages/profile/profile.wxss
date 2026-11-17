@@ -260,6 +260,14 @@
 .pf-kind.on .k {
   color: var(--brand);
 }
+/* 未填主体名称 / 职位：公开主体不可选，置灰提示先去补资料 */
+.pf-kind.dim {
+  opacity: .55;
+  border-style: dashed;
+}
+.pf-kind.dim .d {
+  color: var(--warn, #c2410c);
+}
 
 .pf-acts {
   display: flex;
@@ -316,4 +324,10 @@
 .qual-btn {
   flex: none;
   margin-left: 12rpx;
+}
+/* 资质未通过原因：与错误色统一，避免在 WXML 里写死颜色 */
+.qual-reason {
+  padding: 0 0 16rpx 4rpx;
+  line-height: 1.6;
+  color: var(--danger);
 }

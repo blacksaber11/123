@@ -100,7 +100,7 @@ function isRead(id) {
 /* 系统通知：消息页与首页未读角标共用同一份，避免两处口径不一致 */
 const SYSTEM_NOTICES = [
   { id: 'sys-1', kind: 'system', title: '咨询进度更新', content: '您对「H100 80G SXM 全新现货」的咨询已分配给客服小王', time: '10分钟前' },
-  { id: 'sys-2', kind: 'system', title: '材料审核通过', content: '您上传的资质材料已通过审核，可正常发布商品', time: '2小时前' },
+  { id: 'sys-2', kind: 'system', title: '资质材料已收到', content: '您上传的资质材料已保存，仅用于主体核验，不影响商品发布', time: '2小时前' },
   { id: 'sys-3', kind: 'system', title: '新功能上线', content: '支持在线签订电子合同，交易更便捷', time: '1天前' }
 ]
 

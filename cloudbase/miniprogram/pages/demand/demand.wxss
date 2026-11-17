@@ -1,12 +1,15 @@
 /* 需求详情与商品详情共用一套区块样式 */
 @import "../product/product.wxss";
 
-/* 需求主视觉：与管理端一致的品牌靛蓝，用更深的收尾与货盘区分 */
-.hero.demand {
-  background: linear-gradient(140deg, #4F46E5, #1E1B4B 70%);
-}
-.hero.demand .hbadge .pill-tag {
-  background: rgba(255, 255, 255, .24);
+/* 无图占位：预算单独一行，比数量 / 城市更醒目 */
+.ms-empty-budget {
+  position: relative;
+  z-index: 1;
+  margin-top: 10rpx;
+  font-size: 30rpx;
+  font-weight: 700;
+  letter-spacing: .01em;
+  color: #fff;
 }
 
 /* 响应咨询（发布方视角）：只展示条件满足度与报价 */
@@ -103,4 +106,35 @@
 .resp-time {
   font-size: 22rpx;
   color: var(--muted);
+}
+/* ⑤ 联系栏：只展示公开电话或未公开提示；私信入口固定在底部栏 */
+.contact-phone {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+.contact-phone .cp-k {
+  flex: none;
+  font-size: 24rpx;
+  color: var(--ink-2);
+}
+.contact-phone .cp-v {
+  flex: 1;
+  min-width: 0;
+  font-size: 30rpx;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 1rpx;
+}
+.contact-phone .cp-act {
+  flex: none;
+  padding: 6rpx 20rpx;
+  font-size: 22rpx;
+  color: var(--brand);
+  border: 1rpx solid var(--brand);
+  border-radius: 999rpx;
+}
+.contact-phone-none {
+  font-size: 26rpx;
+  color: var(--ink-2);
 }

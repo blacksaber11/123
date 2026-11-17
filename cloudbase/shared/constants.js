@@ -9,6 +9,7 @@ const ROLES = Object.freeze({
   USER: 'user',
   CS: 'cs',
   FINANCE: 'finance',
+  SALES: 'sales',
   ADMIN: 'admin'
 })
 
@@ -89,6 +90,66 @@ const LEAD_TRANSITIONS = Object.freeze({
 const PHONE_REVEALABLE_STATUS = Object.freeze([LEAD_STATUS.MATCHED, LEAD_STATUS.DEALT])
 
 /**
+ * 代采代售咨询工单的业务阶段（仅 leads.targetType='agency' 使用）。
+ * 领取 → 沟通确认条件 → 居间合同线下签署上传 → 管理员审核归档 → 委托方确认成交
+ * → 服务费出账 → 线下打款上传凭证 → 财务确认到账 → 客服结束服务。
+ */
+const CONSULT_STAGE = Object.freeze({
+  COMMUNICATING: 'communicating',
+  TERMS: 'terms',
+  CONTRACT: 'contract',
+  SIGNED: 'signed',
+  DEAL_PENDING: 'deal_pending',
+  FEE: 'fee',
+  PAID: 'paid',
+  DONE: 'done',
+  ABORTED: 'aborted'
+})
+
+const CONSULT_STAGE_LABELS = Object.freeze({
+  communicating: '沟通中',
+  terms: '条件已确认',
+  contract: '居间合同待审核',
+  signed: '居间合同已归档',
+  deal_pending: '成交已确认（旧）',
+  fee: '服务费待支付',
+  paid: '服务费已到账',
+  done: '已完成',
+  aborted: '已终止'
+})
+
+/** 工作台进度条顺序（不含终止态） */
+const CONSULT_STAGE_ORDER = Object.freeze([
+  'communicating',
+  'terms',
+  'contract',
+  'signed',
+  'deal_pending',
+  'fee',
+  'paid',
+  'done'
+])
+
+/**
+ * 阶段流转白名单：不在表内一律 CONFLICT，避免跳步或回退。
+ * 合同归档后由客服「登记成交」，平台直接确认成交，工单直接进入服务费待支付；
+ * deal_pending 仅保留给升级前已停在「待确认成交」的历史工单（可补确认或回退重谈）。
+ * 回退只保留三条：合同驳回 `contract → terms`、成交被拒 `deal_pending → terms`、
+ * 退款冲正 `paid → fee` / `done → fee`（合同与成交记录仍保留，需重新收款后再确认完成）。
+ */
+const CONSULT_TRANSITIONS = Object.freeze({
+  communicating: ['terms', 'aborted'],
+  terms: ['contract', 'aborted'],
+  contract: ['signed', 'terms', 'aborted'],
+  signed: ['deal_pending', 'fee', 'aborted'],
+  deal_pending: ['fee', 'terms', 'aborted'],
+  fee: ['paid', 'aborted'],
+  paid: ['done', 'fee'],
+  done: ['fee'],
+  aborted: []
+})
+
+/**
  * 交易方式：四种互斥模式，价格口径与字段集合完全不同。
  * - 出售 / 求购：一次性成交，计价「元 / 台」，需要交易地与成色
  * - 出租 / 租赁：按租期用，计价「元 / 台 / 月」，设备留在出租方机房，无交易地、无成色
@@ -166,8 +227,7 @@ const MUST_CONDITIONS_BUY = Object.freeze([
   '接受同台互验',
   '提供设备实拍图片',
   '提供设备实拍视频',
-  '支持资金监管账户',
-  '可提供暗语视频（协商后录制）'
+  '支持资金监管账户'
 ])
 
 /** 租赁场景必须条件（出租方对承租方） */
@@ -188,7 +248,6 @@ const MUST_CONDITIONS_LEASE = Object.freeze([
   '提供设备实拍图片',
   '提供设备实拍视频',
   '接受同台互验',
-  '可提供暗语视频（协商后录制）',
   '支持租金资金监管账户'
 ])
 
@@ -199,8 +258,7 @@ const MUST_CONDITIONS = Object.freeze([
   ...MUST_CONDITIONS_RENT,
   ...MUST_CONDITIONS_LEASE,
   '接受指定交易地点',
-  '支持资金监管账户',
-  '可提供暗语视频（协商后录制）'
+  '支持资金监管账户'
 ].filter((item, index, arr) => arr.indexOf(item) === index))
 
 /** 咨询人筛选档位 */
@@ -242,12 +300,14 @@ const RATE_LIMITS = Object.freeze({
   publishNews: { max: 5, windowMs: 24 * 60 * 60 * 1000, label: '账号' }, // 资讯投稿 5 篇 / 天
   bizApply: { max: 3, windowMs: 24 * 60 * 60 * 1000, label: '账号' }, // 商机开通申请 3 次 / 天
   bizClaim: { max: 30, windowMs: 24 * 60 * 60 * 1000, label: '账号' }, // 领取联系方式 30 次 / 天
+  bizConsult: { max: 10, windowMs: 60 * 60 * 1000, label: '账号' }, // 代采代售对接 10 次 / 小时
   msgSend: { max: 120, windowMs: 60 * 60 * 1000, label: '账号' }, // 站内消息 / 直聊 120 条 / 小时
   stockSave: { max: 200, windowMs: 24 * 60 * 60 * 1000, label: '账号' }, // 库存写入 200 次 / 天
   favSave: { max: 500, windowMs: 24 * 60 * 60 * 1000, label: '账号' }, // 收藏 / 取消收藏 500 次 / 天
   followSave: { max: 100, windowMs: 24 * 60 * 60 * 1000, label: '账号' }, // 关注 / 取关 100 次 / 天
   searchLog: { max: 120, windowMs: 60 * 60 * 1000, label: '账号' }, // 搜索埋点 120 次 / 小时
   browse: { max: 300, windowMs: 60 * 1000, label: '用户' }, // 读接口 300 次 / 分钟
+  withdraw: { max: 3, windowMs: 24 * 60 * 60 * 1000, label: '账号' }, // 推广提现 3 次 / 天
   duplicateConsult: { windowMs: 24 * 60 * 60 * 1000 } // 同一手机号 + 同一目标 24 小时去重
 })
 
@@ -294,8 +354,9 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   'agency.review': '审核代采 / 代购工单',
   'agency.reveal': '查看委托联系方式',
   'agency.reject': '驳回委托',
-  'agency.close': '关闭委托 / 发起成交确认',
-  'agency.dealConfirm': '委托方确认成交',
+  'agency.close': '关闭委托 / 平台确认成交',
+  'agency.complete': '服务费到账，确认完成委托',
+  'agency.dealConfirm': '平台确认成交',
   'agency.expire': '委托到截止时间自动关闭',
   'news.create': '发布官方资讯',
   'news.review': '审核资讯投稿',
@@ -303,7 +364,6 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   'news.delete': '删除资讯',
   'quote.paste': '提交粘贴报价',
   'quote.remove': '删除粘贴报价',
-  'biz.apply': '申请商机权限',
   'biz.grant': '开通 / 续费商机权限',
   'biz.revoke': '停用商机权限',
   'biz.setExpire': '修改商机权限到期时间',
@@ -539,11 +599,48 @@ const DEMO_ADMIN_ACCOUNTS = Object.freeze([
 
 const SOURCE_LABEL = '小程序咨询'
 
+/**
+ * 商机会员到期提醒的默认口径：内容模板支持 {nick} / {days} / {expire} 三个变量。
+ * 管理端媒体页「提醒设置」写入 settings.memberRemind，定时与手动提醒共用这一份。
+ */
+const MEMBER_REMIND_DEFAULTS = Object.freeze({
+  enabled: true,
+  days: 7,
+  hour: 10,
+  maxTimes: 3,
+  intervalDays: 2,
+  title: '商机会员即将到期',
+  body: '你的商机会员还有 {days} 天到期（{expire}）。到期后将无法查看与对接商机，续费后可继续使用。'
+})
+
+/** 提醒配置归一化：数值按区间收敛，缺省回落到默认值 */
+function memberRemindOf(input) {
+  const src = input && typeof input === 'object' ? input : {}
+  const clamp = (value, min, max, fallback) => {
+    const n = Math.floor(Number(value))
+    if (!Number.isFinite(n)) return fallback
+    return Math.min(max, Math.max(min, n))
+  }
+  return {
+    enabled: src.enabled !== false,
+    days: clamp(src.days, 1, 30, MEMBER_REMIND_DEFAULTS.days),
+    hour: clamp(src.hour, 0, 23, MEMBER_REMIND_DEFAULTS.hour),
+    maxTimes: clamp(src.maxTimes, 1, 10, MEMBER_REMIND_DEFAULTS.maxTimes),
+    intervalDays: clamp(src.intervalDays, 0, 30, MEMBER_REMIND_DEFAULTS.intervalDays),
+    title: String(src.title || MEMBER_REMIND_DEFAULTS.title).slice(0, 40),
+    body: String(src.body || MEMBER_REMIND_DEFAULTS.body).slice(0, 200)
+  }
+}
+
 module.exports = {
   ROLES,
   LEAD_STATUS,
   LEAD_TRANSITIONS,
   PHONE_REVEALABLE_STATUS,
+  CONSULT_STAGE,
+  CONSULT_STAGE_LABELS,
+  CONSULT_STAGE_ORDER,
+  CONSULT_TRANSITIONS,
   PRODUCT_STATUS,
   PRODUCT_PUBLIC_STATUS,
   PRODUCT_CONSULTABLE_STATUS,
@@ -602,5 +699,7 @@ module.exports = {
   LARGE_SELL_MATERIALS,
   ENCRYPTED_FIELDS,
   DEMO_ADMIN_ACCOUNTS,
-  SOURCE_LABEL
+  SOURCE_LABEL,
+  MEMBER_REMIND_DEFAULTS,
+  memberRemindOf
 }

@@ -85,14 +85,27 @@ function buildWhere(query) {
   }
 }
 
+/**
+ * 排序参数归一化：既支持 { field, dir } / 'field'，也兼容 { field: 1 | -1 } 简写。
+ * 简写不归一的话 field 为 undefined，jsonPath 会抛「查询字段非法」。
+ */
+function normalizeSortSpec(spec) {
+  if (typeof spec === 'string') return { field: spec, desc: false }
+  const o = spec || {}
+  if (o.field) return { field: o.field, desc: o.dir === 'desc' || o.dir === -1 }
+  const key = Object.keys(o)[0]
+  if (!key) return null
+  return { field: key, desc: o[key] === -1 || o[key] === 'desc' }
+}
+
 function buildOrder(sort) {
   if (!sort) return { sql: '', params: [] }
-  const specs = Array.isArray(sort) ? sort : [sort]
+  const specs = (Array.isArray(sort) ? sort : [sort]).map(normalizeSortSpec).filter(Boolean)
   const parts = []
   const params = []
   for (const spec of specs) {
-    const field = typeof spec === 'string' ? spec : spec.field
-    const desc = typeof spec === 'object' && spec.dir === 'desc'
+    const field = spec.field
+    const desc = spec.desc
     const path = jsonPath(field)
     /* 缺失字段排最后，和内存实现的 undefined / null 排序口径一致 */
     parts.push('(JSON_EXTRACT(data, ?) IS NULL) ASC')
@@ -182,7 +195,9 @@ function createMysqlRepo(options) {
   async function assertNoDuplicate(conn, collection, doc, excludeId) {
     const specs = UNIQUE_INDEXES[collection] || []
     for (const fields of specs) {
-      if (fields.length === 1 && doc[fields[0]] === undefined) continue
+      /* 单字段唯一索引允许空值（未回填的 proofNo 等）；在途键靠退役键保持唯一，
+         不依赖空值：云开发唯一索引会把多行的 null 视为冲突 */
+      if (fields.length === 1 && (doc[fields[0]] === undefined || doc[fields[0]] === null)) continue
       const query = {}
       let usable = true
       for (const f of fields) {

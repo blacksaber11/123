@@ -10,6 +10,7 @@ const { request } = require('../../utils/request')
 const { ensureProfileReady } = require('../../utils/profile-ready')
 const prefs = require('../../utils/prefs')
 const chat = require('../../utils/chat')
+const version = require('../../utils/version')
 
 function pad(n) {
   return n < 10 ? '0' + n : '' + n
@@ -20,6 +21,50 @@ function fmtTime(at) {
   if (!n) return ''
   const d = new Date(n)
   return pad(d.getFullYear()).slice(2) + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+}
+
+/* 合同扫描件后缀：图片走页内预览，PDF / Office 走系统阅读器（关闭转发菜单） */
+const IMG_EXTS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp']
+const DOC_TYPES = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx']
+
+function fileExtOf(name) {
+  const m = String(name || '').toLowerCase().match(/\.([a-z0-9]{2,5})$/)
+  return m ? m[1] : ''
+}
+
+/**
+ * 咨询进度映射：服务端只给阶段、时间线与合同 / 账单摘要，这里转成展示字段。
+ * 未走客服咨询的委托（自助发布）返回 started=false，面板不展示服务进度。
+ */
+function consultViewOf(res) {
+  const r = res || {}
+  if (r.started !== true) {
+    /* 已提交咨询但还没生成工单：只给一句接入提示，不展示尚未开始的分步流程 */
+    return {
+      consultStarted: false,
+      consultPendingLabel: r.pending ? (r.pendingLabel || '客服即将接入') : ''
+    }
+  }
+  const nodes = (Array.isArray(r.timeline) ? r.timeline : []).map((n, i) => ({
+    key: 'cn' + i,
+    label: n.stageLabel || '',
+    line: [n.at ? fmtTime(n.at) : '', n.note || ''].filter(Boolean).join(' · ')
+  }))
+  const contract = r.contract
+  const fee = r.fee
+  return {
+    consultStarted: true,
+    consultStageLabel: r.stageLabel || '',
+    consultCsName: r.csName || '',
+    consultNodes: nodes,
+    consultContract: contract ? {
+      text: [contract.status || '', contract.contractNo || ''].filter(Boolean).join(' · ') +
+        (contract.signedAt ? ' · 签约 ' + fmtTime(contract.signedAt) : ''),
+      /* 只有归档后的合同才对委托方开放扫描件 */
+      canView: contract.status === '已归档' && Number(contract.fileCount) > 0
+    } : null,
+    consultProofCount: fee ? (Number(fee.proofCount) || 0) : 0
+  }
 }
 
 /* 「我的」本地快照：先渲染本机数据，云端只做后台刷新，减少无效请求 */
@@ -60,6 +105,7 @@ const QUICKS = [
    「我的商机」不在本页展开二级页，直接进商机页（未开通时由商机页展示套餐引导） */
 const MENUS = [
   { k: 'biz', icon: 'menu-agency', n: '我的商机', d: '只显示你已领取的商机，可回看联系方式并发起对话', url: '/pages/biz/biz?mode=mine' },
+  { k: 'promote', icon: 'menu-agency', n: '推广中心', d: '分享赚钱，好友下单即得佣金', url: '/pages/promote/promote' },
   { k: 'agency', icon: 'menu-agency', n: '我的委托', d: '代采 / 代售订单、服务费与撤销' },
   { k: 'pay', icon: 'menu-agency', n: '我的订单', d: '会员开通记录与代采 / 代售订单记录' },
   { k: 'profile', icon: 'menu-qual', n: '我的信息', d: '资料、资质与公开范围', url: '/pages/profile/profile' },
@@ -82,6 +128,7 @@ const STATUS_STYLE = {
   '洽谈中': 'st-ok',
   '已对接': 'st-ok',
   '已上架': 'st-ok',
+  '已锁定': 'st-ok',
   '已成交': 'st-ok',
   '已完成': 'st-ok'
 }
@@ -157,10 +204,15 @@ const BASE = {
     notifyBiz: true,
     /* 水印保护默认开启；关闭后聊天与作品图片、视频不再叠加水印 */
     wmOn: true,
+    /* 设置页「关于平台」右侧展示的版本号：与关于页同源，避免两处不一致 */
+    appVersion: version.currentVersion(),
     /* 未开通商机会员时，在四宫格上方展示开通引导；默认展示，确认已开通后再收起 */
     bizLocked: true,
     /* 已领取的商机条数：只统计「我的商机」里已领取的，不含商机池中可领取的 */
-    bizClaimed: 0
+    bizClaimed: 0,
+    /* 推广中心入口：已开通时在菜单描述里展示累计收益，未开通 / 接口失败时保留「分享赚钱」 */
+    promoteActive: false,
+    promoteEarning: '0.00'
   },
 
   /* 二级视图独立成页：系统返回 / 侧滑返回都回到「我的」，不会退出小程序 */
@@ -208,8 +260,8 @@ const BASE = {
   async onShow() {
     /* 只有需要身份的动作页才拦登录；「我的」允许未登录浏览，由页面内引导登录 */
     if (!gate(this.route || 'pages/mine/mine', this.options)) return
-    /* 只允许把「已发布的公开条目」发给朋友，分享链接不带任何联系方式 */
-    guard.enableShare()
+    /* 「我的」首页可分享；二级视图（含身份材料）保持关闭，不能在这里把分享重新打开 */
+    if (this.data.mode !== 'sub') guard.enableShare()
     if (this.data.mode === 'sub') {
       /* 已经在二级页：清掉发布页留下的落点，避免之后回菜单时被再次跳转 */
       try {
@@ -236,6 +288,7 @@ const BASE = {
     }
     this.refreshNotify()
     this.loadBizGuide()
+    this.loadPromoteEntry()
     /* 先切到「我发布的」再拉取：applyPub 按当前子类组装列表 */
     this.openPendingPub()
     /* 委托刚提交：直接打开「我的委托」看进度 */
@@ -500,15 +553,14 @@ const BASE = {
             canCancel: a.canCancel === true,
             selfClosed: a.selfClosed === true,
             paidClaimText: a.paidClaimText || '',
-            /* 委托方确认成交：服务端在待确认成交时给出 canConfirmDeal */
-            canConfirmDeal: a.canConfirmDeal === true,
+            /* 成交由平台确认：这里只展示确认人与确认时间 */
+            dealConfirmedAtText: a.dealConfirmedAtText || '',
+            dealConfirmedBy: a.dealConfirmedBy || '',
             /* 已成交且服务费未到账时，保留「我已支付」上报入口 */
             canPayFee: status === '已成交' && feeNum > 0 && !feePaid,
             flowNodes,
             dealAmountText: a.dealAmountText || '',
             completedText: a.completedText || '',
-            receiptText: a.receiptText || '',
-            canConfirmReceipt: a.canConfirmReceipt === true,
             /* 已上架委托可提交修改：提交即下架，审核通过后自动更新并重新上架 */
             canEdit: a.canEdit === true,
             /* 被驳回的委托：可回发布页修改并重传材料重新提交，也可直接删除 */
@@ -538,6 +590,8 @@ const BASE = {
       this.setData(patch)
       writeCache(CACHE_AGENCY, list)
       this.buildMenu()
+      /* 面板开着：操作后重新拉一次咨询进度，阶段与合同状态跟着更新 */
+      if (openId && hit) this.loadConsultProgress(openId)
     } catch (err) { /* 云端不可用时保持空态，不伪造委托记录 */ }
   },
 
@@ -669,14 +723,49 @@ const BASE = {
     }
     this.setData({
       quick: QUICKS.map((q) => Object.assign({}, q, { cnt: counts[q.k] || 0 })),
-      menu: MENUS.map((m) => Object.assign({}, m, { cnt: counts[m.k] }))
+      menu: MENUS.map((m) => Object.assign({}, m, {
+        cnt: counts[m.k],
+        /* 推广中心：已开通且有收益数据时展示累计收益，失败 / 未开通时保留「分享赚钱」 */
+        d: m.k === 'promote' && d.promoteActive ? '累计收益 ¥' + d.promoteEarning : m.d
+      }))
     })
+  },
+
+  /**
+   * 推广中心入口：只取一次概览，失败静默。
+   * 已开通时把累计收益显示在菜单描述里；同时把自己的推广码写入全局，
+   * 供所有页面分享时统一追加。接口失败不展示金额，也不影响入口。
+   */
+  loadPromoteEntry() {
+    request('user', 'promote.summary', {}, { silent: true })
+      .then((res) => {
+        const data = res || {}
+        const totals = data.totals || {}
+        const active = data.active === true || data.status === 'active'
+        const code = String(data.refCode || data.shareRef || '')
+        if (code) {
+          try {
+            const app = getApp()
+            if (app && app.globalData) app.globalData.refCode = code
+          } catch (e) {}
+        }
+        this.setData({
+          promoteActive: active,
+          promoteEarning: (Number(totals.earning) || 0).toFixed(2)
+        })
+        this.buildMenu()
+      })
+      .catch(() => {
+        this.setData({ promoteActive: false, promoteEarning: '0.00' })
+      })
   },
 
   loadFav() {
     const store = fav.read()
     const pIds = (store.product || []).map(String)
     const dIds = (store.demand || []).map(String)
+    /* 代采 / 代售委托也归在「货源」页签下展示 */
+    const aIds = (store.agency || []).map(String)
     /* 本地演示数据里能查到的先立即渲染，查不到的走云端拉详情 */
     const favProducts = pIds.map((id) => M.productById(id)).filter(Boolean)
     const favDemands = dIds.map((id) => M.demandById(id)).filter(Boolean)
@@ -689,7 +778,7 @@ const BASE = {
     /* 云端收藏（不在演示数据里的 id）单独取详情；拉不到的说明已下架，不再展示 */
     const missP = pIds.filter((id) => !M.productById(id))
     const missD = dIds.filter((id) => !M.demandById(id))
-    if (missP.length || missD.length) this.loadFavRemote(missP, missD)
+    if (missP.length || missD.length || aIds.length) this.loadFavRemote(missP, missD, aIds)
   },
 
   /* 收藏页签对应的列表：货源 / 求购需求 / 资讯 */
@@ -720,12 +809,15 @@ const BASE = {
   },
 
   /* 收藏里的云端条目：按 id 取详情，返回结构与本地区目一致 */
-  async loadFavRemote(productIds, demandIds) {
-    const [ps, ds] = await Promise.all([
+  async loadFavRemote(productIds, demandIds, agencyIds) {
+    const [ps, ds, as] = await Promise.all([
       Promise.all(productIds.map((id) =>
         request('user', 'product.detail', { id }, { silent: true }).catch(() => null))),
       Promise.all(demandIds.map((id) =>
-        request('user', 'demand.detail', { id }, { silent: true }).catch(() => null)))
+        request('user', 'demand.detail', { id }, { silent: true }).catch(() => null))),
+      (agencyIds && agencyIds.length
+        ? request('user', 'biz.cards', { ids: agencyIds }, { silent: true })
+        : Promise.resolve(null)).catch(() => null)
     ])
     const moreP = ps.filter((d) => d && d.id).map((d) => {
       const item = shop.toProduct(d)
@@ -737,8 +829,24 @@ const BASE = {
       item.kind = 'demand'
       return item
     })
-    if (!moreP.length && !moreD.length) return
-    const favProducts = this.data.favProducts.concat(moreP)
+    /* 代采 / 代售：委托方匿名，统一由平台代为对接，点开仍进商机商品页 */
+    const moreA = (((as && as.items) || [])).map((o) => ({
+      id: String(o.id),
+      kind: 'product',
+      biz: 'agency',
+      title: o.title || '平台委托',
+      tradeMode: o.kind || '代采',
+      isRent: false,
+      cat: o.cat || '其他',
+      brand: '平台委托',
+      city: o.city || '',
+      qty: Number(o.qty) || 0,
+      cond: '平台代为对接',
+      priceText: o.priceText || '面议',
+      published: ''
+    }))
+    if (!moreP.length && !moreD.length && !moreA.length) return
+    const favProducts = this.data.favProducts.concat(moreP, moreA)
     const favDemands = this.data.favDemands.concat(moreD)
     this.setData({
       favProducts,
@@ -1324,12 +1432,16 @@ const BASE = {
   viewProduct(e) {
     const id = String(e.currentTarget.dataset.id)
     const type = e.currentTarget.dataset.type
+    const biz = String(e.currentTarget.dataset.biz || '')
     // data-type 为 product / demand 或「商品 / 需求」
     if (type === 'demand' || type === '需求') {
       wx.navigateTo({ url: '/pages/demand/demand?id=' + id })
       return
     }
-    wx.navigateTo({ url: '/pages/product/product?id=' + id })
+    /* 代采 / 代售收藏：仍进统一的商机商品页 */
+    wx.navigateTo({
+      url: '/pages/product/product?id=' + id + (biz === 'agency' ? '&biz=agency' : '')
+    })
   },
 
   editProduct(e) {
@@ -1454,28 +1566,93 @@ const BASE = {
     const item = (this.data.agencyList || []).filter((a) => String(a.id) === id)[0]
     if (!item) return
     this.setData({ agencyDetailOpen: true, agencyDetail: item })
+    /* 客服标准流程的进度 / 合同 / 账单按需加载：列表不发起额外请求 */
+    this.loadConsultProgress(id)
   },
 
   closeAgencyDetail() {
     this.setData({ agencyDetailOpen: false, agencyDetail: null })
   },
 
-  /* 确认成交：委托方确认后服务端再计算服务费，到账状态以 feeStatusText 为准 */
-  confirmDeal(e) {
-    const id = String((e.currentTarget.dataset || {}).id || '')
+  /* 咨询进度：未走客服咨询（自助发布）时 started=false，面板不展示该段 */
+  async loadConsultProgress(agencyId) {
+    const id = String(agencyId || '')
     if (!id) return
-    wx.showModal({
-      title: '确认成交',
-      content: '确认本次委托已成交？确认后按成交金额结算服务费，可在委托详情查看服务费状态。',
-      success: async (res) => {
-        if (!res.confirm) return
-        try {
-          await request('user', 'agency.dealConfirm', { id }, { silent: false })
-          wx.showToast({ title: '已确认成交', icon: 'none' })
-          this.loadAgencies()
-        } catch (err) {
-          /* request 已按错误码提示（状态已变化 / 非本人委托） */
+    let res = null
+    try {
+      res = await request('user', 'consult.progress', { id }, { silent: true })
+    } catch (e) {
+      return
+    }
+    const cur = this.data.agencyDetail
+    if (!cur || String(cur.id) !== id) return
+    this.setData({ agencyDetail: Object.assign({}, cur, consultViewOf(res)) })
+  },
+
+  /* 查看居间合同：仅委托方本人可取，服务端每次取用都留审计；扫描件只做在线预览 */
+  async viewContract() {
+    const cur = this.data.agencyDetail
+    if (!cur || !cur.id) return
+    wx.showLoading({ title: '读取合同', mask: true })
+    let res = null
+    try {
+      res = await request('user', 'consult.contractFile', { id: cur.id }, { silent: true })
+    } catch (err) {
+      wx.hideLoading()
+      wx.showToast({ title: (err && err.message) || '合同读取失败，请稍后重试', icon: 'none' })
+      return
+    }
+    wx.hideLoading()
+    const files = Array.isArray(res && res.files) ? res.files : []
+    const urls = (res && res.urls) || {}
+    const list = files.filter((f) => f && f.fileId && urls[f.fileId])
+    if (!list.length) {
+      wx.showToast({ title: '合同链接已失效，请稍后重试', icon: 'none' })
+      return
+    }
+    if (list.length === 1) {
+      this.openContractFile(list[0], urls[list[0].fileId], list, urls)
+      return
+    }
+    wx.showActionSheet({
+      itemList: list.slice(0, 6).map((f, i) => f.name || ('合同文件 ' + (i + 1))),
+      success: (r) => {
+        const f = list[r.tapIndex]
+        if (f) this.openContractFile(f, urls[f.fileId], list, urls)
+      }
+    })
+  },
+
+  openContractFile(file, url, list, urls) {
+    const ext = fileExtOf(file.name)
+    if (IMG_EXTS.indexOf(ext) > -1) {
+      const imgs = list
+        .filter((f) => IMG_EXTS.indexOf(fileExtOf(f.name)) > -1 && urls[f.fileId])
+        .map((f) => urls[f.fileId])
+      /* 合同扫描件属保密材料：关闭长按菜单，避免保存 / 转发 */
+      wx.previewImage({ current: url, urls: imgs.length ? imgs : [url], showmenu: false })
+      return
+    }
+    wx.showLoading({ title: '打开合同', mask: true })
+    wx.downloadFile({
+      url,
+      success: (r) => {
+        wx.hideLoading()
+        if (!r || r.statusCode !== 200 || !r.tempFilePath) {
+          wx.showToast({ title: '合同下载失败，请稍后重试', icon: 'none' })
+          return
         }
+        wx.openDocument({
+          filePath: r.tempFilePath,
+          fileType: DOC_TYPES.indexOf(ext) > -1 ? ext : 'pdf',
+          /* 关闭右上角转发菜单：合同只在本人设备上查看 */
+          showMenu: false,
+          fail: () => wx.showToast({ title: '当前微信版本无法打开该文件', icon: 'none' })
+        })
+      },
+      fail: () => {
+        wx.hideLoading()
+        wx.showToast({ title: '合同下载失败，请稍后重试', icon: 'none' })
       }
     })
   },
@@ -1552,31 +1729,12 @@ const BASE = {
     })
   },
 
-  /* 确认收货：成交后由委托方确认，确认即结束本次委托 */
-  confirmReceipt(e) {
-    const id = String((e.currentTarget.dataset || {}).id || '')
-    if (!id) return
-    const item = (this.data.agencyList || []).find((a) => a.id === id) || {}
-    wx.showModal({
-      title: '确认收货',
-      content: '确认已收到本次委托的' + (item.title || '货物') + '（成交金额 ' + (item.dealAmountText || '面议') + '）？确认后委托即结束，不可撤销。',
-      success: async (res) => {
-        if (!res.confirm) return
-        try {
-          await request('user', 'agency.receipt', { id }, { silent: false })
-          wx.showToast({ title: '已确认收货，委托结束', icon: 'none' })
-          this.loadAgencies()
-        } catch (err) {
-          /* request 已按错误码提示（未成交 / 已确认收货） */
-        }
-      }
-    })
-  },
-
   unfav(e) {
     const id = e.currentTarget.dataset.id
-    const type = this.data.favTab === 'product' ? 'product'
-      : (this.data.favTab === 'news' ? 'news' : 'demand')
+    const fromList = String((e.currentTarget.dataset && e.currentTarget.dataset.type) || '')
+    const type = fromList === 'agency' ? 'agency'
+      : (this.data.favTab === 'product' ? 'product'
+        : (this.data.favTab === 'news' ? 'news' : 'demand'))
     fav.toggleFav(type, id)
     this.loadFav()
     if (type === 'news') this.loadFavNews()

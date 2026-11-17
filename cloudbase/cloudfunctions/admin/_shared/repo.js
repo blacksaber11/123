@@ -34,11 +34,20 @@ const COLLECTIONS = Object.freeze([
   /* 聊天媒体打开登记：已打开的图片 / 视频保留 30 天，未打开 7 天后清理 */
   'chatMedia',
   /* 资讯互动：点赞、评论与「我的评论」已读位置 */
-  'newsLikes', 'newsComments', 'commentReads'
+  'newsLikes', 'newsComments', 'commentReads',
+  /* 推广分佣：推广关系、佣金流水、提现单、出款明细、协议签署记录与推广配置 */
+  'referralBindings', 'commissions', 'promoterWithdrawals', 'promotePayoutItems', 'promoteAgreements', 'promoteSettings',
+  /* 客服业务：客服-用户绑定、会员支付提成流水、咨询评价、客服单独比例配置 */
+  'csBindings', 'csCommissions', 'csRatings', 'csProfiles',
+  /* 客服咨询流程：代采代售居间合同（一单一合同）、服务费到账后代采代售佣金流水 */
+  'agencyContracts', 'csAgencyCommissions',
+  /* 代采代售委托独家领取：一条委托同时只允许一个会员领取，领取前内容与金额对其他人隐藏 */
+  'agencyClaims'
 ])
 
 const UNIQUE_INDEXES = Object.freeze({
-  users: [['openid']],
+  /* 推广码全局唯一（老数据可能为空，单字段空值不参与判重） */
+  users: [['openid'], ['refCode']],
   profiles: [['uid']],
   sessions: [['tokenHash']],
   /* counters 的 id 已经含窗口起点（key@windowStart），不能再对 key 建唯一索引，否则跨窗口会冲突 */
@@ -57,7 +66,29 @@ const UNIQUE_INDEXES = Object.freeze({
   /* 日快照：同一天只保留一条聚合记录 */
   dailyStats: [['date']],
   /* 自定义角色：角色标识唯一 */
-  roles: [['roleKey']]
+  roles: [['roleKey']],
+  /* 推广关系：一个被邀请人只能绑定一次，id 即被邀请人 uid */
+  referralBindings: [['uid']],
+  /* 佣金流水：同一笔支付只能计佣一次，重复回调幂等 */
+  commissions: [['paymentId']],
+  /* 提现单：单据号 / 请求号唯一；未完结时 activeKey=uid 占位，任一时刻仅一笔在途；
+     终态写唯一退休键 R#<id>（云开发唯一索引把 null 视为同一个值，不能多行同时为 null） */
+  promoterWithdrawals: [['proofNo'], ['requestId'], ['activeKey']],
+  /* 出款明细：提现单号 + 明细序号唯一；activeCommissionKey 在 todo/doing/failed 时等于 commissionId，
+     终态写唯一退休键 R#<id>，数据库唯一约束保证一笔佣金同时只被一条有效明细占用（I9） */
+  promotePayoutItems: [['withdrawalId', 'seq'], ['activeCommissionKey']],
+  /* 客服绑定：一个客服只能绑一个用户（id=csId），一个用户也只能归属一个客服（uid 唯一） */
+  csBindings: [['uid']],
+  /* 客服提成流水：同一笔会员支付只能计提一次 */
+  csCommissions: [['paymentId']],
+  /* 客服评价：一张咨询单只能评价一次 */
+  csRatings: [['leadId']],
+  /* 居间合同：一条咨询单只允许一份有效合同（驳回重传按版本叠加，不新增行） */
+  agencyContracts: [['leadId']],
+  /* 代采代售佣金：同一笔服务费账单只能计提一次 */
+  csAgencyCommissions: [['paymentId']],
+  /* 委托独家领取：一条委托只能有一条领取锁，抢锁失败即已被他人领取 */
+  agencyClaims: [['agencyId']]
 })
 
 function clone(value) {
@@ -106,13 +137,27 @@ function matchDoc(doc, query) {
   return true
 }
 
+/**
+ * 排序参数归一化：既支持 { field, dir } / 'field'，也兼容 { field: 1 | -1 } 简写。
+ * 简写若不归一，MySQL 实现拿不到字段名会直接报「查询字段非法」。
+ */
+function normalizeSort(spec) {
+  if (typeof spec === 'string') return { field: spec, dir: 1 }
+  const o = spec || {}
+  if (o.field) return { field: o.field, dir: o.dir === 'desc' || o.dir === -1 ? -1 : 1 }
+  const key = Object.keys(o)[0]
+  if (!key) return null
+  return { field: key, dir: o[key] === -1 || o[key] === 'desc' ? -1 : 1 }
+}
+
 function applySort(rows, sort) {
   if (!sort) return rows
-  const specs = Array.isArray(sort) ? sort : [sort]
+  const specs = (Array.isArray(sort) ? sort : [sort]).map(normalizeSort).filter(Boolean)
+  if (!specs.length) return rows
   return rows.slice().sort((a, b) => {
     for (const spec of specs) {
-      const field = typeof spec === 'string' ? spec : spec.field
-      const dir = typeof spec === 'string' ? 'asc' : spec.dir === 'desc' ? -1 : 1
+      const field = spec.field
+      const dir = spec.dir
       const av = getPath(a, field)
       const bv = getPath(b, field)
       if (av === bv) continue
@@ -150,6 +195,8 @@ function createMemoryRepo(seed) {
   function uniqueViolation(collection, doc, excludeId) {
     const specs = UNIQUE_INDEXES[collection] || []
     for (const fields of specs) {
+      /* 单字段索引允许为空：如财务回填前的 proofNo 不参与判重（与云数据库 / MySQL 适配器一致） */
+      if (fields.length === 1 && (getPath(doc, fields[0]) === undefined || getPath(doc, fields[0]) === null)) continue
       const hit = state[collection].some((row) => {
         if (row.id === excludeId) return false
         return fields.every((f) => deepEqual(getPath(row, f), getPath(doc, f)))

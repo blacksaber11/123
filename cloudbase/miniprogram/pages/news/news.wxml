@@ -97,6 +97,9 @@
           </view>
         </view>
       </view>
+      <view wx:if="{{commentHasMore}}" class="nw-cmt-more" bindtap="loadMoreComments">
+        {{commentLoadingMore ? '加载中…' : '加载更多评论'}}
+      </view>
     </view>
 
     <view wx:if="{{news.authorKey}}" class="nw-more" bindtap="openAuthor">

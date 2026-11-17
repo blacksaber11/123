@@ -63,7 +63,7 @@
       </view>
       <view class="pf-f">
         <text class="pf-l">职位 / 身份</text>
-        <input class="pf-i" value="{{position}}" placeholder="选填，如 采购经理 / 技术负责人" maxlength="20" bindinput="onInput" data-key="position"/>
+        <input class="pf-i" value="{{position}}" placeholder="公开主体必填，如 采购经理 / 技术负责人" maxlength="20" bindinput="onInput" data-key="position"/>
       </view>
       <view class="pf-f pf-f-col {{focusKey === 'subjectKind' ? 'focus' : ''}}" id="pf-field-subjectKind">
         <text class="pf-l">主体类别</text>
@@ -102,9 +102,9 @@
         <view class="pf-sub-hd">信息公开</view>
         <text class="pf-sub-d">发布商品 / 需求时按这里的设置展示，发布页可查看当前状态并跳回本页修改。</text>
         <view class="pf-kinds">
-          <view class="pf-kind {{exposure === 'open' ? 'on' : ''}}" data-v="open" bindtap="pickExposure">
+          <view class="pf-kind {{exposure === 'open' ? 'on' : ''}} {{exposureReady ? '' : 'dim'}}" data-v="open" bindtap="pickExposure">
             <text class="k">公开主体信息</text>
-            <text class="d">展示主体名称与核验标识，可进入商机池</text>
+            <text class="d">{{exposureReady ? '展示主体名称与核验标识，可进入商机池' : '需先填写主体名称与职位 / 身份（营业执照可后补）'}}</text>
           </view>
           <view class="pf-kind {{exposure === 'hidden' ? 'on' : ''}}" data-v="hidden" bindtap="pickExposure">
             <text class="k">不公开主体</text>
@@ -142,7 +142,7 @@
           <text class="st {{item.ok ? 'ok' : 'no'}}">{{item.v}}</text>
           <button class="btn sm qual-btn" data-k="{{item.k}}" bindtap="uploadQual">{{item.ok ? '重新提交' : '去提交'}}</button>
         </view>
-        <view wx:if="{{item.reason}}" class="small" style="color: #D92D20; padding: 0 0 16rpx 4rpx; line-height: 1.6">
+        <view wx:if="{{item.reason}}" class="small qual-reason">
           未通过原因：{{item.reason}}
         </view>
       </view>

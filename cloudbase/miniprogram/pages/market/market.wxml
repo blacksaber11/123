@@ -13,7 +13,7 @@
     <view class="q-stats">
       <view class="qs-l">
         <view class="qs-t">实时货盘 {{stats.count}} 个产品</view>
-        <view class="qs-d">更新于 {{stats.updatedAt || '—'}} · 卖价综合在售商品与用户报价；代采 / 代售只在商机池展示</view>
+        <view class="qs-d">更新于 {{stats.updatedAt || '—'}} · 买卖盘综合在售商品、求购需求与用户报价；代采 / 代售只在商机池展示</view>
       </view>
       <button class="btn sm primary" bindtap="openPaste">补充报价</button>
     </view>
@@ -61,9 +61,16 @@
     </view>
 
     <view wx:if="{{!loading && !items.length}}" class="empty">
-      <view class="big">没有匹配的报价</view>
-      <view class="ds">换个品类或关键字试试，也可以补充一条报价</view>
-      <button class="btn primary mt" bindtap="openPaste">补充报价</button>
+      <block wx:if="{{loadError}}">
+        <view class="big">货盘加载失败</view>
+        <view class="ds">网络或服务暂时不可用，请稍后重试</view>
+        <button class="btn primary mt" bindtap="retry">重新加载</button>
+      </block>
+      <block wx:else>
+        <view class="big">没有匹配的报价</view>
+        <view class="ds">换个品类或关键字试试，也可以补充一条报价</view>
+        <button class="btn primary mt" bindtap="openPaste">补充报价</button>
+      </block>
     </view>
   </view>
 
@@ -86,7 +93,7 @@
         <view wx:for="{{pastePreview}}" wx:key="id" class="pv-item">
           <view class="pv-l">
             <view class="pv-model">{{item.model}}</view>
-            <view class="pv-sub">{{item.priceText}} / {{item.unit}} · {{item.qty}}{{item.unit}} · {{item.city}}</view>
+            <view class="pv-sub">{{item.priceText}} / {{item.unit}} · {{item.qty}}{{item.unit}} · {{item.city || '城市未填'}}</view>
           </view>
           <view class="pv-x" data-i="{{index}}" bindtap="removePreview">✕</view>
         </view>

@@ -15,11 +15,21 @@
       <text class="wx-bar-t">{{wxRemain === -1 ? '开启微信提醒，对方回复时第一时间通知' : '微信提醒已用完，点此续订'}}</text>
       <text class="wx-bar-a">{{wxRemain === -1 ? '去开启' : '续订'}}</text>
     </view>
+    <!-- 代采代售咨询：等待平台客服处理 / 客服正在接入 / 已结束评价 -->
+    <view wx:if="{{chatCs}}" class="cs-bar {{chatCs.ended ? 'done' : (chatCs.waiting ? 'wait' : 'on')}}">
+      <view class="cs-bar-main">
+        <text class="cs-bar-t">{{chatCs.waiting ? '正在等待平台客服处理' : (chatCs.ended ? '本次咨询服务已结束' : '客服 ' + chatCs.csName + ' 正在接入')}}</text>
+        <text wx:if="{{chatCsTitle}}" class="cs-bar-s">{{chatCsTitle}}</text>
+        <text wx:if="{{chatCs.stageLabel}}" class="cs-bar-s">服务进度：{{chatCs.stageLabel}}</text>
+      </view>
+      <view wx:if="{{chatCs.ended && !chatCs.rated}}" class="cs-bar-a" bindtap="openCsRating">去评价</view>
+      <text wx:elif="{{chatCs.ended && chatCs.rated}}" class="cs-bar-a flat">{{chatCs.rating}} 星已评价</text>
+    </view>
     <!-- 会话标的：从商品 / 需求发起聊天时固定在上方，双方可见；可关闭或点进详情 -->
     <view wx:if="{{chatTarget}}" class="chat-target">
       <view class="ct-main" bindtap="openChatTarget">
         <image wx:if="{{chatTarget.cover}}" class="ct-img" src="{{chatTarget.cover}}" mode="aspectFill" />
-        <view wx:else class="ct-img ct-ph">{{chatTarget.type === 'demand' ? '需' : '货'}}</view>
+        <view wx:else class="ct-img ct-ph">{{chatTarget.type === 'demand' ? '需' : (chatTarget.type === 'agency' ? '委' : '货')}}</view>
         <view class="ct-body">
           <view class="ct-t">{{chatTarget.title}}</view>
           <view class="ct-m">
@@ -47,7 +57,10 @@
         <view class="pc-tip">仅本次会话可见，不会出现在对方主页</view>
       </view>
 
-      <view wx:for="{{chatList}}" wx:key="id" class="chat-row {{item.role === 'me' ? 'me' : 'sys'}}">
+      <block wx:for="{{chatList}}" wx:key="id">
+        <!-- 平台提示（客服领取 / 结束服务 / 评价回执）居中展示，不占气泡 -->
+        <view wx:if="{{item.role === 'system'}}" class="chat-note">{{item.text}}</view>
+        <view wx:else class="chat-row {{item.role === 'me' ? 'me' : 'sys'}}">
         <view wx:if="{{item.role === 'me'}}" class="chat-avatar">我</view>
         <view wx:else class="chat-avatar {{chatPeerKey ? 'tappable' : ''}}" hover-class="{{chatPeerKey ? 'avatar-hover' : ''}}" bindtap="openPeerHome">{{chatAvatar}}</view>
         <view class="chat-wrap">
@@ -85,11 +98,19 @@
           <view wx:else class="chat-bubble">{{item.text}}</view>
           <view class="chat-time">{{item.at}}<text wx:if="{{item.role === 'me' && item.read}}"> · 已读</text></view>
         </view>
-      </view>
+        </view>
+      </block>
       <view id="chat-end" class="chat-end"></view>
     </scroll-view>
 
     <view class="chat-bottom">
+      <!-- 代采代售咨询：客服未领取 / 已结束时锁输入，结束后给出评价入口 -->
+      <view wx:if="{{chatCs && !chatCs.canSend}}" class="chat-lock">
+        <text class="chat-lock-t">{{chatCs.waiting ? '正在等待平台客服处理，接入后即可对话' : '本次咨询服务已结束'}}</text>
+        <text wx:if="{{chatCs.ended && !chatCs.rated}}" class="chat-lock-a" bindtap="openCsRating">评价服务</text>
+        <text wx:elif="{{chatCs.ended && chatCs.rated}}" class="chat-lock-a flat">已评价</text>
+      </view>
+      <block wx:else>
       <view class="chat-input">
         <input class="chat-input-box" value="{{draft}}" bindinput="onDraft" bindfocus="onInputFocus"
                confirm-type="send" adjust-position="{{!kbAware}}" bindconfirm="sendChat"
@@ -126,6 +147,7 @@
           <text class="tool-nm">个人名片</text>
         </view>
       </view>
+      </block>
     </view>
 
     <!-- 整页水印：绑当前账号的 ID + 昵称；设置关闭后不渲染 -->
@@ -137,8 +159,22 @@
   <!-- 聊天图片查看器：页内放大并叠水印，不提供长按菜单 / 保存 -->
   <view wx:if="{{imgOpen}}" class="img-pop" bindtap="closeImage">
     <image class="img-pop-img" src="{{imgSrc}}" mode="aspectFit" show-menu-by-longpress="{{false}}" catchtouchmove="stopTap" />
+    <!-- 满屏平铺水印：与页面水印同源（账号 ID + 昵称），放大后依然清晰可追溯 -->
+    <view wx:if="{{wmOn}}" class="img-pop-wms">
+      <text wx:for="{{wmTiles}}" wx:key="k" class="img-pop-wms-t">{{item.t}}</text>
+    </view>
     <text wx:if="{{wmOn}}" class="img-pop-wm">{{wmText}}</text>
     <text class="img-pop-tip">{{wmOn ? '仅平台内查看 · 画面已叠加你的账号水印' : '仅平台内查看'}}</text>
+  </view>
+
+  <!-- 聊天视频查看器：页内播放并叠水印，不走系统播放器（系统播放器无法加水印） -->
+  <view wx:if="{{videoOpen}}" class="video-pop">
+    <video class="video-pop-player" id="chatVideo" src="{{videoSrc}}" poster="{{videoPoster}}" autoplay controls object-fit="contain" show-center-play-btn="{{true}}" bindended="closeVideo"></video>
+    <cover-view wx:if="{{wmOn}}" class="video-pop-wm">
+      <cover-view wx:for="{{wmTiles}}" wx:key="k" class="video-pop-wm-t">{{item.t}}</cover-view>
+    </cover-view>
+    <cover-view class="video-pop-close" catchtap="closeVideo">关闭</cover-view>
+    <view class="video-pop-tip">{{wmOn ? '仅平台内播放 · 画面已叠加你的账号水印' : '仅平台内播放'}}</view>
   </view>
 
   <!-- 名片详情：聊天里点方形名片打开，完整信息在这里看，避免气泡里铺满隐私字段 -->
@@ -189,6 +225,25 @@
       <view class="cs-btns">
         <button class="btn sm" bindtap="closeCard">关闭</button>
         <button wx:if="{{cardDetail.phone}}" class="btn sm primary" data-phone="{{cardDetail.phone}}" bindtap="callCardPhone">拨打电话</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- 咨询服务评价：客服结束服务后一次性打分，结果自动记入客服档案 -->
+  <view wx:if="{{csRatingOpen}}" class="rate-pop" bindtap="closeCsRating">
+    <view class="rate-sheet" catchtap="stopTap">
+      <view class="rate-title">评价本次服务</view>
+      <view class="rate-sub">{{chatCsTitle || '代采代售咨询'}}{{chatCs && chatCs.csName ? ' · ' + chatCs.csName : ''}}</view>
+      <view class="rate-stars">
+        <text wx:for="{{csStars}}" wx:key="*this" class="rate-star {{csScore >= item ? 'on' : ''}}" data-score="{{item}}" bindtap="pickCsScore">★</text>
+      </view>
+      <view class="rate-tags">
+        <text wx:for="{{csTagList}}" wx:key="name" class="rate-tag {{item.on ? 'on' : ''}}" data-name="{{item.name}}" bindtap="toggleCsTag">{{item.name}}</text>
+      </view>
+      <textarea class="rate-text" value="{{csText}}" bindinput="onCsText" maxlength="200" placeholder="补充说明（选填）" />
+      <view class="rate-btns">
+        <button class="btn sm" bindtap="closeCsRating">取消</button>
+        <button class="btn sm primary" bindtap="submitCsRating" disabled="{{csSubmitting}}">{{csSubmitting ? '提交中…' : '提交评价'}}</button>
       </view>
     </view>
   </view>

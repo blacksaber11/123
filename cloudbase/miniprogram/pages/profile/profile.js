@@ -93,7 +93,7 @@ Page({
     subjectKinds: SUBJECT_KINDS,
     subjectType: '',
     subjectTypes: SUBJECT_TYPES,
-    /* 职位 / 身份：选填，最长 20 字 */
+    /* 职位 / 身份：选填；选择「公开主体」时必填，最长 20 字 */
     position: '',
     /* 发布前必填项缺失时，页面顶部提示条与字段高亮 */
     profileMissing: [],
@@ -153,7 +153,8 @@ Page({
     if (!d.hasPhone) missing.push({ key: 'phone', label: '手机号' })
     this.setData({
       profileMissing: missing,
-      missingText: missing.map((m) => m.label).join('、')
+      missingText: missing.map((m) => m.label).join('、'),
+      exposureReady: this.exposureReadyOf(d.subject, d.position)
     })
     return missing
   },
@@ -228,6 +229,7 @@ Page({
       cityCols: geo.cols,
       cityIndex: geo.index,
       exposure: ((p.exposure || u.exposure) === 'open' ? 'open' : 'hidden'),
+      exposureReady: this.exposureReadyOf(subject, position),
       phonePublic: p.phonePublic === true,
       quals,
       qualDone: quals.filter((q) => q.ok).length
@@ -263,7 +265,13 @@ Page({
     const key = e.currentTarget.dataset.key
     this.dirty = true
     this.syncLeaveGuard()
-    this.setData({ [key]: e.detail.value })
+    const patch = { [key]: e.detail.value }
+    /* 主体名称 / 职位变化时实时更新「公开主体」可选状态 */
+    if (key === 'subject' || key === 'position') {
+      const next = Object.assign({}, this.data, patch)
+      patch.exposureReady = this.exposureReadyOf(next.subject, next.position)
+    }
+    this.setData(patch)
   },
 
   pickSubjectKind(e) {
@@ -287,10 +295,22 @@ Page({
     this.setData({ subjectType: SUBJECT_TYPES[idx] || '' })
   },
 
-  /* 公开 / 不公开主体：发布页只读展示这里的结果，统一在本页修改 */
+  /* 公开 / 不公开主体：发布页只读展示这里的结果，统一在本页修改。
+     公开主体前提：主体名称 + 职位 / 身份；营业执照等原件可后补 */
+  exposureReadyOf(subject, position) {
+    return !!String(subject || '').trim() && !!String(position || '').trim()
+  },
+
   pickExposure(e) {
     const v = e.currentTarget.dataset.v === 'open' ? 'open' : 'hidden'
     if (v === this.data.exposure) return
+    /* 主体名称 / 职位未填时不允许切到「公开主体」，直接定位到缺失字段 */
+    if (v === 'open' && !this.exposureReadyOf(this.data.subject, this.data.position)) {
+      const miss = String(this.data.subject || '').trim() ? 'position' : 'subject'
+      wx.showToast({ title: '选择公开主体前，请先填写主体名称和职位 / 身份', icon: 'none' })
+      this.focusField(miss)
+      return
+    }
     this.dirty = true
     this.syncLeaveGuard()
     this.setData({ exposure: v, phonePublic: v === 'open' ? this.data.phonePublic : false })
@@ -383,6 +403,13 @@ Page({
 
   async save() {
     if (this.data.saving) return
+    /* 公开主体前提：主体名称 + 职位 / 身份；营业执照等原件可后补 */
+    if (this.data.exposure === 'open' && !this.exposureReadyOf(this.data.subject, this.data.position)) {
+      const miss = String(this.data.subject || '').trim() ? 'position' : 'subject'
+      wx.showToast({ title: '选择公开主体前，请先填写主体名称和职位 / 身份', icon: 'none' })
+      this.focusField(miss)
+      return
+    }
     this.setData({ saving: true })
     try {
       /* 云函数返回 { ok:true } 但缺 data 时 result 为 undefined，这里兜底成空对象 */

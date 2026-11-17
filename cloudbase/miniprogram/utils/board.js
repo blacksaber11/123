@@ -1,4 +1,4 @@
-/* 实时货盘的数据口径：城市字典、演示盘口、品类、价格格式化与粘贴报价解析。
+/* 实时货盘的数据口径：城市字典、品类、价格格式化与粘贴报价解析。
    首页筛选与实时货盘页共用这一份，避免两处实现走偏。 */
 
 /* 交易城市：大区 → 城市两级菜单，城市取自算力设备交易与机房资源集中的区域，
@@ -17,18 +17,6 @@ const CITY_TREE = [
 const CITY_FLAT = []
 CITY_TREE.forEach((g) => g.cities.forEach((c) => { if (CITY_FLAT.indexOf(c) < 0) CITY_FLAT.push(c) }))
 
-/* 实时货盘：卖价来自平台在售商品与用户报价；代采 / 代售只在商机池展示。 */
-const BOARD_DEMO = [
-  { id: 'b1', cat: 'GPU 加速卡', model: 'H100 80G SXM', buyPrice: 215000, sellPrice: 228000, buyCount: 6, sellCount: 4, city: '上海', updated: '3 分钟前' },
-  { id: 'b2', cat: 'GPU 加速卡', model: 'A100 80G PCIE', buyPrice: 96000, sellPrice: 102000, buyCount: 4, sellCount: 7, city: '深圳', updated: '12 分钟前' },
-  { id: 'b3', cat: 'GPU 加速卡', model: 'RTX 4090 24G', buyPrice: 15400, sellPrice: 16300, buyCount: 11, sellCount: 9, city: '东莞', updated: '25 分钟前' },
-  { id: 'b4', cat: 'GPU 服务器', model: '8 卡 H100 HGX 整机', buyPrice: 1780000, sellPrice: 1890000, buyCount: 2, sellCount: 1, city: '张家口', updated: '40 分钟前' },
-  { id: 'b5', cat: '内存条', model: 'DDR5 64G 6400 金百达', buyPrice: 1780, sellPrice: 1880, buyCount: 8, sellCount: 12, city: '杭州', updated: '1 小时前' },
-  { id: 'b6', cat: '内存条', model: 'DDR5 RDIMM 96G 5600', buyPrice: 3850, sellPrice: 4050, buyCount: 5, sellCount: 3, city: '北京', updated: '1 小时前' },
-  { id: 'b7', cat: '服务器整机', model: '4 卡 L40S 推理整机', buyPrice: 420000, sellPrice: 448000, buyCount: 3, sellCount: 2, city: '成都', updated: '2 小时前' },
-  { id: 'b8', cat: '其他配件', model: '企业级 SSD 3.84T NVMe', buyPrice: 2050, sellPrice: 2180, buyCount: 6, sellCount: 5, city: '南京', updated: '2 小时前' }
-]
-
 /* 实时货盘分类：固定主品类打底，再合并货盘里出现的品类。
    货盘为空（云端还没数据 / 接口不可用）时也要有分类可筛，不能只剩「全部」 */
 const BOARD_MAIN_CATS = ['GPU 服务器', 'GPU 加速卡', 'AI 一体机', '推理服务器', 'CPU 服务器', 'NPU 加速卡', '消费级显卡', 'AI 工作站', '内存条', '服务器配件']
@@ -44,9 +32,9 @@ function fmtPrice(n) {
   return String(Number(n) || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 }
 
-function fmtClock() {
-  const d = new Date()
-  return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2)
+function fmtClock(d) {
+  const at = d instanceof Date && !isNaN(d.getTime()) ? d : new Date()
+  return ('0' + at.getHours()).slice(-2) + ':' + ('0' + at.getMinutes()).slice(-2)
 }
 
 /* 关键字匹配：空格分词，全部命中才算匹配 */
@@ -72,8 +60,19 @@ function parseQuoteLine(line) {
   const ln = String(line || '').replace(/^\s*[\d]+[\.、)）]\s*/, '').trim()
   if (!ln) return null
   let price = 0
-  const pm = ln.match(/[¥￥]\s*([\d,]+)|([\d,]{3,})\s*(?:元|块)/)
-  if (pm) price = Number((pm[1] || pm[2]).replace(/,/g, ''))
+  let priceRaw = ''
+  /* 价格两种写法：「22万 / 22w / ¥2.2万」按万换算；「¥220000 / 220000元」按元 */
+  const pmWan = ln.match(/[¥￥]?\s*([\d,]+(?:\.\d+)?)\s*(?:万|w|W)\s*元?/)
+  const pmYuan = ln.match(/[¥￥]\s*([\d,]+(?:\.\d+)?)|([\d,]{3,})\s*(?:元|块)/)
+  /* 「w」也可能是功率单位（1000W 电源），数值过大的不当作「万」 */
+  const wanValue = pmWan ? Number(pmWan[1].replace(/,/g, '')) : 0
+  if (pmWan && (pmWan[0].indexOf('万') >= 0 || wanValue <= 999)) {
+    price = Math.round(wanValue * 10000)
+    priceRaw = pmWan[0]
+  } else if (pmYuan) {
+    price = Number((pmYuan[1] || pmYuan[2]).replace(/,/g, ''))
+    priceRaw = pmYuan[0]
+  }
   let qty = ''
   let unit = '件'
   const qm = ln.match(/(\d+)\s*(根|条|张|片|台|块|个|组)/)
@@ -81,8 +80,10 @@ function parseQuoteLine(line) {
   let city = ''
   CITY_FLAT.forEach((c) => { if (!city && ln.indexOf(c) >= 0) city = c })
   let model = ln
-  if (pm) model = model.split(pm[0])[0]
+  if (priceRaw) model = model.split(priceRaw).join(' ')
+  /* 兜底清掉残留的价格片段（含「22万」这类量级写法），避免价格混进型号 */
   model = model.replace(/[¥￥][\d,.]*\s*(?:元|块)?/g, ' ')
+    .replace(/\d+(?:\.\d+)?\s*(?:万|w|W)\s*元?/g, ' ')
     .replace(/\d+\s*(根|条|张|片|台|块|个|组)/g, ' ')
   if (city) model = model.split(city).join(' ')
   model = model.replace(/[-–—|｜,，、;；:：\s]+/g, ' ').trim()
@@ -92,10 +93,11 @@ function parseQuoteLine(line) {
     cat: guessCat(model),
     model: model || '未命名报价',
     price,
-    priceText: price > 0 ? '¥ ' + fmtPrice(price) : '价格面议',
+    priceText: price > 0 ? '¥ ' + fmtPrice(price) : '待补充价格',
     qty: qty || '面议',
     unit,
-    city: city || '城市未填写',
+    /* 没写城市就留空，不用占位文案冒充城市（否则会在货盘里多出一个假城市分组） */
+    city: city || '',
     hoursLeft: 24
   }
 }
@@ -103,7 +105,6 @@ function parseQuoteLine(line) {
 module.exports = {
   CITY_TREE,
   CITY_FLAT,
-  BOARD_DEMO,
   BOARD_MAIN_CATS,
   boardCatList,
   fmtPrice,

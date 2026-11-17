@@ -10,6 +10,7 @@
  */
 const M = require('./mock')
 const stock = require('./stock')
+const { request } = require('./request')
 
 const UNLOCK_KEY = 'suanli_biz_unlock_v1'
 const CLAIM_KEY = 'suanli_biz_claims_v1'
@@ -144,6 +145,54 @@ function claim(id) {
   return isClaimed(id)
 }
 
+/** 删除我领取的商机：移除本地领取留痕（云端记录走 biz.delete） */
+function unclaim(id) {
+  writeClaims(readClaims().filter((c) => c.id !== id))
+}
+
+/* 领取 / 标记 / 删除后通知各 tab 的角标立即重拉，避免 30 秒缓存继续显示旧数字 */
+function badgeDirty() {
+  try {
+    const app = getApp()
+    app.globalData = app.globalData || {}
+    app.globalData.bizBadgeDirty = true
+  } catch (err) {
+    /* 全局状态不可用不影响业务 */
+  }
+}
+
+/**
+ * 云端领取商机：确认必须条件后调用，成功后该商机才进入「我的商机」。
+ * @param {string} targetType 'demand' | 'supply'
+ * @param {string} targetId
+ * @param {string[]} conds 发布者设定的必须条件（逐项确认通过的清单）
+ */
+async function claimRemote(targetType, targetId, conds, opts) {
+  const payload = { targetType, conds: (conds || []).slice() }
+  payload[targetType === 'supply' ? 'supplyId' : (targetType === 'agency' ? 'agencyId' : 'demandId')] = targetId
+  const res = await request('user', 'biz.claim', payload, opts)
+  badgeDirty()
+  return res
+}
+
+/** 云端标记「不满足」：仍在列表里，但不再计入首页商机角标 */
+async function markRemote(targetType, targetId, marked) {
+  const res = await request('user', 'biz.mark', {
+    targetType,
+    targetId,
+    marked: marked !== false
+  })
+  badgeDirty()
+  return res
+}
+
+/** 云端删除我领取的商机 */
+async function deleteRemote(targetType, targetId) {
+  const res = await request('user', 'biz.delete', { targetType, targetId })
+  badgeDirty()
+  return res
+}
+
 function readConsults() {
   try {
     const saved = wx.getStorageSync(CONSULT_KEY)
@@ -228,7 +277,8 @@ function demandOpps() {
       phone: c.phone || '',
       published: d.published,
       expireText: d.deliver ? d.deliver + '内交付' : '一个月内有效',
-      feeText: d.isRent ? '求购需求' : '求购需求'
+      /* 需求类不展示费用说明，避免与「求购 / 租赁」标签重复 */
+      feeText: ''
     }
   })
 }
@@ -296,7 +346,8 @@ function stats() {
 module.exports = {
   PLAN, PLANS, UNLOCK_KEY, CLAIM_KEY, CONSULT_KEY, MARK_KEY,
   isUnlocked, unlockInfo, activate,
-  opportunities, stats, isClaimed, claim,
+  opportunities, stats, isClaimed, claim, unclaim,
   isUnsatisfied, markUnsatisfied,
-  isConsulted, consult, matchHint
+  isConsulted, consult, matchHint,
+  claimRemote, markRemote, deleteRemote, badgeDirty
 }

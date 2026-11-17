@@ -11,7 +11,7 @@
   <view wx:if="{{guest}}" class="guest-tip" bindtap="goLogin">
     <view class="gt-body">
       <view class="gt-title">登录后查看消息</view>
-      <view class="gt-sub">与货主 / 需求方的对话、客服回复、审核通知都会出现在这里</view>
+      <view class="gt-sub">与货主 / 需求方的对话、客服回复、系统通知都会出现在这里</view>
     </view>
     <text class="gt-go">去登录 ›</text>
   </view>
@@ -98,7 +98,7 @@
       <view wx:if="{{notices.length === 0}}" class="empty">
         <image class="big-img" src="/assets/icons/empty-bell.png" mode="aspectFit" />
         <view class="ttl">暂无通知</view>
-        <view class="ds">审核结果、下架原因会在这里通知你</view>
+        <view class="ds">委托审核结果、内容处置与下架原因会在这里通知你</view>
       </view>
     </view>
 
@@ -111,6 +111,7 @@
             <view class="msg-name">
               <text wx:if="{{item.pinned}}" class="msg-pin">置顶</text>
               <text class="msg-title">{{item.name}}</text>
+              <text wx:if="{{item.bizLabel}}" class="msg-biz">{{item.bizLabel}}</text>
               <text wx:if="{{item.memberLabel}}" class="msg-member">{{item.memberLabel}}</text>
             </view>
             <text class="msg-time">{{item.time}}</text>

@@ -75,25 +75,13 @@ function matchFilter(x, f, isDemand) {
 
 const NEWS_SORTS = ['最新发布', '官方优先']
 
-/* 资讯圈：官方资讯 + 用户发布，按发布地址做全国 / 同城 / 指定城市筛选 */
-const NEWS_DEMO = [
-  { id: 'nw1', official: true, cat: '平台公告', title: '代采 / 代售服务费规则更新：全部改为成交后支付', summary: '代采 / 代售委托发布、审核、上架全程不收费，成交后再支付服务费：≤3 万元 299 元 / 单，3 万–100 万元 1% 封顶 5,000 元，100 万元以上 0.5% 上不封顶；算力租赁按首月租金合计，买卖双方各承担 50%。', city: '上海', author: '平台运营', published: '2 小时前', views: 1862 },
-  { id: 'nw2', official: true, cat: '行情', title: 'H100 80G 本周现货报价回落 4%，整机交付周期缩短', summary: '受新增到货影响，华东、华南两地 H100 单卡报价环比回落约 4%，8 卡整机交付周期从 4 周缩短到 2–3 周。', city: '深圳', author: '平台行情组', published: '5 小时前', views: 2431 },
-  { id: 'nw3', official: false, cat: '求购', title: '深圳南山求购 A100 80G PCIE 20 张，可含税', summary: '预算 9.6 万 / 张以内，要求原厂质保剩余 1 年以上，支持现场验货，本月内交付。', city: '深圳', author: '陈先生', published: '30 分钟前', views: 236 },
-  { id: 'nw4', official: false, cat: '出货', title: '张家口机房清退一批 8 卡 H100 HGX 整机', summary: '共 4 台，成色九成新，含原机柜与交换机，支持整批或拆售，可安排现场验机。', city: '张家口', author: '华北算力', published: '1 小时前', views: 812 },
-  { id: 'nw5', official: true, cat: '避坑指南', title: '居间交易防跳单：平台如何保障委托双方权益', summary: '委托方与货主直接加微信后绕开平台，是算力设备交易最常见的纠纷来源。本文说明平台的流程留痕、节点确认与资金隔离方式。', city: '北京', author: '平台运营', published: '昨天', views: 1580 },
-  { id: 'nw6', official: false, cat: '租赁', title: '杭州机房释放 32 台 A800 整机，可月付', summary: '单机 8 卡，带宽 200G IB，起租 3 个月，可月付；同城可上门看机，异地支持远程压测。', city: '杭州', author: '云栖算力', published: '昨天', views: 967 },
-  { id: 'nw7', official: false, cat: '求购', title: '成都求购 DDR5 64G 6400 内存 200 根', summary: '品牌不限，要求原厂颗粒、可开专票，单价 1800 元以内，一周内到货。', city: '成都', author: '西南智算', published: '2 天前', views: 348 }
-]
-
-/* 同城口径：优先取登录用户资料里的所在城市；未登录时给一个可切换的默认值 */
+/* 同城口径：取账号资料里的所在城市；未设置时不再给默认城市（按全国口径展示） */
 function localCity() {
   try {
     const u = getUser()
-    if (u && u.city) return String(u.city).replace(/市$/, '')
-    return wx.getStorageSync('city') || '深圳'
+    return (u && u.city) ? String(u.city).replace(/市$/, '') : ''
   } catch (e) {
-    return '深圳'
+    return ''
   }
 }
 
@@ -116,8 +104,14 @@ Page({
     citySelCount: 0,
     items: [],
     loading: false,
+    /* 服务端是否还有下一页：空态里据此提供「加载更多」 */
+    hasMore: false,
+    /* 资讯接口失败：展示重试空态，不再回落演示数据 */
+    newsError: false,
     /* 商机角标：与我的库存匹配、尚未领取的商机数量（未登录为 0） */
     bizBadge: 0,
+    /* 商机按钮副标题：只显示「N 条商机」，不罗列型号；没商机时回落文案 */
+    bizHint: '',
     /* 资讯圈：全国 / 同城 / 指定城市，按发布地址筛选 */
     newsScope: 'all',
     newsLocalCity: '',
@@ -131,7 +125,12 @@ Page({
     newsPrivate: false,
     newsSubmitting: false,
     /* 键盘高度：发布资讯弹层随键盘抬升，底部「发布」按钮始终可见 */
-    kbH: 0
+    kbH: 0,
+    /* 首页横幅：内容与滚动速度由管理端配置，点击弹窗展示详情 */
+    bannerText: '',
+    bannerItems: [],
+    bannerDur: 20,
+    bannerOpen: false
   },
 
   onLoad(options) {
@@ -155,6 +154,7 @@ Page({
       this.setData({ tab: want, sortOptions: this.sortOptionsOf(want), sort: this.sortStore[want] })
     }
     this.loadList()
+    this.loadBanner()
   },
 
   /* 各视图的排序选项：与 goTab 保持同一份口径 */
@@ -193,6 +193,7 @@ Page({
     this.refreshFav()
     /* 回到首页重新拉一次信息流：刚发布的商品 / 需求要能立刻看到 */
     if (!switched) this.loadList(true)
+    this.loadBanner()
     this.loadBizBadge()
     this.startBizTimer()
     /* 在线心跳：登录后回到首页时 app.onShow 不会再触发，这里补一次 */
@@ -496,6 +497,50 @@ Page({
   },
 
   /**
+   * 首页横幅：管理端在「设置 - 首页横幅」维护内容与速度。
+   * 多条标题用分隔符连成一条滚动文案；速度是像素 / 秒，换算成单次循环时长。
+   * 三分钟内不重复拉取，切回首页不会每次都打接口。
+   */
+  loadBanner() {
+    const now = Date.now()
+    if (this.bannerAt && now - this.bannerAt < 180000 && this.data.bannerText) return
+    this.bannerAt = now
+    request('user', 'site.get', {}, { silent: true })
+      .then((res) => {
+        const b = (res && res.site && res.site.banner) || {}
+        const items = b.enabled === false ? [] : (b.items || []).filter((x) => x && x.title)
+        if (!items.length) {
+          if (this.data.bannerText || this.data.bannerOpen) {
+            this.setData({ bannerText: '', bannerItems: [], bannerOpen: false })
+          }
+          return
+        }
+        const speed = Math.min(200, Math.max(10, Number(b.speed) || 40))
+        const text = items.map((x) => x.title).join('　　·　　')
+        /* 估算宽度 = 字数 × 14px + 间隔，除以速度得到一整轮时长（秒） */
+        const dur = Math.min(90, Math.max(6, (text.length * 14 + 48) / speed))
+        this.setData({
+          bannerText: text,
+          bannerItems: items,
+          bannerDur: Math.round(dur * 10) / 10
+        })
+      })
+      .catch(() => {})
+  },
+
+  openBanner() {
+    if (!this.data.bannerItems.length) return
+    this.setData({ bannerOpen: true })
+  },
+
+  closeBanner() {
+    if (this.data.bannerOpen) this.setData({ bannerOpen: false })
+  },
+
+  /* 弹窗内部点击不透传到遮罩 */
+  noop() {},
+
+  /**
    * 商机角标：只取数量，不拉商机卡片。
    * 只要按库存 / 已发布需求匹配到商机就显示，未开通也提示（用于引导开通）；
    * 已领取的商机不再计入，只有发布方删除 / 关闭条目后才会减少。
@@ -503,14 +548,19 @@ Page({
   loadBizBadge() {
     const me = getUser()
     if (!me || !me.uid) {
-      if (this.data.bizBadge) this.setData({ bizBadge: 0 })
+      if (this.data.bizBadge || this.data.bizHint) this.setData({ bizBadge: 0, bizHint: '' })
       this.syncTabBizBadge(0)
       return
     }
     request('user', 'biz.badge', {}, { silent: true })
       .then((res) => {
         const n = Math.max(0, Number(res && res.count) || 0)
-        if (n !== this.data.bizBadge) this.setData({ bizBadge: n })
+        /* 副标题只显示匹配数量，不再罗列型号，避免按钮被撑长 */
+        const hint = n > 0 ? n + ' 条商机' : ''
+        const patch = {}
+        if (n !== this.data.bizBadge) patch.bizBadge = n
+        if (hint !== this.data.bizHint) patch.bizHint = hint
+        if (Object.keys(patch).length) this.setData(patch)
         this.syncTabBizBadge(n)
       })
       .catch(() => {})
@@ -601,10 +651,23 @@ Page({
   /* 返回 { list, hasMore } 表示云端结果；返回 null 表示云端不可用（不再用演示数据顶替） */
   async loadFromCloud(isDemand, page) {
     const q = String(this.data.search || '').trim()
+    const f = (this.filters && this.filters[this.data.tab]) || {}
     try {
       const body = { page: page || 1, limit: 20 }
       /* 关键词交给后端检索，才能搜到第 1 页之后的数据 */
       if (q) body.q = q
+      /* 货源列表的筛选与排序一并下推服务端：分页与 hasMore 才不会被本地过滤带偏。
+         求购列表服务端暂不支持这些维度，沿用本地过滤，避免条件被静默丢弃。 */
+      if (!isDemand) {
+        if ((f.cat || []).length) body.cats = f.cat
+        if ((f.brand || []).length) body.brands = f.brand
+        if ((f.city || []).length) body.cities = f.city
+        if ((f.mode || []).length) body.modes = f.mode
+        if ((f.cond || []).length) body.conds = f.cond
+        if ((f.tax || []).length) body.taxes = f.tax
+        /* 搜索场景固定按发布时间倒序，与原来的搜索结果顺序保持一致 */
+        body.sort = q ? '最新' : String(this.data.sort || '')
+      }
       /* 代采 / 代售只在商机池展示，不再混入普通商品 / 需求列表 */
       const res = await (isDemand
         ? request('user', 'demand.list', body, { silent: true })
@@ -621,7 +684,7 @@ Page({
 
   /* ---------- 资讯圈 ---------- */
 
-  /* 云端 news.list 就绪前回落演示数据 + 本机刚发布的资讯 */
+  /* 资讯接口失败时展示空态 + 重试，不再用演示资讯冒充真实内容 */
   async fetchNews(seq) {
     let list = null
     let mine = []
@@ -643,22 +706,22 @@ Page({
     /* 自己的投稿：审核中 / 被驳回也要看得见，不能「投了就消失」 */
     if (ownRes && Array.isArray(ownRes.items)) mine = ownRes.items
     if (seq !== this.listSeq || this.data.tab !== 'news') return
-    if (list === null) {
-      list = (this.localNews || []).concat(NEWS_DEMO)
-    } else {
-      const pending = mine
-        .filter((n) => n.status === '待审核' || n.status === '已驳回')
-        .map((n) => Object.assign({}, n, {
-          official: false,
-          cat: '我的投稿',
-          author: '我',
-          published: n.createdText,
-          selfStatus: n.status,
-          selfReason: n.reason || ''
-        }))
-      list = pending.concat(list)
+    const failed = list === null
+    if (failed) {
+      this.applyNews([], true)
+      return
     }
-    this.applyNews(list)
+    const pending = mine
+      .filter((n) => n.status === '待审核' || n.status === '已驳回')
+      .map((n) => Object.assign({}, n, {
+        official: false,
+        cat: '我的投稿',
+        author: '我',
+        published: n.createdText,
+        selfStatus: n.status,
+        selfReason: n.reason || ''
+      }))
+    this.applyNews(pending.concat(list), false)
   },
 
   newsTargetCity() {
@@ -668,7 +731,7 @@ Page({
   },
 
   /* 按发布地址筛选 + 关键字匹配；官方优先时把官方资讯排到前面 */
-  applyNews(source) {
+  applyNews(source, failed) {
     const city = cityOf({ city: this.newsTargetCity() })
     const words = String(this.data.search || '').trim().split(/\s+/).filter(Boolean)
     let list = source.filter((n) => {
@@ -679,12 +742,22 @@ Page({
     if (this.data.sort === '官方优先') {
       list = list.slice().sort((a, b) => (b.official ? 1 : 0) - (a.official ? 1 : 0))
     }
+    const stats = { city: city || '全国' }
     this.setData({
       items: list,
       loading: false,
-      newsStats: { city: city || '全国' }
+      newsError: !!failed,
+      newsStats: stats
     })
-    this.tabCache.news = { items: list, newsStats: { city: city || '全国' } }
+    /* 失败不写入缓存：下次切回资讯时重新请求，而不是继续展示错误空态 */
+    this.tabCache.news = failed ? null : { items: list, newsStats: stats }
+  },
+
+  /* 资讯加载失败后的重试入口 */
+  retryNews() {
+    this.tabCache.news = null
+    this.setData({ items: [], loading: true, newsError: false })
+    this.loadList(true)
   },
 
   switchNewsScope(e) {
@@ -693,10 +766,15 @@ Page({
       this.setData({ newsSheet: true })
       return
     }
+    /* 资料里没填城市时不能把全国内容当成「同城」展示 */
+    if (s === 'city' && !this.data.newsLocalCity) {
+      wx.showToast({ title: '未设置城市，请先在「我的」填写所在城市', icon: 'none' })
+      return
+    }
     if (this.data.newsScope === s) return
     /* 换了筛选范围，旧列表不再适用：立刻清空并请求，不要先显示上一个范围的内容 */
     this.tabCache.news = null
-    this.setData({ newsScope: s, items: [], loading: true })
+    this.setData({ newsScope: s, items: [], loading: true, newsError: false })
     this.loadList(true)
   },
 
@@ -711,13 +789,14 @@ Page({
       newsScope: 'pick',
       newsSheet: false,
       items: [],
-      loading: true
+      loading: true,
+      newsError: false
     })
     this.loadList(true)
   },
 
   openNewsPub() {
-    /* 发布城市固定读本机定位 / 用户资料，不允许手动修改 */
+    /* 发布城市取账号资料里的所在城市，不允许手动修改；未设置时由用户先去「我的」补全 */
     const city = localCity()
     /* 弹层是整屏模态：先收起自定义 tabBar，避免底部「取消 / 发布」被导航栏盖住点不到 */
     this.setTabBarHidden(true)
@@ -761,12 +840,12 @@ Page({
     const d = this.data.newsPub
     const title = String(d.title || '').trim()
     const content = String(d.content || '').trim()
-    /* 发布城市跟随本机定位，前端不提供编辑入口，提交时再取一次最新值 */
+    /* 发布城市跟随账号资料，前端不提供编辑入口，提交时再取一次最新值 */
     const city = localCity()
     /* 长度口径与服务端 normalizeNewsInput 一致，避免提交后才被驳回 */
     if (title.length < 4) return wx.showToast({ title: '标题至少 4 个字', icon: 'none' })
     if (content.length < 10) return wx.showToast({ title: '内容至少 10 个字', icon: 'none' })
-    if (!city) return wx.showToast({ title: '未获取到定位城市，请先在「我的」设置所在城市', icon: 'none' })
+    if (!city) return wx.showToast({ title: '未设置城市，请先在「我的」填写所在城市', icon: 'none' })
     this.setData({ newsSubmitting: true })
     /* 发布即展示：服务端自动筛查违禁词，命中会直接驳回并返回原因 */
     request('user', 'news.submit', {
@@ -804,23 +883,24 @@ Page({
     wx.navigateTo({ url: '/pages/biz/biz' })
   },
 
-  /* 本地筛选 + 排序 + 收藏态，渲染口径与云端 / 演示数据完全一致 */
+  /* 货源：筛选 / 排序已由服务端完成，这里只补收藏等展示态；
+     求购：服务端暂不支持这些维度，仍按当前页做本地过滤 */
   applyList(source, isDemand) {
     const f = (this.filters && this.filters[this.data.tab]) || {}
     const kw = this.data.search
-    let list = source.filter((x) => matchFilter(x, f, isDemand) && matchKeyword(x, kw))
     const sort = this.data.sort
-    /* 搜索场景统一按发布时间倒序：最新发布的排前面，避免旧货排在搜索结果首位 */
-    if (String(kw || '').trim()) {
-      list.sort((a, b) => (Number(b.publishedAt) || 0) - (Number(a.publishedAt) || 0))
-    } else if (!isDemand) {
-      if (sort === '价格升序') list.sort((a, b) => a.price - b.price)
-      else if (sort === '价格降序') list.sort((a, b) => b.price - a.price)
-      else if (sort === '成交优先') list.sort((a, b) => b.inquiries - a.inquiries)
-      // 「最新」与「综合」保持数据源顺序（已按发布时间倒序）
-    } else {
-      if (sort === '预算从高到低') list.sort((a, b) => b.budget - a.budget)
-      else if (sort === '预算从低到高') list.sort((a, b) => a.budget - b.budget)
+    let list = isDemand
+      ? source.filter((x) => matchFilter(x, f, true) && matchKeyword(x, kw))
+      : source.slice()
+    if (isDemand) {
+      /* 搜索场景统一按发布时间倒序：最新发布的排前面，避免旧货排在搜索结果首位 */
+      if (String(kw || '').trim()) {
+        list.sort((a, b) => (Number(b.publishedAt) || 0) - (Number(a.publishedAt) || 0))
+      } else if (sort === '预算从高到低') {
+        list.sort((a, b) => b.budget - a.budget)
+      } else if (sort === '预算从低到高') {
+        list.sort((a, b) => a.budget - b.budget)
+      }
     }
     // 标记收藏状态；清单进度按实际条目计算，保证与详情页一致
     const type = isDemand ? 'demand' : 'product'
@@ -829,7 +909,7 @@ Page({
       checklistDone: x.checklist ? x.checklist.filter((c) => c.ok).length : x.checklistDone,
       checklistTotal: x.checklist ? x.checklist.length : 8
     }))
-    this.setData({ items: list, loading: false })
+    this.setData({ items: list, loading: false, hasMore: !!this.hasMore })
     /* 记住这次的渲染结果，下次切回该视图时先铺上去再静默刷新 */
     this.tabCache[this.data.tab] = { items: list }
   },

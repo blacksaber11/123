@@ -143,7 +143,7 @@
       <view wx:else class="empty">
         <image class="big-img" src="/assets/icons/empty-package.png" mode="aspectFit" />
         <view class="ttl">你还没有发布过{{subTab === 'news' ? '资讯' : (subTab === 'product' ? '商品' : '求购需求')}}</view>
-        <view class="ds">发布后系统自动完成基础审核并正常展示；命中风险规则的内容会进入风险池等待人工复核，不影响展示。</view>
+        <view class="ds">发布后立即展示；平台不审核交易流程，只做信息撮合，发现违规内容时按规则处置。</view>
         <view class="acts">
           <button class="btn sm primary" bindtap="goPublish">
             发布{{subTab === 'news' ? '资讯' : (subTab === 'product' ? '商品' : '需求')}}
@@ -156,7 +156,7 @@
     <!-- 我的委托：列表只展示商品信息与截止时间，点击后看详情与流程 -->
     <block wx:elif="{{view === 'agency'}}">
       <view class="callout tip-callout">
-        代采 / 代售委托发布、审核、上架都不收费，成交后支付服务费。列表只展示委托商品与截止时间，点击任意一条可查看流程节点、各节点时间与处理人，并完成确认成交、确认收货等操作。
+        代采 / 代售委托发布、审核、上架都不收费，成交后支付服务费。平台确认成交后你只会收到通知，按账单付款并上传凭证，财务确认到账、客服确认完成后本次委托结束。点击任意一条可查看流程节点、各节点时间与处理人。
       </view>
       <view wx:if="{{agencyList.length}}" class="mine-list">
         <view wx:for="{{agencyList}}" wx:key="id" class="mine-row" data-id="{{item.id}}" bindtap="openAgencyDetail">
@@ -217,17 +217,39 @@
           <text class="ag-edit-lb">成交金额</text>
           <text class="ag-detail-v">{{agencyDetail.dealAmountText}}</text>
         </view>
-        <view wx:if="{{agencyDetail.completedText}}" class="ag-edit-row">
-          <text class="ag-edit-lb">成交时间</text>
-          <text class="ag-detail-v">{{agencyDetail.completedText}}</text>
+        <view wx:if="{{agencyDetail.dealConfirmedAtText}}" class="ag-edit-row">
+          <text class="ag-edit-lb">平台确认成交</text>
+          <text class="ag-detail-v">{{agencyDetail.dealConfirmedAtText}}{{agencyDetail.dealConfirmedBy ? ' · ' + agencyDetail.dealConfirmedBy : ''}}</text>
         </view>
-        <view wx:if="{{agencyDetail.receiptText}}" class="ag-edit-row">
-          <text class="ag-edit-lb">收货确认</text>
-          <text class="ag-detail-v">{{agencyDetail.receiptText}}</text>
+        <view wx:if="{{agencyDetail.completedText}}" class="ag-edit-row">
+          <text class="ag-edit-lb">完成时间</text>
+          <text class="ag-detail-v">{{agencyDetail.completedText}}</text>
         </view>
         <view wx:if="{{agencyDetail.paidClaimText}}" class="ag-edit-tip">已于 {{agencyDetail.paidClaimText}} 上报支付，等待财务核对到账。</view>
         <view wx:if="{{agencyDetail.reasonText}}" class="ag-edit-tip">{{agencyDetail.reasonText}}</view>
         <view wx:if="{{agencyDetail.editPending}}" class="ag-edit-tip">修改已提交：委托已临时下架，审核通过后自动更新并重新上架。</view>
+
+        <view wx:if="{{agencyDetail.consultPendingLabel}}" class="ag-edit-tip">咨询进度：{{agencyDetail.consultPendingLabel}}</view>
+
+        <!-- 客服标准流程：阶段时间线、居间合同与服务费凭证数量 -->
+        <block wx:if="{{agencyDetail.consultStarted}}">
+          <view class="ag-detail-sec">服务进度<text wx:if="{{agencyDetail.consultStageLabel}}"> · {{agencyDetail.consultStageLabel}}</text></view>
+          <view wx:if="{{agencyDetail.consultCsName}}" class="ag-edit-tip">专属客服：{{agencyDetail.consultCsName}}</view>
+          <view wx:if="{{agencyDetail.consultNodes.length}}" class="ag-prog">
+            <view wx:for="{{agencyDetail.consultNodes}}" wx:key="key" class="agp">
+              <view class="agp-dot"></view>
+              <view class="agp-body">
+                <view class="agp-label">{{item.label}}</view>
+                <view wx:if="{{item.line}}" class="agp-at">{{item.line}}</view>
+              </view>
+            </view>
+          </view>
+          <view wx:if="{{agencyDetail.consultContract}}" class="ag-edit-row">
+            <text class="ag-edit-lb">居间合同</text>
+            <text class="ag-detail-v">{{agencyDetail.consultContract.text}}</text>
+          </view>
+          <view wx:if="{{agencyDetail.consultProofCount}}" class="ag-edit-tip">已上传服务费凭证 {{agencyDetail.consultProofCount}} 份，等待平台核对到账。</view>
+        </block>
 
         <view class="ag-detail-sec">处理记录</view>
         <view wx:if="{{agencyDetail.flowNodes.length}}" class="ag-prog">
@@ -242,9 +264,8 @@
         <view wx:else class="ag-edit-tip">暂无处理记录</view>
 
         <view class="mr-acts">
-          <button wx:if="{{agencyDetail.canConfirmDeal}}" class="btn sm primary" data-id="{{agencyDetail.id}}" bindtap="confirmDeal">确认成交</button>
+          <button wx:if="{{agencyDetail.consultContract && agencyDetail.consultContract.canView}}" class="btn sm" bindtap="viewContract">查看居间合同</button>
           <button wx:if="{{agencyDetail.canPayFee}}" class="btn sm primary" data-id="{{agencyDetail.id}}" bindtap="reportPaid">我已支付</button>
-          <button wx:if="{{agencyDetail.canConfirmReceipt}}" class="btn sm primary" data-id="{{agencyDetail.id}}" bindtap="confirmReceipt">确认收货</button>
           <button wx:if="{{agencyDetail.canResubmit}}" class="btn sm primary" data-id="{{agencyDetail.id}}" data-side="{{agencyDetail.side}}" bindtap="resubmitAgency">重新编辑上传</button>
           <button wx:if="{{agencyDetail.canEdit}}" class="btn sm" data-id="{{agencyDetail.id}}" bindtap="openAgencyEdit">修改委托</button>
           <button wx:if="{{agencyDetail.canCancel}}" class="btn sm" data-id="{{agencyDetail.id}}" bindtap="cancelAgency">撤销委托</button>
@@ -452,8 +473,8 @@
              以内 · {{item.qty}} 台 · {{item.tax}}
           </view>
           <view class="mr-acts">
-            <button class="btn sm" data-id="{{item.id}}" data-type="{{favTab}}" bindtap="viewProduct">查看详情</button>
-            <button class="btn sm" data-id="{{item.id}}" bindtap="unfav">取消收藏</button>
+            <button class="btn sm" data-id="{{item.id}}" data-type="{{favTab}}" data-biz="{{item.biz}}" bindtap="viewProduct">查看详情</button>
+            <button class="btn sm" data-id="{{item.id}}" data-type="{{item.biz === 'agency' ? 'agency' : favTab}}" bindtap="unfav">取消收藏</button>
           </view>
         </view>
         </block>
@@ -580,7 +601,7 @@
               <view class="sr-nm">商机提醒</view>
               <view class="sr-d">{{notifyBiz ? '有新的匹配商机时，推送一条微信提醒' : '已关闭，不再推送商机类微信提醒'}}</view>
             </view>
-            <switch class="sr-sw" checked="{{notifyBiz}}" bindchange="toggleNotifyBiz" color="#2f6bff" />
+            <switch class="sr-sw" checked="{{notifyBiz}}" bindchange="toggleNotifyBiz" color="#4F46E5" />
           </view>
         </view>
       </view>
@@ -663,7 +684,7 @@
               <view class="sr-nm">关于平台</view>
               <view class="sr-d">平台介绍与版本说明</view>
             </view>
-            <text class="sr-val">算力聚合 v1.00</text>
+            <text class="sr-val">算力聚合 v{{appVersion}}</text>
             <text class="sr-go">›</text>
           </view>
         </view>

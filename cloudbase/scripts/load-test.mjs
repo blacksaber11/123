@@ -382,6 +382,7 @@ async function runFlow(repo, userRouter, adminRouter) {
     subject: '北京辛科技有限公司',
     subjectType: '民企',
     subjectKind: 'company',
+    position: '采购经理',
     exposure: EXPOSURES.OPEN
   }, { openid: FLOW.seller })
   if (!saved.ok) fail('1. 保存主体信息', saved)
@@ -451,6 +452,7 @@ async function runFlow(repo, userRouter, adminRouter) {
     subject: '壬采购有限公司',
     subjectType: '民企',
     subjectKind: 'company',
+    position: '采购经理',
     exposure: EXPOSURES.OPEN
   }, { openid: FLOW.buyer })
   check('4. 买家主体公开', buyerProfile.ok, buyerProfile.ok ? '' : `${buyerProfile.code}: ${buyerProfile.message}`)
@@ -527,14 +529,16 @@ async function runFlow(repo, userRouter, adminRouter) {
     bizClaim.ok ? `claimCount=${bizClaim.data.claimCount}` : `${bizClaim.code}: ${bizClaim.message}`)
   check('8. 领取记录唯一', (await repo.count('bizClaims', { targetType: 'demand', targetId: demandId })) === 1)
 
-  /* 9. 购买商机权限 → 财务确认开通 */
-  const purchase = await userRouter.dispatch('biz.purchase', { planKey: 'month' }, { openid: FLOW.payer })
-  if (!purchase.ok) fail('9. 提交会员购买', purchase)
-  const paymentId = (purchase.data && purchase.data.paymentId) || ''
-  const payment = await repo.get('payments', paymentId)
-  check('9. 生成待确认收款单', !!payment && payment.status === '待确认', `paymentId=${paymentId}`)
-  const confirm = await adminRouter.dispatch('payment.confirm', { id: paymentId }, adminCtx)
-  check('9. 财务确认后自动开通会员', confirm.ok, confirm.ok ? '' : `${confirm.code}: ${confirm.message}`)
+  /* 9. 微信支付自动开通商机权限并写入收款流水 */
+  const wxPayNo = 'WXPAY_LOADTEST_' + Date.now()
+  const purchase = await adminRouter.dispatch('biz.grant', {
+    uid: FLOW.payer, plan: 'month', amount: 99, method: '微信支付', paymentId: wxPayNo
+  }, adminCtx)
+  if (!purchase.ok) fail('9. 微信支付开通会员', purchase)
+  const payments = await repo.find('payments', { paymentId: wxPayNo }, { limit: 5 })
+  check('9. 微信支付自动写入已确认收款单',
+    payments.length === 1 && payments[0].status === '已确认' && payments[0].received === 99,
+    `paymentId=${wxPayNo}`)
   const access = await repo.get('bizAccess', FLOW.payer)
   check('9. 会员权限落库为已开通', !!access && access.status === '已开通', `status=${access && access.status}`)
 
@@ -644,6 +648,7 @@ async function main() {
   const profileScenario = await runScenario('f) profile.save 并发保存', PROFILE_CONCURRENCY, () =>
     userRouter.dispatch('profile.save', {
       subject: '并发档案测试',
+      position: '采购经理',
       exposure: EXPOSURES.OPEN,
       phonePublic: true
     }, { openid: 'o_profiler' })
@@ -652,17 +657,7 @@ async function main() {
   printResult(profileScenario, `档案记录 ${profileRows} 条（期望 1）`)
   if (profileScenario.failed > 0 || profileRows !== 1) failures.push('f) profile.save')
 
-  /* g) 同一用户并发提交会员购买：只能生成一张待确认单 */
-  const purchaseScenario = await runScenario('g) biz.purchase 并发下单', PURCHASE_CONCURRENCY, () =>
-    userRouter.dispatch('biz.purchase', { planKey: 'month' }, { openid: 'o_payer' })
-  )
-  const pendingPayments = await repo.count('payments', {
-    uid: 'o_payer', bizType: '会员续费', status: '待确认'
-  })
-  printResult(purchaseScenario, `待确认收款单 ${pendingPayments} 张（期望 1）`)
-  if (purchaseScenario.failed > 0 || pendingPayments !== 1) failures.push('g) biz.purchase')
-
-  /* h) 同一用户并发咨询同一商品：去重后只留一条线索 */
+  /* g) 同一用户并发咨询同一商品：去重后只留一条线索 */
   const consultScenario = await runScenario('h) consult.submit 并发去重', CONSULT_CONCURRENCY, () =>
     userRouter.dispatch('consult.submit', {
       productId: CONSULT_PRODUCT_ID,

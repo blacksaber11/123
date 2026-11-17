@@ -44,6 +44,7 @@
   border-radius: 12rpx;
   font-size: 25rpx;
   color: var(--text-2, #666);
+  white-space: nowrap;
 }
 .k-tab.on {
   background: #fff;
@@ -438,7 +439,7 @@
 
 /* 底部操作 */
 .cta-space {
-  height: 160rpx;
+  height: calc(150rpx + env(safe-area-inset-bottom));
 }
 .cta {
   position: fixed;
@@ -507,9 +508,15 @@
   font-weight: 700;
 }
 .sheet-x {
+  flex: none;
+  width: 72rpx;
+  height: 72rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: -14rpx -14rpx -14rpx 0;
   font-size: 30rpx;
   color: var(--muted);
-  padding: 4rpx 8rpx;
 }
 .sheet-search {
   padding-bottom: 14rpx;

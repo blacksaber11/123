@@ -44,6 +44,7 @@ function createCloudRepo(cloud) {
         else if ('$ne' in cond) out[key] = _.neq(cond.$ne)
         else if (hasGte) out[key] = _.gte(cond.$gte)
         else if (hasLt) out[key] = _.lt(cond.$lt)
+        else if ('$exists' in cond) out[key] = _.exists(!!cond.$exists)
         else if ('$regex' in cond) out[key] = db.RegExp({ regexp: String(cond.$regex), options: cond.$options || 'i' })
         continue
       }
@@ -57,7 +58,9 @@ function createCloudRepo(cloud) {
     for (const fields of specs) {
       const query = {}
       for (const f of fields) query[f] = doc[f]
-      if (fields.length === 1 && doc[fields[0]] === undefined) continue
+      /* 单字段唯一索引允许空值（未回填的 proofNo 等）；在途键靠退役键保持唯一，
+         不依赖空值：云开发唯一索引会把多行的 null 视为冲突 */
+      if (fields.length === 1 && (doc[fields[0]] === undefined || doc[fields[0]] === null)) continue
       const res = await tx.collection(collection).where(query).get()
       const duplicated = (res.data || []).some((row) => row._id !== excludeId && row.id !== excludeId)
       if (duplicated) throw new AppError(CODES.CONFLICT, '记录已存在')
@@ -101,8 +104,11 @@ function createCloudRepo(cloud) {
       const page = (from, size) => {
         let q = db.collection(collection).where(toWhere(query))
         for (const spec of specs) {
-          const field = typeof spec === 'string' ? spec : spec.field
-          const dir = typeof spec === 'string' ? 'asc' : spec.dir === 'desc' ? 'desc' : 'asc'
+          /* 同时兼容 { field, dir } / 'field' 与 { field: 1 | -1 } 简写 */
+          const field = typeof spec === 'string' ? spec : spec.field || Object.keys(spec)[0]
+          const rawDir = typeof spec === 'string' ? 'asc' : (spec.field ? spec.dir : spec[field])
+          const dir = rawDir === 'desc' || rawDir === -1 ? 'desc' : 'asc'
+          if (!field) continue
           q = q.orderBy(field, dir)
         }
         return q.skip(from).limit(size)

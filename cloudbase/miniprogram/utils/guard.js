@@ -86,11 +86,52 @@ function forbidSaveHint() {
 }
 
 /**
- * 关闭右上角「转发 / 分享到朋友圈」入口：
- * 材料、线索、联系方式只在平台内流转，默认任何页面都不允许转发出去。
+ * 右上角分享采用黑名单：默认开放转发，只有下面这些含身份材料 / 私密会话的页面关闭。
+ * 推广方案要求「任意页面右上角分享」都能带上推广码，因此不能再全站一刀切隐藏。
  */
-function hideShare() {
+const NO_SHARE_PAGES = [
+  'pages/login/login',
+  'pages/publish/publish',
+  'pages/profile/profile',
+  'pages/privacy/privacy',
+  'pages/consult/consult',
+  'pages/chat/chat',
+  'pages/mine/sub/sub',
+  'pages/report/report'
+]
+
+/* 当前页面路由（不带前导 /） */
+function currentRoute() {
+  try {
+    const pages = typeof getCurrentPages === 'function' ? getCurrentPages() : []
+    const cur = pages.length ? pages[pages.length - 1] : null
+    return String((cur && cur.route) || '').replace(/^\//, '')
+  } catch (err) {
+    return ''
+  }
+}
+
+/** 是否属于不允许分享的页面（支持子路径，如 pages/mine/sub/sub） */
+function noShareRoute(route) {
+  const r = String(route || currentRoute()).replace(/^\//, '')
+  if (!r) return false
+  return NO_SHARE_PAGES.some((prefix) => r === prefix || r.indexOf(prefix + '/') === 0)
+}
+
+/**
+ * 右上角分享开关：
+ * 默认开放「发送给朋友」；命中黑名单的页面关闭转发 / 朋友圈。
+ */
+function hideShare(pageRoute) {
   if (typeof wx.hideShareMenu !== 'function') return
+  if (!noShareRoute(pageRoute)) {
+    if (typeof wx.showShareMenu === 'function') {
+      try {
+        wx.showShareMenu({ menus: ['shareAppMessage'], withShareTicket: false })
+      } catch (err) { /* 基础库版本低时忽略 */ }
+    }
+    return
+  }
   try {
     wx.hideShareMenu({ menus: ['shareAppMessage', 'shareTimeline'] })
   } catch (err) {

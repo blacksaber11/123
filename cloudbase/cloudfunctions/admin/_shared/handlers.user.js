@@ -58,6 +58,14 @@ const { buildProduct, buildDemand, judgeTier, blockedLifecycle, mustForDemand, n
 const { notifyNewBizMatch } = require('./market')
 const { detectRisk, normalizeModel } = require('./insights')
 const { chatKindOf, mediaState, chatCutoff, DAY_MS } = require('./chatmedia')
+const { createPromoteEngine } = require('./promote')
+const { CS_STATUS, RATING_TAGS, csStatusOf } = require('./cs')
+const {
+  TICKET_STATE,
+  ticketStateOf,
+  stageOf: consultStageOf,
+  stageLabel: consultStageLabel
+} = require('./consultflow')
 
 const SUBJECT_TYPES = [
   '个人', '个体户', '国央企', '央企', '国企', '上市公司', '民企', '外企',
@@ -131,14 +139,14 @@ const DEMAND_EDITABLE_STATUS = [
 
 /** 编辑回填的属主字段白名单：对外投影不含媒体等字段，密文一律不下发 */
 const PRODUCT_OWNER_FIELDS = [
-  'id', 'visibility', 'tradeMode', 'side', 'title', 'cat', 'brand', 'model', 'qty', 'minQty',
+  'id', 'visibility', 'channel', 'tradeMode', 'side', 'title', 'cat', 'brand', 'series', 'model', 'qty', 'minQty',
   'price', 'priceMax', 'priceMode', 'priceUnit', 'currency', 'currencySymbol', 'currencyLabel', 'supply', 'tax', 'deliver', 'cond', 'condLevel', 'city',
   'term', 'closed', 'deposit', 'pay', 'rentLimits', 'must', 'nego', 'flow',
   'note', 'accept', 'requirements', 'limit', 'media',
   'status', 'reviewReason', 'offlineReason', 'createdAt'
 ]
 const DEMAND_OWNER_FIELDS = [
-  'id', 'visibility', 'tradeMode', 'side', 'title', 'cat', 'brand', 'model', 'qty', 'budget', 'budgetMax', 'budgetMode', 'budgetUnit',
+  'id', 'visibility', 'channel', 'tradeMode', 'side', 'title', 'cat', 'brand', 'series', 'model', 'qty', 'budget', 'budgetMax', 'budgetMode', 'budgetUnit',
   'currency', 'currencySymbol', 'currencyLabel',
   'supply', 'tax', 'cond', 'condLevel', 'city', 'term', 'closed', 'deposit', 'pay', 'rentLimits',
   'must', 'note', 'accept', 'sameMachine', 'codeAsk', 'media',
@@ -293,6 +301,44 @@ function amountText(low, max, mode, sym, unit) {
   return (mode === 'range' && hi > lo ? fmt(lo) + ' - ' + fmt(hi) : fmt(lo)) + (unit || '')
 }
 
+/* 首页筛选下推：多选精确值 → $in；成色 / 税费是自由文本，用包含匹配保持页面口径 */
+function listInFilter(values) {
+  return values && values.length ? { $in: values } : null
+}
+
+function listContainsFilter(values) {
+  if (!values || !values.length) return null
+  const pattern = values
+    .map((v) => String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|')
+  return { $regex: pattern }
+}
+
+/* 城市口径：页面选「深圳」，历史数据可能是「深圳市」，两种都命中 */
+function listCityFilter(values) {
+  if (!values || !values.length) return null
+  const list = []
+  values.forEach((raw) => {
+    const name = String(raw == null ? '' : raw).trim().replace(/(市|地区|盟|自治州)$/, '')
+    if (!name) return
+    ;[name, name + '市'].forEach((c) => {
+      if (list.indexOf(c) < 0) list.push(c)
+    })
+  })
+  return listInFilter(list)
+}
+
+/* 首页排序口径：搜索场景固定按发布时间倒序，与客户端此前的展示一致 */
+function productListSort(sort, hasKeyword) {
+  const byCreatedAt = [{ field: 'createdAt', dir: 'desc' }]
+  if (hasKeyword) return byCreatedAt
+  if (sort === '价格升序') return [{ field: 'price', dir: 'asc' }].concat(byCreatedAt)
+  if (sort === '价格降序') return [{ field: 'price', dir: 'desc' }].concat(byCreatedAt)
+  if (sort === '成交优先') return [{ field: 'heat', dir: 'desc' }].concat(byCreatedAt)
+  /* 「综合」「最新」都按发布时间倒序 */
+  return byCreatedAt
+}
+
 function createUserHandlers(deps) {
   const { repo, keys } = deps
   /* 微信订阅消息推送由云函数注入；本地测试 / 未配置环境变量时为 undefined */
@@ -305,6 +351,8 @@ function createUserHandlers(deps) {
   const exchangePhone = deps.exchangePhone
   const now = typeof deps.now === 'function' ? deps.now : () => Date.now()
   const env = deps.env || {}
+  /* 推广关系：登录时按分享携带的 refCode 自动绑定，先到先得 */
+  const promoteEngine = createPromoteEngine({ repo, keys, now })
   /* 共享列表缓存（可选）：公开列表的主体内容与浏览者无关，按入参全站共享一份 */
   const cacheLayer = deps.cache && typeof deps.cache.wrap === 'function' ? deps.cache : null
 
@@ -313,7 +361,10 @@ function createUserHandlers(deps) {
    * mine / 私密主体归属在每次请求时叠加，因此 key 不含 openid。
    */
   function listCacheSuffix(action, input) {
-    const fields = ['page', 'limit', 'tradeMode', 'cat', 'city', 'q', 'status']
+    const fields = [
+      'page', 'limit', 'tradeMode', 'cat', 'city', 'q', 'status',
+      'cats', 'brands', 'cities', 'modes', 'conds', 'taxes', 'sort'
+    ]
     const parts = fields.map((key) => key + '=' + String(input[key] === undefined ? '' : input[key]))
     return action + ':' + parts.join('&')
   }
@@ -386,6 +437,25 @@ function createUserHandlers(deps) {
     } catch (err) {
       return ''
     }
+  }
+
+  /**
+   * 发布时填写的补充手机号：只给平台坐席看的联系渠道，加密落库。
+   * 之前前端校验了却不上送、落库也没有字段，坐席永远拿不到这个号码。
+   */
+  function attachOwnerPhone(doc, phoneInput, uid, lenient) {
+    const raw = String(phoneInput == null ? '' : phoneInput).trim()
+    if (!raw) return
+    let phone = ''
+    try {
+      phone = normalizePhone(raw)
+    } catch (err) {
+      /* 草稿允许暂存半成品号码；正式发布 / 编辑仍按手机号格式拦截 */
+      if (lenient) return
+      throw err
+    }
+    doc.ownerPhoneCipher = encryptField({ keys, value: phone, aad: phoneAad(uid) })
+    doc.ownerPhoneBidx = blindIndex({ keys, value: phone })
   }
 
   /** 从 storagePath 反推文件名：非法 % 转义不能把整条链路打成 500 */
@@ -477,6 +547,8 @@ function createUserHandlers(deps) {
       targetId: o.targetId || '',
       title: o.title || ''
     }
+    /* 商机池发起：整个会话的每条消息都带来源标记，消息页据此展示「商机」标签 */
+    if (o.fromBiz) base.fromBiz = true
     /* 消息类型扩展：text / image / video / card，媒体与名片字段随消息一起落库 */
     const extra = { kind: o.kind || 'text' }
     if (o.image) extra.image = o.image
@@ -774,7 +846,12 @@ function createUserHandlers(deps) {
       exposure: (profile && profile.exposure) === EXPOSURES.OPEN ? EXPOSURES.OPEN : EXPOSURES.HIDDEN,
       exposureLabel: EXPOSURE_LABELS[(profile && profile.exposure) === EXPOSURES.OPEN ? EXPOSURES.OPEN : EXPOSURES.HIDDEN],
       /* 是否自愿公开联系电话：只有在「公开主体」档才真正生效 */
-      phonePublic: !!(profile && profile.phonePublic === true)
+      phonePublic: !!(profile && profile.phonePublic === true),
+      /* 推广大使：本人登录态下发自己的推广码，任意页面分享 / 保存海报都带上，别人打开即绑定 */
+      promoter: {
+        active: user.promoterStatus === 'active',
+        refCode: user.promoterStatus === 'active' ? String(user.refCode || '') : ''
+      }
     }
   }
 
@@ -807,7 +884,7 @@ function createUserHandlers(deps) {
         /* 匿名货主键：任何档位都下发，用于关注；与主体是否公开无关 */
         ownerKey: ownerKeyOf(p.uid),
         city: p.city || '',
-        label: exposure === EXPOSURES.OPEN ? '公开主体' : '平台核验 · 主体已隐藏',
+        label: exposure === EXPOSURES.OPEN ? '公开主体' : '主体已隐藏',
         revealed,
         phonePublic,
         phoneShared,
@@ -852,7 +929,7 @@ function createUserHandlers(deps) {
   function attachOwnerInfo(view, info) {
     const it = info || { exposure: EXPOSURES.HIDDEN }
     view.ownerExposure = it.exposure || EXPOSURES.HIDDEN
-    view.ownerExposureLabel = it.label || '平台核验 · 主体已隐藏'
+    view.ownerExposureLabel = it.label || '主体已隐藏'
     /* 匿名货主键：关注功能使用，不含任何身份信息 */
     view.ownerKey = it.ownerKey || ''
     /* 货主已开启公开电话；是否下发明文号码另由 phonePublic 控制（仅商机会员） */
@@ -875,14 +952,20 @@ function createUserHandlers(deps) {
     const payload = {
       id: product.id,
       visibility: product.visibility,
+      channel: product.channel || '',
+      claimLimit: Number(product.claimLimit) || 0,
       tradeMode: product.tradeMode,
       title: product.title || '',
       cat: product.cat || '',
       brand: product.brand || '',
+      series: product.series || '',
       model: product.model || '',
       qty: Number(product.qty) || 0,
       minQty: Number(product.minQty) || 0,
       currency: product.currency || 'CNY',
+      /* 价格方式在出售 / 出租都生效：面议草稿价格为 0，丢了 priceMode 会被当成固定价 */
+      priceMode: product.priceMode || 'fixed',
+      priceMax: Number(product.priceMax) || 0,
       supply: product.supply || '现货',
       tax: String(product.tax || '').split(' · ').filter(Boolean),
       deliver: product.deliver || '',
@@ -917,13 +1000,19 @@ function createUserHandlers(deps) {
     const payload = {
       id: demand.id,
       visibility: demand.visibility,
+      channel: demand.channel || '',
+      claimLimit: Number(demand.claimLimit) || 0,
       tradeMode: demand.tradeMode,
       title: demand.title || '',
       cat: demand.cat || '',
       brand: demand.brand || '',
+      series: demand.series || '',
       model: demand.model || '',
       qty: Number(demand.qty) || 0,
       currency: demand.currency || 'CNY',
+      /* 预算方式在一次性采购 / 租赁都生效：面议需求预算为 0，丢了 budgetMode 会被当成固定预算 */
+      budgetMode: demand.budgetMode || 'fixed',
+      budgetMax: Number(demand.budgetMax) || 0,
       supply: demand.supply || '现货',
       tax: String(demand.tax || '').split(' · ').filter(Boolean),
       city: demand.city || '',
@@ -992,11 +1081,12 @@ function createUserHandlers(deps) {
 
   /**
    * 发布方声明的必须条件必须全部出现；历史数据没有 must 时不强制，避免旧数据无法咨询。
-   * 客户端只勾选其中一项就提交，过去能绕过其余必须条件，这里统一兜住。
+   * 条件可能来自平台预置项，也可能是发布方自己填写的自定义条件，因此按发布内容里的
+   * must 原样比对，不再只认预置清单。
    */
   function assertCondsComplete(conds, target, hint) {
     const must = target && target.doc && Array.isArray(target.doc.must)
-      ? target.doc.must.filter((k) => MUST_CONDITIONS.includes(k))
+      ? target.doc.must.map((k) => String(k == null ? '' : k).trim()).filter((k) => k !== '')
       : []
     if (!must.length) return
     const filled = new Set((conds || []).map((item) => item.k))
@@ -1131,6 +1221,14 @@ function createUserHandlers(deps) {
       }
       /* 登录也拦一道：停用账号不应拿到任何用户端数据 */
       if (user.status === '停用') throw new AppError(CODES.FORBIDDEN, '账号已停用，请联系平台客服')
+      /* 分享链接带推广码：登录即自动绑定；已绑定 / 推广者未开通 / 自己的码都静默跳过 */
+      if (data.ref) {
+        try {
+          await promoteEngine.bindOnLogin(user.id, data.ref, str(data.refScene, { field: '来源', max: 24 }) || 'login')
+        } catch (bindErr) {
+          /* 绑定失败不影响登录，下次登录会再试 */
+        }
+      }
       const profile = await readProfile(user.id)
       return buildProfileView(user, profile)
     },
@@ -1317,6 +1415,16 @@ function createUserHandlers(deps) {
       } else {
         patch.phonePublic = false
       }
+      /* 公开主体前提：主体名称 + 职位 / 身份，营业执照等原件可后补 */
+      if (patch.exposure === EXPOSURES.OPEN) {
+        const hasSubject = !!subject || !!(existing && existing.subjectCipher)
+        const hasPosition = data.position === undefined
+          ? !!((existing && existing.position) || '')
+          : !!position
+        if (!hasSubject || !hasPosition) {
+          throw new AppError(CODES.VALIDATION, '选择公开主体前，请先填写主体名称和职位')
+        }
+      }
       /* 主体名称、联系备注同为敏感字段：只落密文，历史明文字段置空 */
       Object.assign(patch, encryptFields({
         keys, collection: 'profiles', recordId: user.id, fields: { subject, contact }
@@ -1355,6 +1463,14 @@ function createUserHandlers(deps) {
         ? prevExposure
         /* 历史「对接后可见」按「不公开主体」处理 */
         : enumOf(data.exposure === 'matched' ? EXPOSURES.HIDDEN : data.exposure, Object.values(EXPOSURES), '公开范围')
+      /* 公开主体前提：主体名称 + 职位 / 身份，营业执照等原件可后补 */
+      if (exposure === EXPOSURES.OPEN) {
+        const hasSubject = !!(existing && existing.subjectCipher)
+        const hasPosition = !!((existing && existing.position) || '')
+        if (!hasSubject || !hasPosition) {
+          throw new AppError(CODES.VALIDATION, '选择公开主体前，请先填写主体名称和职位')
+        }
+      }
       const prevPhone = !!(existing && existing.phonePublic === true)
       const phoneInput = data.phonePublic === undefined ? prevPhone : data.phonePublic === true
       /* 只有「公开主体」档联系电话才真正生效，其他档一律落 false，避免口径漂移 */
@@ -1528,6 +1644,8 @@ function createUserHandlers(deps) {
       if (!isDraft) await assertCanJoinPool(uid, data)
       const at = now()
       const doc = buildProduct(data, uid, at, { relaxed: isDraft })
+      /* 补充手机号（选填）：仅坐席可见，加密落库；编辑回填时解密给属主本人 */
+      attachOwnerPhone(doc, data.phone, uid, isDraft)
       doc.id = doc.id || randomId('P')
       doc.status = isDraft ? PRODUCT_STATUS.DRAFT : PRODUCT_STATUS.ON_SALE
       if (!isDraft) {
@@ -1546,6 +1664,11 @@ function createUserHandlers(deps) {
       }
       /* 草稿覆盖同一条：同一货主把草稿改好后再存一次，不应产生第二条记录 */
       const existing = doc.id ? await repo.get('products', doc.id) : null
+      /* 再次保存草稿时没带手机号：沿用上一条已加密的号码，避免保存一次就丢 */
+      if (!doc.ownerPhoneCipher && existing && existing.ownerPhoneCipher) {
+        doc.ownerPhoneCipher = existing.ownerPhoneCipher
+        doc.ownerPhoneBidx = existing.ownerPhoneBidx
+      }
       if (existing) {
         if (existing.ownerId !== uid) throw new AppError(CODES.FORBIDDEN, '只能修改自己发布的商品')
         if ([PRODUCT_STATUS.DRAFT, PRODUCT_STATUS.REJECTED].indexOf(existing.status) < 0) {
@@ -1637,6 +1760,8 @@ function createUserHandlers(deps) {
           checked.bizPool = false
         }
       }
+      /* 普通发布不进商机池：领取名额同步归零 */
+      if (checked.channel === PUBLISH_CHANNELS.NORMAL) checked.claimLimit = 0
       const at = now()
       const res = await repo.updateWhere(
         'products',
@@ -1646,19 +1771,24 @@ function createUserHandlers(deps) {
           visibility: checked.visibility,
           channel: checked.channel,
           bizPool: checked.bizPool,
+          claimLimit: checked.claimLimit,
           title: checked.title,
           cat: checked.cat,
           brand: checked.brand,
+          series: checked.series,
           model: checked.model,
           qty: checked.qty,
           minQty: checked.minQty,
           price: checked.price,
+          priceMode: checked.priceMode,
+          priceMax: checked.priceMax,
           priceUnit: checked.priceUnit,
           currency: checked.currency,
           currencySymbol: checked.currencySymbol,
           currencyLabel: checked.currencyLabel,
           tax: checked.tax,
           supply: checked.supply,
+          condLevel: checked.condLevel,
           city: checked.city,
           cond: checked.cond,
           deliver: checked.deliver,
@@ -1674,6 +1804,9 @@ function createUserHandlers(deps) {
           accept: checked.accept,
           requirements: checked.requirements,
           limit: checked.limit,
+          /* 草稿阶段已加密保存的补充手机号：转正式发布时原样带入，不能丢 */
+          ownerPhoneCipher: product.ownerPhoneCipher || '',
+          ownerPhoneBidx: product.ownerPhoneBidx || '',
           reviewReason: '',
           reviewedAt: at,
           submittedAt: at
@@ -1807,6 +1940,8 @@ function createUserHandlers(deps) {
           checked.bizPool = false
         }
       }
+      /* 普通发布不进商机池：领取名额同步归零 */
+      if (checked.channel === PUBLISH_CHANNELS.NORMAL) checked.claimLimit = 0
       const at = now()
       const res = await repo.updateWhere(
         'demands',
@@ -1816,18 +1951,23 @@ function createUserHandlers(deps) {
           visibility: checked.visibility,
           channel: checked.channel,
           bizPool: checked.bizPool,
+          claimLimit: checked.claimLimit,
           title: checked.title,
           cat: checked.cat,
           brand: checked.brand,
+          series: checked.series,
           model: checked.model,
           qty: checked.qty,
           budget: checked.budget,
+          budgetMode: checked.budgetMode,
+          budgetMax: checked.budgetMax,
           budgetUnit: checked.budgetUnit,
           currency: checked.currency,
           currencySymbol: checked.currencySymbol,
           currencyLabel: checked.currencyLabel,
           tax: checked.tax,
           supply: checked.supply,
+          condLevel: checked.condLevel,
           city: checked.city,
           cond: checked.cond,
           term: checked.term,
@@ -2138,6 +2278,14 @@ function createUserHandlers(deps) {
       fields.forEach((k) => {
         if (doc[k] !== undefined) out[k] = doc[k]
       })
+      /* 补充手机号只回填给属主本人，便于再次编辑；对外投影始终不含该字段 */
+      if (kind === 'product' && doc.ownerPhoneCipher) {
+        try {
+          out.phone = decryptField({ keys, token: doc.ownerPhoneCipher, aad: phoneAad(uid) })
+        } catch (err) {
+          out.phone = ''
+        }
+      }
       return out
     },
 
@@ -2166,6 +2314,10 @@ function createUserHandlers(deps) {
       const merged = Object.assign({}, data, {
         /* 编辑页未提交可见范围时沿用原值，避免保密内容被改回公开 */
         visibility: data.visibility !== undefined ? data.visibility : (product.visibility || VISIBILITIES.PUBLIC),
+        /* 渠道 / 价格方式 / 系列不在编辑页显式提交时沿用原值，避免保存后被默认值改写 */
+        channel: data.channel !== undefined ? data.channel : (product.channel || ''),
+        priceMode: data.priceMode !== undefined ? data.priceMode : (product.priceMode || 'fixed'),
+        series: data.series !== undefined ? data.series : (product.series || ''),
         note: data.note !== undefined ? data.note : product.note,
         accept: data.accept !== undefined ? data.accept : product.accept,
         requirements: data.requirements !== undefined ? data.requirements : product.requirements,
@@ -2177,12 +2329,16 @@ function createUserHandlers(deps) {
         visibility: checked.visibility,
         tradeMode: checked.tradeMode,
         title: checked.title,
+        channel: checked.channel,
         cat: checked.cat,
         brand: checked.brand,
+        series: checked.series,
         model: checked.model,
         qty: checked.qty,
         minQty: checked.minQty,
         price: checked.price,
+        priceMode: checked.priceMode,
+        priceMax: checked.priceMax,
         priceUnit: checked.priceUnit,
         currency: checked.currency,
         currencySymbol: checked.currencySymbol,
@@ -2191,6 +2347,7 @@ function createUserHandlers(deps) {
         tax: checked.tax,
         deliver: checked.deliver,
         cond: checked.cond,
+        condLevel: checked.condLevel,
         city: checked.city,
         term: checked.term,
         closed: checked.closed,
@@ -2205,8 +2362,12 @@ function createUserHandlers(deps) {
         requirements: checked.requirements,
         limit: checked.limit,
         /* 编辑页不回传媒体时保留已上传原件，避免保存后清空 */
-        media: data.media !== undefined ? checked.media : (product.media || [])
+        media: data.media !== undefined ? checked.media : (product.media || []),
+        /* 补充手机号：提交了新号码就重新加密，没提交则沿用原密文 */
+        ownerPhoneCipher: product.ownerPhoneCipher || '',
+        ownerPhoneBidx: product.ownerPhoneBidx || ''
       }
+      attachOwnerPhone(patch, data.phone, uid, false)
       /* 编辑后重新做一次风险识别：防止先发正常内容过审，再改成违规内容 */
       const at = now()
       const risk = detectRisk(Object.assign({}, product, patch), {
@@ -2274,11 +2435,15 @@ function createUserHandlers(deps) {
         [data.title, data.note, data.accept, data.must, data.flow],
         '编辑内容'
       )
-      /* 需求侧的必须条件由「供给类型 / 同台互验 / 暗语视频」联动生成，
-         这两个开关不在编辑页里，按原值参与重建，避免条件被默认值改写 */
+      /* 需求侧的必须条件由「供给类型 / 同台互验」联动生成，
+         这个开关不在编辑页里，按原值参与重建，避免条件被默认值改写 */
       const merged = Object.assign({}, data, {
         /* 编辑页未提交可见范围时沿用原值，避免保密内容被改回公开 */
         visibility: data.visibility !== undefined ? data.visibility : (demand.visibility || VISIBILITIES.PUBLIC),
+        /* 渠道 / 预算方式 / 系列不在编辑页显式提交时沿用原值，避免保存后被默认值改写 */
+        channel: data.channel !== undefined ? data.channel : (demand.channel || ''),
+        budgetMode: data.budgetMode !== undefined ? data.budgetMode : (demand.budgetMode || 'fixed'),
+        series: data.series !== undefined ? data.series : (demand.series || ''),
         sameMachine: demand.sameMachine !== false,
         codeAsk: demand.codeAsk !== false,
         note: data.note !== undefined ? data.note : demand.note,
@@ -2290,11 +2455,15 @@ function createUserHandlers(deps) {
         visibility: checked.visibility,
         tradeMode: checked.tradeMode,
         title: checked.title,
+        channel: checked.channel,
         cat: checked.cat,
         brand: checked.brand,
+        series: checked.series,
         model: checked.model,
         qty: checked.qty,
         budget: checked.budget,
+        budgetMode: checked.budgetMode,
+        budgetMax: checked.budgetMax,
         budgetUnit: checked.budgetUnit,
         currency: checked.currency,
         currencySymbol: checked.currencySymbol,
@@ -2302,6 +2471,7 @@ function createUserHandlers(deps) {
         supply: checked.supply,
         tax: checked.tax,
         cond: checked.cond,
+        condLevel: checked.condLevel,
         city: checked.city,
         term: checked.term,
         closed: checked.closed,
@@ -2364,20 +2534,45 @@ function createUserHandlers(deps) {
       if (data.tradeMode) query.tradeMode = enumOf(data.tradeMode, TRADE_MODE_OPTIONS.supply, '交易方式')
       if (data.cat) query.cat = str(data.cat, { field: '品类', max: 30 })
       if (data.city) query.city = str(data.city, { field: '城市', max: 20 })
-      if (data.q) {
-        query.title = {
-          $regex: str(data.q, { field: '关键词', max: 30 }).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
-          $options: 'i'
-        }
-      }
+      /* 首页多选筛选下推：分页前就把条件交给数据库，避免只筛已加载的一页造成假空态 */
+      const cats = arrayOfStrings(data.cats, { field: '设备类型', max: 20, itemMax: 30 })
+      if (cats.length) query.cat = listInFilter(cats)
+      const brands = arrayOfStrings(data.brands, { field: '品牌', max: 40, itemMax: 40 })
+      if (brands.length) query.brand = listInFilter(brands)
+      const cities = arrayOfStrings(data.cities, { field: '城市', max: 60, itemMax: 20 })
+      const cityFilter = listCityFilter(cities)
+      if (cityFilter) query.city = cityFilter
+      const modes = arrayOfStrings(data.modes, { field: '交易方式', max: 3, itemMax: 10 })
+        .filter((m) => TRADE_MODE_OPTIONS.supply.indexOf(m) >= 0)
+      if (modes.length) query.tradeMode = listInFilter(modes)
+      const conds = arrayOfStrings(data.conds, { field: '成色', max: 10, itemMax: 20 })
+      if (conds.length) query.cond = listContainsFilter(conds)
+      const taxes = arrayOfStrings(data.taxes, { field: '税费', max: 10, itemMax: 20 })
+      if (taxes.length) query.tax = listContainsFilter(taxes)
+      const sortKey = str(data.sort, { field: '排序', max: 10 })
+      const sortSpec = productListSort(sortKey, !!data.q)
+      /* 关键词与首页口径一致：跨标题 / 型号 / 品牌 / 城市 / 品类匹配 */
+      const keyword = str(data.q, { field: '关键词', max: 30 }).trim().toLowerCase()
       /* 基础数据与浏览者无关：保密条目按匿名口径投影，属主归属在下面按请求者叠加 */
       const loadBase = async () => {
-        const total = await repo.count('products', query)
-        const rows = await repo.find('products', query, {
-          sort: { field: 'createdAt', dir: 'desc' },
-          skip: paging.skip,
-          limit: paging.limit
-        })
+        let total = 0
+        let rows = []
+        if (keyword) {
+          /* 仓储层不支持 OR 条件：先按其余筛选取候选（上限 2000），
+             再在内存做多字段匹配并按同一分页切片，避免只搜标题漏掉型号 / 城市命中 */
+          const candidates = await repo.find('products', query, { sort: sortSpec, limit: 2000 })
+          const matched = candidates.filter((row) => [row.title, row.model, row.brand, row.city, row.cat]
+            .filter(Boolean).join(' ').toLowerCase().indexOf(keyword) >= 0)
+          total = matched.length
+          rows = matched.slice(paging.skip, paging.skip + paging.limit)
+        } else {
+          total = await repo.count('products', query)
+          rows = await repo.find('products', query, {
+            sort: sortSpec,
+            skip: paging.skip,
+            limit: paging.limit
+          })
+        }
         const ownerMap = await publicOwnerMap(rows.map((row) => row.ownerId))
         /* 收藏量：本页商品一次性聚合，供列表卡片展示「浏览 / 收藏」 */
         const ids = rows.map((row) => row.id)
@@ -2401,6 +2596,10 @@ function createUserHandlers(deps) {
               attachOwnerInfo(view, { exposure: EXPOSURES.HIDDEN, label: ANON_LABEL })
               view.contactHidden = true
               view.privateShare = true
+            } else if (row.platformPublished === true) {
+              /* 平台发布货源：只显示「平台发布」，不关联个人 / 企业主体 */
+              attachOwnerInfo(view, { exposure: EXPOSURES.HIDDEN, label: '平台发布' })
+              view.platformOnly = true
             } else {
               attachOwnerInfo(view, ownerMap.get(row.ownerId))
             }
@@ -2502,6 +2701,17 @@ function createUserHandlers(deps) {
         view.owner = null
         view.ownerKey = ''
         view.ownerSubject = ''
+      } else if (product.platformPublished === true) {
+        /* 平台发布货源：只展示「平台发布」，不关联个人 / 企业主体 */
+        view.platformOnly = true
+        view.ownerExposure = EXPOSURES.HIDDEN
+        view.ownerExposureLabel = '平台发布'
+        view.ownerKey = ''
+        view.ownerSubject = ''
+        view.owner = null
+        view.contactHidden = false
+        view.privateShare = false
+        view.memberOnlyContact = false
       } else {
         const ownerMap = await publicOwnerMap([product.ownerId], { revealPhone: member })
         const ownerInfo = ownerMap.get(product.ownerId) || {}
@@ -2847,6 +3057,7 @@ function createUserHandlers(deps) {
       const result = {
         product: pick('product'),
         demand: pick('demand'),
+        agency: pick('agency'),
         news: pick('news'),
         since,
         full: !since,
@@ -2857,6 +3068,7 @@ function createUserHandlers(deps) {
         result.removed = {
           product: removedOf('product'),
           demand: removedOf('demand'),
+          agency: removedOf('agency'),
           news: removedOf('news')
         }
       }
@@ -2866,7 +3078,7 @@ function createUserHandlers(deps) {
     /** 幂等写入：on=true 收藏 / on=false 取消，重复调用结果一致，便于多端合并 */
     'fav.set': async (data, ctx) => {
       const uid = ctx.openid
-      const targetType = enumOf(String(data.type || '').trim().toLowerCase(), ['product', 'demand', 'news'], '收藏类型')
+      const targetType = enumOf(String(data.type || '').trim().toLowerCase(), ['product', 'demand', 'agency', 'news'], '收藏类型')
       const targetId = str(data.id, { field: '收藏对象', required: true, max: 64 })
       const on = data.on !== false
       const at = now()
@@ -2879,11 +3091,15 @@ function createUserHandlers(deps) {
       }
       if (!on) return { type: targetType, id: targetId, on: false }
       /* 只接受真实存在的对象，避免把任意字符串刷进收藏表 */
-      const collection = targetType === 'product' ? 'products' : (targetType === 'news' ? 'news' : 'demands')
+      const collection = targetType === 'product' ? 'products'
+        : (targetType === 'news' ? 'news' : (targetType === 'agency' ? 'agencies' : 'demands'))
       const target = await repo.get(collection, targetId)
       if (!target) throw new AppError(CODES.NOT_FOUND, '收藏对象不存在或已下架')
       if (targetType === 'news' && (target.deleted === true || target.status !== '已发布')) {
         throw new AppError(CODES.NOT_FOUND, '该资讯已失效，无法收藏')
+      }
+      if (targetType === 'agency' && target.deleted === true) {
+        throw new AppError(CODES.NOT_FOUND, '该委托已失效，无法收藏')
       }
       const rows = await repo.find('favorites', { uid }, { limit: FAV_LIMIT })
       if (rows.filter((row) => !row.deleted).length >= FAV_LIMIT) {
@@ -3066,6 +3282,8 @@ function createUserHandlers(deps) {
       assertAllowed(user, 'chat')
       const { productId, demandId } = allowedTargetQuery(data)
       const target = await loadTarget(productId, demandId, uid)
+      /* 从商机池 / 商机详情发起：给会话打来源标记，消息页展示「商机」标签 */
+      const fromBiz = data.fromBiz === true
 
       /* 手机号直接用微信授权过来的：客户端不再手填，未传时回落到本人已授权号码 */
       const phoneInput = String(data.phone || '').trim()
@@ -3121,14 +3339,13 @@ function createUserHandlers(deps) {
         const verdict = await judgeConsult({ uid, target, text: summary, phone, phoneBidx })
         leadId = randomId('L')
         const blocked = verdict.tier === 'P0'
-        /* 咨询手机号加密落档：放在线索落库前，任何一步失败都能整体回滚重试，不留半写状态。
-           P0 拦截路径刻意不更新：防止拦截对象用假号码污染档案，影响合法咨询的联系释放 */
-        if (!blocked) {
-          await repo.updateWhere('users', { id: user.id }, {
-            phoneCipher: encryptField({ keys, value: phone, aad: phoneAad(user.id) }),
-            phoneBidx
-          })
-        }
+        /* 咨询电话只作为线索联系方式加密落库，绝不回写用户档案：
+           档案手机号由「微信授权 / 手动设置」入口维护，避免任意提交覆盖实名联系方式 */
+        const contactPhoneCipher = encryptField({
+          keys,
+          value: phone,
+          aad: `leads.contactPhone.${leadId}`
+        })
         if (blocked) {
           /* 拦截记录先于线索落库：拦截记录写失败可整体回滚重试；
              反序会出现「已拦截线索但没有复核记录」，该线索将永远无法恢复 */
@@ -3150,9 +3367,14 @@ function createUserHandlers(deps) {
           demandId: demandId || '',
           uid,
           buyerBidx: phoneBidx,
+          /* 本次咨询填写的联系电话（密文 + 脱敏值），与档案手机号解耦 */
+          contactPhoneCipher,
+          contactPhoneMasked: maskPhone(phone),
           formSummary: summary || `咨询${target.title}`,
           compare: compare.rows,
           matchPct: compare.matchPct,
+          /* 商机池发起：会话消息沿用该标记，消息页展示「商机」 */
+          fromBiz,
           /* 补充材料清单（只落元信息，文件本体走私有存储 + 鉴权链接） */
           media,
           status: blocked ? LEAD_STATUS.BLOCKED : LEAD_STATUS.PENDING,
@@ -3206,24 +3428,8 @@ function createUserHandlers(deps) {
         return receipt
       }
 
-      /* 线索已落库：站内信与留痕属于事后记录，任何一步失败都不能把
-         成功的咨询变成报错，否则用户重试会被 24h 去重拦住且无从恢复 */
-      try {
-        await repo.insert('outbox', {
-          id: randomId('M'),
-          type: 'consult.created',
-          payload: {
-            uid,
-            leadId,
-            targetType: target.type,
-            targetId: target.doc.id,
-            title: '咨询已提交',
-            body: NEUTRAL_RECEIPT
-          },
-          status: 'pending',
-          createdAt: at
-        })
-      } catch (mailErr) { /* 站内信投递失败不影响咨询结果 */ }
+      /* 线索已落库后不再向平台 / 用户投递「咨询已提交」站内信：
+         发起咨询与发起对话一样，只开会话，不产生平台通知 */
 
       /* 必须条件已全部满足：直接为双方开通会话，不再等平台转达。
          不公开主体不会代转联系方式，双方在站内会话里沟通。 */
@@ -3248,7 +3454,8 @@ function createUserHandlers(deps) {
             targetType: target.type,
             targetId: target.doc.id,
             title: target.title,
-            privateForUid: secretTarget ? uid : ''
+            privateForUid: secretTarget ? uid : '',
+            fromBiz
           })
           await repo.updateWhere('leads', { id: leadId }, { threadId, chatOpenedAt: at })
         }
@@ -3317,16 +3524,23 @@ function createUserHandlers(deps) {
       assertAllowed(user, 'chat')
       const { productId, demandId } = allowedTargetQuery(data)
       const target = await loadTarget(productId, demandId, uid)
+      /* 从商机池 / 商机详情发起：给会话打来源标记，消息页展示「商机」标签 */
+      const fromBiz = data.fromBiz === true
 
-      /* 发布方声明的必须条件必须逐项满足；历史数据没有 must 时允许空列表，避免死路 */
+      /* 发布方声明的必须条件必须逐项满足；历史数据没有 must 时允许空列表，避免死路。
+         预置条件与发布方自定义条件都要接受，否则领取后点「站内对话」会被判为未知条件 */
       if (!Array.isArray(data.conds)) throw new AppError(CODES.VALIDATION, '请逐项确认必须条件')
-      if (data.conds.length > MUST_CONDITIONS.length) {
+      const targetMust = target && target.doc && Array.isArray(target.doc.must)
+        ? target.doc.must.map((k) => String(k == null ? '' : k).trim()).filter((k) => k !== '')
+        : []
+      const allowedConds = new Set(MUST_CONDITIONS.concat(targetMust))
+      if (data.conds.length > Math.min(allowedConds.size, 50)) {
         throw new AppError(CODES.VALIDATION, '必须条件项过多')
       }
       const conds = data.conds.map((item) => {
         const src = item || {}
-        const k = str(src.k, { field: '必须条件', required: true, max: 40 })
-        if (!MUST_CONDITIONS.includes(k)) throw new AppError(CODES.VALIDATION, '未知的必须条件')
+        const k = str(src.k, { field: '必须条件', required: true, max: 60 })
+        if (!allowedConds.has(k)) throw new AppError(CODES.VALIDATION, '未知的必须条件')
         return { k, satisfied: src.satisfied === true, note: '' }
       })
       assertCondsComplete(conds, target, '暂时无法直接对话')
@@ -3353,6 +3567,12 @@ function createUserHandlers(deps) {
       }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 1 })
       let lead = existing[0] || null
       const at = now()
+
+      /* 已有线索改为从商机发起：补记来源，会话内后续消息都带这个标记 */
+      if (lead && fromBiz && lead.fromBiz !== true) {
+        await repo.updateWhere('leads', { id: lead.id }, { fromBiz: true }).catch(() => {})
+        lead.fromBiz = true
+      }
 
       /* 已拦截线索不得复用：既不建会话，也不向货主投递任何消息 */
       if (lead && lead.status === LEAD_STATUS.BLOCKED) {
@@ -3386,6 +3606,8 @@ function createUserHandlers(deps) {
           formSummary: `已确认必须条件，想就「${target.title}」直接沟通`,
           compare: compare.rows,
           matchPct: compare.matchPct,
+          /* 商机池发起：会话消息沿用该标记，消息页展示「商机」 */
+          fromBiz,
           media: [],
           status: blocked ? LEAD_STATUS.BLOCKED : LEAD_STATUS.PENDING,
           assignedTo: '',
@@ -3478,6 +3700,12 @@ function createUserHandlers(deps) {
           try {
             const ownerName = secret ? '私密发布' : await peerDisplayName(ownerId)
             const buyerName = maskName(String(user.nick || user.realname || '')) || '用户'
+            /* 发布方没有设置必须条件时直接进入对话：不弹条件层，开场白改为咨询型号 */
+            const hasMust = Array.isArray(target.doc.must) &&
+              target.doc.must.some((k) => String(k == null ? '' : k).trim() !== '')
+            const openingBody = hasMust
+              ? `我已确认全部必须条件，想就「${target.title}」与你直接沟通。`
+              : `你好，我想与你咨询一下「${target.title}」设备，看到后请及时回复。`
             await insertDirectChat({
               threadId,
               at,
@@ -3485,11 +3713,12 @@ function createUserHandlers(deps) {
               fromName: buyerName,
               toUid: ownerId,
               toName: ownerName,
-              body: `我已确认全部必须条件，想就「${target.title}」与你直接沟通。`,
+              body: openingBody,
               targetType: target.type,
               targetId: target.doc.id,
               title: target.title,
-              privateForUid: secret ? uid : ''
+              privateForUid: secret ? uid : '',
+              fromBiz
             })
             if (!hasThreadField) {
               await repo.updateWhere('leads', { id: lead.id }, { threadId, chatOpenedAt: at })
@@ -3754,9 +3983,14 @@ function createUserHandlers(deps) {
             leadId: p.leadId || '',
             targetType: p.targetType || '',
             targetId: p.targetId || '',
+            /* 商机池发起的对话：消息页在会话名后展示「商机」标签 */
+            fromBiz: p.fromBiz === true,
             /* 直聊会话：threadId 用于消息页聚合，peerName 由服务端按公开范围脱敏 */
             threadId: p.threadId || '',
             peerName: p.peerName || '',
+            /* 代采代售咨询：会话标题用委托名称，消息页按 threadId 独立成一条会话 */
+            targetTitle: p.targetType === 'agency' ? (p.title || '代采代售咨询') : '',
+            csStatus: p.csStatus || '',
             /* 私密发布会话：前端隐藏「查看主页」与主体信息 */
             private: p.private === true,
             /* 对方为商机会员时，消息列表直接在名字后展示标识 */
@@ -3825,6 +4059,105 @@ function createUserHandlers(deps) {
         : (lead.demandId ? await repo.get('demands', lead.demandId) : null)
       const ownerId = (target && target.ownerId) || ''
       if (lead.uid !== uid && ownerId !== uid) throw new AppError(CODES.FORBIDDEN, '无权查看该会话')
+
+      /* 代采代售咨询：会话归咨询用户本人所有，客服领取后由领取客服接入 */
+      if (lead.targetType === 'agency') {
+        if (lead.uid !== uid) throw new AppError(CODES.FORBIDDEN, '无权查看该会话')
+        const csRows = await repo.find('outbox', {
+          'payload.uid': uid,
+          'payload.threadId': threadId,
+          createdAt: { $gte: chatCutoff(now()) }
+        }, {
+          sort: { field: 'createdAt', dir: 'asc' },
+          limit: 200
+        })
+        for (const msg of csRows) {
+          const p = msg.payload || {}
+          if ((p.from === 'staff' || p.from === 'system') && msg.readByUser !== true) {
+            await repo.updateWhere('outbox', { id: msg.id, 'payload.uid': uid }, {
+              status: 'read',
+              readByUser: true
+            }).catch(() => {})
+          }
+        }
+        const csState = csStatusOf(lead)
+        const csName = lead.csName || lead.assignedTo || ''
+        /* 会话顶部订单卡：代采 / 代售委托与商品、需求卡保持同一套展示结构 */
+        const agencyId = lead.agencyId || lead.targetId || ''
+        const agency = agencyId ? await repo.get('agencies', agencyId) : null
+        const agencyCard = agency ? {
+          type: 'agency',
+          id: agency.id,
+          title: `${agency.kind || ''} ${agency.item || ''}`.trim(),
+          cover: '',
+          price: Number(agency.price) || 0,
+          priceMode: 'fixed',
+          priceUnit: agency.rental ? '/月' : '',
+          currencySymbol: '¥',
+          city: agency.city || '',
+          tradeMode: agency.kind || '',
+          status: agency.status || '',
+          qty: Number(agency.qty) || 0
+        } : null
+        /* 咨询阶段：工单已被领取才展示分步进度；待领取只提示「客服即将接入」 */
+        const csStage = ticketStateOf(lead) === TICKET_STATE.TICKETED && lead.assignedAccount ? consultStageOf(lead) : ''
+        const csResult = {
+          threadId,
+          kind: 'cs',
+          peerName: csState === CS_STATUS.SERVING && csName ? csName : '平台客服',
+          peerKey: '',
+          title: lead.agencyTitle || lead.formSummary || '代采代售咨询',
+          targetType: 'agency',
+          targetId: lead.targetId || lead.agencyId || '',
+          target: agencyCard,
+          status: lead.status,
+          private: false,
+          myReveal: false,
+          peerContact: null,
+          myMember: false,
+          peerMember: false,
+          memberLabel: '',
+          /* 客服服务状态：等待领取 / 正在接入 / 已结束；结束后展示评价入口 */
+          cs: {
+            status: csState,
+            csName,
+            claimedAt: Number(lead.csClaimedAt) || 0,
+            endedAt: Number(lead.csEndedAt) || 0,
+            canSend: csState === CS_STATUS.SERVING,
+            waiting: csState === CS_STATUS.WAITING,
+            ended: csState === CS_STATUS.ENDED,
+            rated: Number(lead.ratedAt) > 0,
+            rating: Number(lead.rating) || 0,
+            ratingText: lead.ratingText || '',
+            ratingTags: Array.isArray(lead.ratingTags) ? lead.ratingTags : [],
+            /* 标准流程阶段：会话顶部展示「客服进度：xxx」，详细时间线在「我的委托」 */
+            stage: csStage,
+            stageLabel: consultStageLabel(csStage)
+          },
+          items: csRows.map((msg) => {
+            const p = msg.payload || {}
+            const media = mediaState(p, msg.createdAt, now())
+            /* 咨询消息落库用 from:'user'（管理端会话复核按此判断方向），此处统一映射为 me */
+            const mine = p.from === 'me' || p.from === 'user'
+            return {
+              id: msg.id,
+              role: mine ? 'me' : (p.from === 'staff' ? 'peer' : 'system'),
+              kind: chatKindOf(p),
+              text: p.body || '',
+              image: media.image,
+              video: media.video,
+              poster: media.poster,
+              mediaExpired: media.expired,
+              mediaExpiresAt: media.expiresAt,
+              card: null,
+              private: false,
+              at: Number(msg.createdAt) || 0,
+              read: mine ? msg.readByStaff === true : false
+            }
+          })
+        }
+        return csResult
+      }
 
       const rows = await repo.find('outbox', {
         'payload.uid': uid,
@@ -3920,7 +4253,8 @@ function createUserHandlers(deps) {
           const media = mediaState(p, msg.createdAt, now())
           return {
             id: msg.id,
-            role: p.from === 'me' ? 'me' : 'peer',
+            /* 三种来源分别标记：本人 / 对方 / 平台客服，避免客服消息被当成「对方」发言 */
+            role: p.from === 'me' ? 'me' : (p.from === 'staff' ? 'staff' : 'peer'),
             kind: chatKindOf(p),
             text: p.body || '',
             image: media.image,
@@ -3983,6 +4317,63 @@ function createUserHandlers(deps) {
         if (!lead || lead.status === LEAD_STATUS.BLOCKED) {
           throw new AppError(CODES.NOT_FOUND, '会话不存在')
         }
+        /* 代采代售咨询：平台会话，未领取不能发言，结束后锁输入 */
+        if (lead.targetType === 'agency') {
+          if (lead.uid !== uid) throw new AppError(CODES.FORBIDDEN, '无权在该会话中发言')
+          const csState = csStatusOf(lead)
+          if (csState === CS_STATUS.WAITING) {
+            throw new AppError(CODES.CONFLICT, '正在等待平台客服处理，暂不能发送消息')
+          }
+          if (csState === CS_STATUS.ENDED) {
+            throw new AppError(CODES.CONFLICT, '本次咨询服务已结束，不能再发送消息')
+          }
+          const csDoc = {
+            id: randomId('M'),
+            type: 'kf.chat',
+            payload: {
+              uid,
+              channel: 'kf',
+              from: 'user',
+              title: lead.agencyTitle || lead.formSummary || '代采代售咨询',
+              body,
+              kind,
+              image,
+              video,
+              poster,
+              card,
+              staffName: lead.csName || '',
+              threadId,
+              targetType: 'agency',
+              targetId: lead.targetId || lead.agencyId || '',
+              csStatus: csState
+            },
+            status: 'pending',
+            readByUser: true,
+            readByStaff: false,
+            createdAt: at
+          }
+          await repo.insert('outbox', csDoc)
+          if (kind === 'text') {
+            try {
+              await recordSensitiveRisk({
+                repo, at, type: '对话', targetId: threadId,
+                targetLabel: '代采代售咨询 ' + (lead.agencyTitle || threadId),
+                uid, text: body
+              })
+            } catch (riskErr) { /* 风险登记不影响消息发送 */ }
+          }
+          return {
+            id: csDoc.id,
+            threadId,
+            kind,
+            body,
+            image,
+            video,
+            poster,
+            card: card ? Object.assign({}, card, { phone: decryptOwnPhone(user) || '' }) : null,
+            createdAt: at
+          }
+        }
         const target = lead.productId
           ? await repo.get('products', lead.productId)
           : (lead.demandId ? await repo.get('demands', lead.demandId) : null)
@@ -4009,7 +4400,9 @@ function createUserHandlers(deps) {
           targetType: lead.productId ? 'product' : 'demand',
           targetId: lead.productId || lead.demandId || '',
           title: (target && target.title) || '',
-          privateForUid
+          privateForUid,
+          /* 商机池发起的会话：后续消息继续带来源标记，消息页标签不会因新消息丢失 */
+          fromBiz: lead.fromBiz === true
         })
         /* 直聊消息命中敏感词：写入风险单，交给平台人工查看 */
         if (kind === 'text') {
@@ -4128,6 +4521,81 @@ function createUserHandlers(deps) {
         /* 登记失败不影响本次查看，文件最多按未打开口径清理 */
       }
       return { id, openedAt, expiresAt: state.expiresAt }
+    },
+
+    /**
+     * 咨询服务评价：仅代采代售咨询、仅咨询用户本人、仅客服结束服务后一次性评价。
+     * 评价写入 csRatings（leadId 唯一）并回写线索，客服档案按需聚合。
+     */
+    'consult.rate': async (data, ctx) => {
+      const uid = ctx.openid
+      await mustUser(ctx)
+      const leadId = str(data.leadId || data.threadId, { field: '咨询单', required: true, max: 64 })
+      const lead = await repo.get('leads', leadId)
+      if (!lead || lead.targetType !== 'agency' || lead.uid !== uid) {
+        throw new AppError(CODES.NOT_FOUND, '咨询单不存在')
+      }
+      if (csStatusOf(lead) !== CS_STATUS.ENDED) {
+        throw new AppError(CODES.CONFLICT, '客服结束服务后才能评价')
+      }
+      if (Number(lead.ratedAt) > 0) throw new AppError(CODES.CONFLICT, '该咨询已评价，不能重复提交')
+      const score = Number(data.score)
+      if (!Number.isInteger(score) || score < 1 || score > 5) {
+        throw new AppError(CODES.VALIDATION, '请选择 1-5 星评分')
+      }
+      const tags = Array.isArray(data.tags)
+        ? data.tags.map((tag) => String(tag)).filter((tag) => RATING_TAGS.indexOf(tag) >= 0).slice(0, 6)
+        : []
+      const text = str(data.text || '', { field: '评价内容', max: 200 })
+      const at = now()
+      const ratingId = 'CSR' + sha256Hex('cs-rating:' + leadId).slice(0, 20)
+      await repo.insert('csRatings', {
+        id: ratingId,
+        leadId,
+        csId: lead.csId || lead.assignedAccount || '',
+        csName: lead.csName || lead.assignedTo || '',
+        uid,
+        score,
+        tags,
+        text,
+        agencyTitle: lead.agencyTitle || lead.formSummary || '',
+        createdAt: at
+      })
+      await repo.updateWhere('leads', { id: leadId }, {
+        rating: score,
+        ratingTags: tags,
+        ratingText: text,
+        ratedAt: at,
+        updatedAt: at
+      })
+      await repo.insert('outbox', {
+        id: 'M' + sha256Hex('cs-rate:' + leadId).slice(0, 22),
+        type: 'kf.chat',
+        payload: {
+          uid,
+          channel: 'kf',
+          from: 'system',
+          title: lead.agencyTitle || '代采代售咨询',
+          body: `感谢评价，本次服务评分 ${score} 星`,
+          threadId: lead.threadId || leadId,
+          targetType: 'agency',
+          targetId: lead.targetId || lead.agencyId || '',
+          csStatus: CS_STATUS.ENDED
+        },
+        status: 'pending',
+        readByUser: true,
+        createdAt: at
+      }).catch(() => {})
+      await appendAudit(repo, {
+        actorType: 'user',
+        actorId: uid,
+        action: 'consult.rate',
+        target: leadId,
+        reason: `服务评价 ${score} 星`,
+        result: 'allow',
+        at
+      })
+      return { leadId, rating: score, tags, text, ratedAt: at }
     },
 
     /**
@@ -4314,7 +4782,20 @@ function createUserHandlers(deps) {
           planNote: doc.planNote || '商机会员可按需求匹配全平台同类产品，并查看已领取商机的联系方式',
           siteName: doc.siteName || '算力聚合',
           servicePhone: doc.servicePhone || '',
-          serviceTime: doc.serviceTime || '工作日 09:00 - 18:00'
+          serviceTime: doc.serviceTime || '工作日 09:00 - 18:00',
+          /* 首页跑马灯横幅：标题横向滚动，点击弹窗展示详情；未配置时为空数组 */
+          banner: {
+            enabled: doc.bannerEnabled !== false,
+            speed: Number(doc.bannerSpeed) || 40,
+            items: (Array.isArray(doc.bannerItems) ? doc.bannerItems : [])
+              .filter((x) => x && x.title)
+              .slice(0, 20)
+              .map((x, i) => ({
+                id: String(x.id || '') || `bn${i + 1}`,
+                title: String(x.title).slice(0, 60),
+                content: String(x.content || '').slice(0, 2000)
+              }))
+          }
         }
       }
     },

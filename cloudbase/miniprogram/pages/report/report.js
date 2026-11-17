@@ -3,6 +3,7 @@
    - 处置结果在「我的 - 帮助与反馈」与站内信同步。 */
 const { request } = require('../../utils/request')
 const auth = require('../../utils/auth')
+const guard = require('../../utils/guard')
 
 /* 对象类型文案：与 shared/handlers.user.js 的 REPORT_TARGETS 保持一致 */
 const TARGET_TEXT = {
@@ -36,6 +37,11 @@ Page({
       targetTitle: decodeURIComponent(opt.targetTitle || ''),
       type: opt.type === '投诉' || opt.type === '意见反馈' ? opt.type : '举报'
     })
+  },
+
+  /* 举报 / 投诉页在黑名单内：统一关闭右上角分享 */
+  onShow() {
+    guard.hideShare('pages/report/report')
   },
 
   pickType(e) {

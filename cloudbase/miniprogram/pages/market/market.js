@@ -1,4 +1,4 @@
-/* 实时货盘：聚合平台在售商品与 24 小时内的卖方报价，按品类与关键字筛选；
+/* 实时货盘：聚合平台在售商品、有效求购需求与 24 小时内的卖方报价，按品类与关键字筛选；
    代采 / 代售只在商机池展示，不进入货盘。
    独立页面：从首页进入后与其它子页一致，支持左上角返回与侧滑返回。 */
 const guard = require('../../utils/guard')
@@ -13,6 +13,8 @@ Page({
     stats: { count: 0, updatedAt: '' },
     items: [],
     loading: true,
+    /* 接口失败时展示空态并允许重试，不用演示盘口冒充真实行情 */
+    loadError: false,
     /* 粘贴发布报价：文本域 → 解析预览 → 发布 */
     pasteOpen: false,
     pasteText: '',
@@ -52,12 +54,18 @@ Page({
     this.seq = seq
     this.setData({ loading: true })
     let list = null
+    let at = 0
     try {
       const res = await request('user', 'agency.board', { page: 1, limit: 50 }, { silent: true })
-      if (res && Array.isArray(res.items)) list = res.items.map((b) => Object.assign({}, b))
+      if (res && Array.isArray(res.items)) {
+        list = res.items.map((b) => Object.assign({}, b))
+        at = Number(res.updatedAt) || 0
+      }
     } catch (e) {}
     if (seq !== this.seq) return
-    if (list === null) list = B.BOARD_DEMO.map((b) => Object.assign({}, b))
+    /* 失败不回落到演示盘口：展示空态 + 重试；更新时间只在确实拉到数据时设置 */
+    const failed = list === null
+    list = list || []
     /* 产品类型筛选：主品类打底 + 云端数据里出现的品类；已选品类失效时回到「全部」 */
     const cats = B.boardCatList(list)
     const cat = cats.indexOf(this.data.cat) >= 0 ? this.data.cat : '全部'
@@ -65,9 +73,18 @@ Page({
     this.setData({
       cats: cats,
       cat: cat,
-      stats: { count: list.length, updatedAt: B.fmtClock() }
+      loadError: failed,
+      stats: {
+        count: list.length,
+        updatedAt: failed ? '' : B.fmtClock(at ? new Date(at) : undefined)
+      }
     })
     this.apply()
+  },
+
+  /* 接口失败后的手动重试 */
+  retry() {
+    this.load()
   },
 
   /* 买价 = 货盘最高预算，卖价 = 货盘最低报价；价差按卖价 - 买价计算 */
@@ -145,6 +162,12 @@ Page({
     const rows = this.data.pastePreview
     if (!rows.length) {
       wx.showToast({ title: '先解析出至少一条报价', icon: 'none' })
+      return
+    }
+    /* 报价必须带价格：没识别到价格的行不能落库（否则货盘会出现 0 价假盘口） */
+    const noPrice = rows.filter((r) => !(Number(r.price) > 0)).length
+    if (noPrice) {
+      wx.showToast({ title: '有 ' + noPrice + ' 条未识别到价格，请先删除', icon: 'none' })
       return
     }
     /* 先落库再加进货盘：接口失败时保留弹层，不能「本地显示了、服务端没有」 */

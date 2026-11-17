@@ -115,9 +115,10 @@
 }
 .st-search-x {
   flex: none;
-  width: 40rpx;
-  height: 40rpx;
-  line-height: 40rpx;
+  width: 64rpx;
+  height: 64rpx;
+  line-height: 64rpx;
+  margin-right: -12rpx;
   text-align: center;
   font-size: 22rpx;
   color: var(--muted);
@@ -150,10 +151,12 @@
   gap: 6rpx;
 }
 .st-tab {
+  flex: none;
+  white-space: nowrap;
   display: flex;
   align-items: center;
   gap: 6rpx;
-  height: 60rpx;
+  height: 64rpx;
   padding: 0 20rpx;
   font-size: 24rpx;
   color: var(--ink-2);
@@ -175,9 +178,9 @@
 }
 .st-add {
   flex: none;
-  height: 60rpx;
+  height: 64rpx;
   padding: 0 24rpx;
-  line-height: 60rpx;
+  line-height: 64rpx;
   font-size: 24rpx;
   font-weight: 600;
   color: #fff;
@@ -193,8 +196,8 @@
   background: #fff;
   border: 1rpx solid var(--line);
   border-radius: var(--radius);
-  padding: 24rpx;
-  margin-bottom: 16rpx;
+  padding: 28rpx;
+  margin-bottom: 18rpx;
   box-shadow: var(--shadow);
 }
 .st-card.off {
@@ -312,8 +315,8 @@
 }
 .st-act {
   flex: 1;
-  height: 64rpx;
-  line-height: 64rpx;
+  height: 72rpx;
+  line-height: 72rpx;
   text-align: center;
   font-size: 25rpx;
   color: var(--ink-2);
@@ -428,9 +431,9 @@
 }
 .sheet-x {
   flex: none;
-  width: 56rpx;
-  height: 56rpx;
-  line-height: 56rpx;
+  width: 72rpx;
+  height: 72rpx;
+  line-height: 72rpx;
   text-align: center;
   font-size: 26rpx;
   color: var(--muted);
@@ -522,9 +525,9 @@
   flex: none;
   font-size: 22rpx;
   color: var(--brand);
-  padding: 0 16rpx;
-  height: 56rpx;
-  line-height: 56rpx;
+  padding: 0 18rpx;
+  height: 64rpx;
+  line-height: 64rpx;
   background: var(--brand-soft);
   border-radius: 12rpx;
 }
@@ -566,9 +569,9 @@
 }
 .f-dev-x {
   flex: none;
-  width: 44rpx;
-  height: 44rpx;
-  line-height: 44rpx;
+  width: 64rpx;
+  height: 64rpx;
+  line-height: 64rpx;
   text-align: center;
   font-size: 22rpx;
   color: var(--muted);
@@ -642,9 +645,9 @@
   position: absolute;
   top: 0;
   right: 0;
-  width: 42rpx;
-  height: 42rpx;
-  line-height: 42rpx;
+  width: 56rpx;
+  height: 56rpx;
+  line-height: 56rpx;
   text-align: center;
   font-size: 22rpx;
   color: #fff;

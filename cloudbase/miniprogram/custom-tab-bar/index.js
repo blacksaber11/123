@@ -76,6 +76,16 @@ Component({
         if (this.data.bizBadge) this.setData({ bizBadge: 0 })
         return
       }
+      /* 领取 / 标记不满足 / 删除商机后置脏：跳过 30 秒缓存立即重拉 */
+      try {
+        const app = getApp()
+        const g = (app && app.globalData) || {}
+        if (g.bizBadgeDirty) {
+          g.bizBadgeDirty = false
+          bizCache = { uid, at: 0, count: bizCache.count }
+          force = true
+        }
+      } catch (e) {}
       if (!force && bizCache.uid === uid && Date.now() - bizCache.at < 30000) {
         if (bizCache.count !== this.data.bizBadge) this.setData({ bizBadge: bizCache.count })
         return

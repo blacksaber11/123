@@ -27,10 +27,15 @@ function read() {
   try {
     const raw = wx.getStorageSync(FAV_KEY)
     if (raw && typeof raw === 'object') {
-      return { product: idList(raw.product), demand: idList(raw.demand), news: idList(raw.news) }
+      return {
+        product: idList(raw.product),
+        demand: idList(raw.demand),
+        agency: idList(raw.agency),
+        news: idList(raw.news)
+      }
     }
   } catch (e) {}
-  return { product: [], demand: [], news: [] }
+  return { product: [], demand: [], agency: [], news: [] }
 }
 
 function write(data) {
@@ -38,6 +43,7 @@ function write(data) {
     wx.setStorageSync(FAV_KEY, {
       product: idList(data && data.product),
       demand: idList(data && data.demand),
+      agency: idList(data && data.agency),
       news: idList(data && data.news)
     })
   } catch (e) {}
@@ -211,18 +217,21 @@ async function pull(options) {
     const local = read()
     let product = local.product
     let demand = local.demand
+    let agency = local.agency
     let news = local.news
     if (favs && favs.full) {
       product = (favs.product || []).map((x) => x.id).filter(Boolean)
       demand = (favs.demand || []).map((x) => x.id).filter(Boolean)
+      agency = (favs.agency || []).map((x) => x.id).filter(Boolean)
       news = (favs.news || []).map((x) => x.id).filter(Boolean)
     } else if (favs) {
       const removed = favs.removed || {}
       product = mergeIds(product, (favs.product || []).map((x) => x.id).filter(Boolean), removed.product)
       demand = mergeIds(demand, (favs.demand || []).map((x) => x.id).filter(Boolean), removed.demand)
+      agency = mergeIds(agency, (favs.agency || []).map((x) => x.id).filter(Boolean), removed.agency)
       news = mergeIds(news, (favs.news || []).map((x) => x.id).filter(Boolean), removed.news)
     }
-    const next = offline ? replayPendingFav({ product, demand, news }) : { product, demand, news }
+    const next = offline ? replayPendingFav({ product, demand, agency, news }) : { product, demand, agency, news }
     write(next)
     /* 时间戳用服务端时间，避免手机时钟不准导致漏同步 */
     writeSync(FAV_SYNC_KEY, (favs && favs.serverTime) || Date.now())
@@ -260,6 +269,7 @@ async function pull(options) {
 function normType(type) {
   if (type === 'demand') return 'demand'
   if (type === 'news') return 'news'
+  if (type === 'agency') return 'agency'
   return 'product'
 }
 
@@ -291,7 +301,7 @@ function toggleFav(type, id) {
 
 function favCount() {
   const data = read()
-  return data.product.length + data.demand.length + data.news.length
+  return data.product.length + data.demand.length + data.agency.length + data.news.length
 }
 
 /* ========== 关注（本地缓存 + 云端同步） ==========

@@ -1,8 +1,4 @@
 /* 商机榜单页：需求榜 / 火热榜 / 供给榜 / 品类榜 */
-.board {
-  padding-bottom: 120rpx;
-}
-
 .bd-hero {
   padding: 32rpx 28rpx 28rpx;
   background: #fff;
@@ -23,15 +19,16 @@
 /* 榜单切换：四档等宽 */
 .bd-tabs {
   display: flex;
-  gap: 10rpx;
+  gap: 12rpx;
   padding: 20rpx 24rpx 0;
 }
 .bd-tab {
   flex: 1;
   min-width: 0;
+  white-space: nowrap;
   text-align: center;
   font-size: 23rpx;
-  line-height: 60rpx;
+  line-height: 72rpx;
   border-radius: 14rpx;
   border: 1rpx solid var(--line);
   background: #fff;

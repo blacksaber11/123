@@ -20,6 +20,8 @@ Page({
     commentTotal: 0,
     comments: [],
     commentLoading: false,
+    commentLoadingMore: false,
+    commentHasMore: false,
     commentSending: false,
     commentInput: '',
     replyTo: null,
@@ -76,6 +78,7 @@ Page({
         faved: fav.isFav('news', news.id),
         commentTotal: Number(doc.commentCount) || 0
       })
+      this.commentPage = 0
       this.loadComments()
     } catch (err) {
       this.setData({ loading: false, error: (err && err.message) || '暂时无法加载这篇资讯' })
@@ -150,18 +153,35 @@ Page({
   },
 
   /* ---------- 评论 ---------- */
-  async loadComments() {
-    this.setData({ commentLoading: true })
+  async loadComments(more) {
+    if (more && (this.data.commentLoading || this.data.commentLoadingMore || !this.data.commentHasMore)) return
+    const page = more ? (this.commentPage || 1) + 1 : 1
+    this.setData(more ? { commentLoadingMore: true } : { commentLoading: true })
     try {
-      const res = await request('user', 'news.comment.list', { id: this.newsId }, { silent: true })
+      const res = await request('user', 'news.comment.list', {
+        id: this.newsId,
+        page,
+        limit: 20
+      }, { silent: true })
+      const rows = (res && res.items) || []
+      this.commentPage = page
       this.setData({
-        comments: (res && res.items) || [],
+        /* 加载更多只追加，不覆盖已展示的评论 */
+        comments: more ? (this.data.comments || []).concat(rows) : rows,
         commentTotal: Number(res && res.total) || 0,
-        commentLoading: false
+        commentHasMore: !!(res && res.hasMore),
+        commentLoading: false,
+        commentLoadingMore: false
       })
     } catch (err) {
-      this.setData({ commentLoading: false })
+      this.setData({ commentLoading: false, commentLoadingMore: false })
+      if (more) wx.showToast({ title: (err && err.message) || '加载更多评论失败，请重试', icon: 'none' })
     }
+  },
+
+  /* 评论分页：按服务端 hasMore 加载下一页 */
+  loadMoreComments() {
+    this.loadComments(true)
   },
 
   onCommentInput(e) {

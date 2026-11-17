@@ -72,8 +72,8 @@
   gap: 12rpx;
 }
 .chips .chip {
-  height: 56rpx;
-  line-height: 54rpx;
+  height: 64rpx;
+  line-height: 62rpx;
   padding: 0 22rpx;
   border: 1rpx solid var(--line);
   border-radius: 999rpx;
@@ -196,6 +196,8 @@
   font-size: 19rpx;
   color: var(--muted);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 数字输入行 */
@@ -222,6 +224,7 @@
 }
 .num-unit {
   flex: none;
+  white-space: nowrap;
   font-size: 22rpx;
   color: var(--muted);
 }
@@ -248,8 +251,8 @@
 }
 .pick-cats .chip {
   flex: none;
-  height: 52rpx;
-  line-height: 50rpx;
+  height: 64rpx;
+  line-height: 62rpx;
   padding: 0 20rpx;
   border: 1rpx solid var(--line);
   border-radius: 999rpx;
@@ -486,9 +489,15 @@
   font-weight: 700;
 }
 .sheet-x {
+  flex: none;
+  width: 72rpx;
+  height: 72rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: -14rpx -14rpx -14rpx 0;
   font-size: 30rpx;
   color: var(--muted);
-  padding: 4rpx 8rpx;
 }
 .sheet-search {
   padding-bottom: 14rpx;
@@ -512,8 +521,8 @@
 }
 .sheet-cats .chip {
   flex: none;
-  height: 52rpx;
-  line-height: 50rpx;
+  height: 64rpx;
+  line-height: 62rpx;
   padding: 0 20rpx;
   border: 1rpx solid var(--line);
   border-radius: 999rpx;

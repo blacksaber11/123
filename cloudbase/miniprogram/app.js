@@ -6,7 +6,7 @@
  * 2. 截屏 / 录屏监测在 App.onShow 统一开启，检测到即遮蔽内容；
  * 3. 所有网络请求走 utils/request.js，云函数返回的敏感字段一律不落本地存储。
  */
-const { ensureLogin, readUser } = require('./utils/auth')
+const { ensureLogin, readUser, readMyRefCode } = require('./utils/auth')
 const { startScreenGuard } = require('./utils/guard')
 const { request } = require('./utils/request')
 const inbox = require('./utils/inbox')
@@ -30,6 +30,93 @@ function queryOf(options, extra) {
     .map((k) => k + '=' + encodeURIComponent(String(opts[k])))
   if (extra) parts.push(extra)
   return parts.length ? '?' + parts.join('&') : ''
+}
+
+/* 从启动参数里取推广码：ref 优先；scene 需先解码再按 query 解析 */
+function refFromOptions(options) {
+  const query = (options && options.query) || {}
+  let ref = query.ref ? String(query.ref) : ''
+  if (!ref && query.scene) {
+    let scene = String(query.scene)
+    try {
+      scene = decodeURIComponent(scene)
+    } catch (err) { /* scene 不是合法编码时按原文解析 */ }
+    const hit = scene.match(/(?:^|[?&])ref=([^&]+)/)
+    if (hit) ref = hit[1]
+  }
+  try {
+    ref = decodeURIComponent(ref)
+  } catch (err) { /* 已解码或含非法字符时保持原文 */ }
+  return String(ref || '').trim().slice(0, 32)
+}
+
+/* 默认分享卡片文案：页面没有自定义 onShareAppMessage 时使用 */
+const SHARE_TITLE = '算力聚合 · 优质货源与求购需求'
+
+/* 当前页完整路径（保留原有 query），分享兜底时使用 */
+function sharePathOf(page) {
+  const route = routeOf(page)
+  if (!route) return '/pages/home/home'
+  return '/' + route + queryOf(page && page.options)
+}
+
+/* 在分享路径后追加推广码：保留原有参数，重复的 ref 先剔除再补 */
+function appendShareRef(path, ref) {
+  if (!ref) return path
+  const raw = String(path || '')
+  if (!raw) return raw
+  const at = raw.indexOf('?')
+  const base = at >= 0 ? raw.slice(0, at) : raw
+  const pairs = at >= 0 ? raw.slice(at + 1).split('&').filter(Boolean) : []
+  const kept = pairs.filter((p) => p.split('=')[0] !== 'ref')
+  kept.push('ref=' + encodeURIComponent(ref))
+  return base + '?' + kept.join('&')
+}
+
+/* 自己的推广码：推广大使开通后由登录态写入 globalData，分享时统一追加 */
+function ownRefCode() {
+  try {
+    const app = getApp()
+    return (app && app.globalData && app.globalData.refCode) || ''
+  } catch (err) {
+    return ''
+  }
+}
+
+/**
+ * 统一包装 Page：所有页面分享都追加全局推广码。
+ * 页面自带 onShareAppMessage 时先调原逻辑，再补齐标题 / 路径并追加 ref；
+ * 页面没有定义分享逻辑时给默认标题 + 当前页路径，不会因为缺少 onShareAppMessage 报错。
+ * 朋友圈（onShareTimeline）同样包装，保证任意页面转发到朋友圈也带推广码。
+ */
+function installShareRef() {
+  if (typeof Page !== 'function' || Page.__promoteRefWrapped) return
+  const rawPage = Page
+  const wrappedPage = function (options) {
+    const opts = options || {}
+    const rawShare = typeof opts.onShareAppMessage === 'function' ? opts.onShareAppMessage : null
+    opts.onShareAppMessage = function (event) {
+      const res = rawShare ? rawShare.call(this, event) : null
+      const card = res && typeof res === 'object' ? Object.assign({}, res) : {}
+      if (!card.title) card.title = SHARE_TITLE
+      if (!card.path) card.path = sharePathOf(this)
+      card.path = appendShareRef(card.path, ownRefCode())
+      return card
+    }
+    /* 朋友圈：query 不带问号，先用聊天的追加逻辑补齐 ref 再去掉问号 */
+    const rawTimeline = typeof opts.onShareTimeline === 'function' ? opts.onShareTimeline : null
+    opts.onShareTimeline = function (event) {
+      const res = rawTimeline ? rawTimeline.call(this, event) : null
+      const card = res && typeof res === 'object' ? Object.assign({}, res) : {}
+      if (!card.title) card.title = SHARE_TITLE
+      const query = card.query ? String(card.query) : queryOf(this.options).replace(/^\?/, '')
+      card.query = appendShareRef('?' + query, ownRefCode()).replace(/^\?/, '')
+      return card
+    }
+    return rawPage(opts)
+  }
+  wrappedPage.__promoteRefWrapped = true
+  Page = wrappedPage
 }
 
 App({
@@ -60,10 +147,24 @@ App({
     /* 底部导航「首页 / 货盘」共用首页，进入时指定落在哪个视图：sell / market */
     homeTab: '',
     /* 全局选项口径，由 meta.options 拉取，避免前后端枚举漂移 */
-    options: null
+    options: null,
+    /**
+     * 自己的推广码：只有开通推广大使后才有，登录时由服务端下发并缓存在本地。
+     * 任意页面分享 / 保存海报都追加它，别人打开即绑定到自己名下。
+     */
+    refCode: '',
+    /**
+     * 别人分享给我的推广码：?ref=xxx 或二维码 scene=ref%3Dxxx 解析后放这里。
+     * 只在登录时透传给服务端完成绑定；不参与分享，避免把上家的码套进自己的分享。
+     */
+    incomingRef: ''
   },
 
-  onLaunch() {
+  onLaunch(options) {
+    /* 冷启动先恢复自己的推广码：尚未登录时分享也能带上，登录后会被服务端结果覆盖 */
+    this.globalData.refCode = readMyRefCode()
+    /* 冷启动直接落地分享链接：先记推广码，再走登录绑定 */
+    this.captureRef(options)
     /* 开发者工具自动接本地服务：只在 develop（开发者工具 / 真机调试）生效 */
     if (!String(this.globalData.devApiBase || '').trim() && this.globalData.localApiInDevtools) {
       try {
@@ -117,7 +218,10 @@ App({
       .catch(() => {})
   },
 
-  onShow() {
+  onShow(options) {
+    /* 热启动从分享卡片 / 二维码回到前台时补记推广码，并把新推广码补绑一次 */
+    const freshRef = this.captureRef(options)
+    if (freshRef && readUser()) ensureLogin(this).catch(() => {})
     /* 切回前台时重新挂上防护（onLaunch 里已经挂了一次，这里是兜底） */
     startScreenGuard()
     /* 回到前台时顺手补一次页面栈：冷启动直达详情页等场景都在这里兜住 */
@@ -126,6 +230,18 @@ App({
     this.startInboxWatch()
     /* 在线心跳：管理端「实时在线人数」按 5 分钟内的心跳统计；未登录不发，失败静默 */
     if (readUser()) request('user', 'online.ping', {}, { silent: true }).catch(() => {})
+  },
+
+  /**
+   * 记录推广码。
+   * 普通分享卡是 ?ref=XXX；小程序码 / 朋友圈场景值会把参数塞进 query.scene=ref%3DXXX，
+   * 需要先 decodeURIComponent 再按 query 解析。返回是否拿到了新的推广码。
+   */
+  captureRef(options) {
+    const ref = refFromOptions(options)
+    if (!ref || ref === this.globalData.incomingRef) return false
+    this.globalData.incomingRef = ref
+    return true
   },
 
   /**
@@ -290,3 +406,6 @@ App({
     if (res && typeof res.isPageNotFound === 'boolean') res.isPageNotFound = true
   }
 })
+
+/* App 注册完成后、页面模块加载前完成包装：所有页面分享统一追加推广码 */
+installShareRef()

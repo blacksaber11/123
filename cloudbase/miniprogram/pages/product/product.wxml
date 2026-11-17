@@ -16,7 +16,7 @@
           <view class="pub-sb">平台代采 / 代售 · 由平台统一对接委托方</view>
         </view>
       </view>
-      <view class="pub-act" bindtap="contactPlatform">联系平台</view>
+      <view class="pub-act" bindtap="contactPlatform">咨询平台</view>
     </view>
     <view wx:elif="{{!contactHidden}}" class="publisher">
       <view class="pub-l" bindtap="openSeller">
@@ -54,8 +54,8 @@
     <view wx:if="{{mediaSlides.length}}" class="media-stage">
       <view class="hbadge stage-badge">
         <text class="pill-tag {{product.isRent ? 'rent' : ''}}">{{product.tradeMode}}</text>
-        <text wx:if="{{!product.isRent}}" class="chip cond-chip">{{product.cond}}</text>
-        <text class="chip supply-chip">{{product.supply}}</text>
+        <text wx:if="{{!product.isRent && product.cond}}" class="chip cond-chip">{{product.cond}}</text>
+        <text wx:if="{{product.supply}}" class="chip supply-chip">{{product.supply}}</text>
       </view>
       <view class="hero-fav" bindtap="toggleFav">{{fav ? '★' : '☆'}}</view>
       <swiper class="media-swiper" current="{{mediaIndex}}" bindchange="onMediaSwipe" circular="{{mediaSlides.length > 1}}">
@@ -115,33 +115,32 @@
       </view>
     </view>
     <view class="chips">
-      <text wx:if="{{!product.isRent}}" class="chip">{{product.cond}}</text>
-      <text class="chip">{{product.taxShort}}</text>
-      <text class="chip">{{product.supply}}</text>
-      <text wx:for="{{product.tags}}" wx:key="*this" class="chip brand">{{item}}</text>
+      <text wx:if="{{!product.isRent && product.cond}}" class="chip">{{product.cond}}</text>
+      <text wx:if="{{product.taxShort}}" class="chip">{{product.taxShort}}</text>
+      <text wx:if="{{product.supply}}" class="chip">{{product.supply}}</text>
     </view>
     <view class="callout" style="margin-top: 20rpx">
-      货主标签与材料状态仅作登记，平台不核验真伪。
+      发布人标签与材料状态仅作登记，平台不核验真伪。
     </view>
 
     <!-- 规格网格 -->
     <view class="spec-grid">
       <view class="cell"><view class="k">设备类型</view><view class="v">{{product.cat}}</view></view>
-      <view class="cell"><view class="k">品牌</view><view class="v">{{product.brand}}</view></view>
+      <view wx:if="{{product.brand}}" class="cell"><view class="k">品牌</view><view class="v">{{product.brand}}</view></view>
       <view class="cell"><view class="k">型号</view><view class="v">{{product.model}}</view></view>
       <view class="cell"><view class="k">{{product.isRent ? '可租数量' : '可售数量'}}</view><view class="v">{{product.qty}} 台</view></view>
-      <view class="cell"><view class="k">{{product.isRent ? '起租数量' : '起订量'}}</view><view class="v">{{product.minQty}} 台</view></view>
-      <view class="cell"><view class="k">供给类型</view><view class="v">{{product.supply}}</view></view>
-      <view wx:if="{{!product.isRent}}" class="cell"><view class="k">成色</view><view class="v">{{product.cond}}{{product.cond !== '全新' && product.condLevel ? ' · ' + product.condLevel : ''}}</view></view>
-      <view class="cell"><view class="k">税费</view><view class="v">{{product.tax}}</view></view>
-      <view class="cell"><view class="k">{{product.isRent ? '设备所在城市' : '交易地/发货地'}}</view><view class="v">{{product.city}}</view></view>
-      <view class="cell"><view class="k">{{product.isRent ? '可起租时间' : '可交付时间'}}</view><view class="v">{{product.deliver}}</view></view>
+      <view wx:if="{{product.minQty}}" class="cell"><view class="k">{{product.isRent ? '起租数量' : '起订量'}}</view><view class="v">{{product.minQty}} 台</view></view>
+      <view wx:if="{{product.supply}}" class="cell"><view class="k">供给类型</view><view class="v">{{product.supply}}</view></view>
+      <view wx:if="{{!product.isRent && product.cond}}" class="cell"><view class="k">成色</view><view class="v">{{product.cond}}{{product.cond !== '全新' && product.condLevel ? ' · ' + product.condLevel : ''}}</view></view>
+      <view wx:if="{{product.tax}}" class="cell"><view class="k">税费</view><view class="v">{{product.tax}}</view></view>
+      <view wx:if="{{product.city}}" class="cell"><view class="k">{{product.isRent ? '设备所在城市' : '交易地/发货地'}}</view><view class="v">{{product.city}}</view></view>
+      <view wx:if="{{product.deliver}}" class="cell"><view class="k">{{product.isRent ? '可起租时间' : '可交付时间'}}</view><view class="v">{{product.deliver}}</view></view>
       <view class="cell"><view class="k">图片数</view><view class="v">{{product.images}} 张</view></view>
     </view>
 
     <!-- 租赁信息 -->
     <view wx:if="{{product.isRent}}" class="spec-grid rent-spec">
-      <view class="cell"><view class="k">租期</view><view class="v">{{product.term}}</view></view>
+      <view class="cell"><view class="k">租期</view><view class="v">{{product.termText || '可议'}}</view></view>
       <view class="cell"><view class="k">是否闭口</view><view class="v">{{product.closed}}</view></view>
       <view class="cell"><view class="k">押金</view><view class="v">{{product.deposit}}</view></view>
       <view class="cell"><view class="k">租金支付</view><view class="v">{{product.pay}}</view></view>
@@ -150,6 +149,7 @@
     <!-- 关键信息列表 -->
     <view class="klist">
       <view wx:if="{{product.note}}" class="ki"><text class="kn">{{product.isRent ? '租赁说明' : '交易说明'}}</text><text class="kv">{{product.note}}</text></view>
+      <view wx:if="{{product.rentLimitText}}" class="ki"><text class="kn">租赁限制</text><text class="kv">{{product.rentLimitText}}</text></view>
       <view wx:if="{{product.accept}}" class="ki"><text class="kn">验收标准</text><text class="kv">{{product.accept}}</text></view>
       <view wx:if="{{product.limit}}" class="ki"><text class="kn">可承接数量</text><text class="kv">{{product.limit}}</text></view>
       <view wx:if="{{product.requirements}}" class="ki"><text class="kn">{{product.isRent ? '承租方要求' : '接单要求'}}</text><text class="kv">{{product.requirements}}</text></view>
@@ -161,8 +161,8 @@
     </view>
   </view>
 
-  <!-- 关键信息上传状态 -->
-  <view class="block">
+  <!-- 关键信息上传状态：商机数据没有登记项时整块不出现 -->
+  <view wx:if="{{checklistTotal}}" class="block">
     <view class="block-hd">
       <text class="bt">② 关键信息是否已上传</text>
       <text class="r">已上传 {{checklistDone}} / {{checklistTotal}} 项</text>
@@ -180,8 +180,8 @@
     <text class="ck-note">仅登记提交状态，平台不核验真伪</text>
   </view>
 
-  <!-- 购买流程 -->
-  <view class="block">
+  <!-- 购买流程：发布人没设定流程时整块不出现 -->
+  <view wx:if="{{product.flow.length}}" class="block">
     <view class="block-hd">
       <text class="bt">③ {{product.isRent ? '租赁流程' : '购买流程'}}</text>
       <text class="r">货主设定，平台按流程推进</text>
@@ -200,8 +200,8 @@
     </view>
   </view>
 
-  <!-- 购买条件 -->
-  <view class="block">
+  <!-- 购买条件：没有必须条件 / 可协商条件时整块不出现 -->
+  <view wx:if="{{product.must.length || product.nego.length}}" class="block">
     <view class="block-hd">
       <text class="bt">④ {{product.isRent ? '承租条件' : '购买条件'}}</text>
       <text class="r">必须条件 {{product.must.length}} 项全部满足才能联系货主</text>
@@ -227,39 +227,44 @@
     </view>
   </view>
 
-  <!-- 联系入口 -->
+  <!-- 联系入口：只展示货主公开的联系电话；私信入口固定在底部栏 -->
   <view class="block consult-entry">
     <view class="block-hd">
       <text class="bt">⑤ 联系货主</text>
     </view>
     <view wx:if="{{isMine}}" class="callout warn">
-      这是你自己的发布，详情页不提供联系入口，也不会出现在首页信息流中。
+      这是你自己发布的商品，详情页不提供联系入口；可在「我的发布」里改状态、编辑与分享。
     </view>
     <view wx:else class="callout brand">
-      先逐项确认货主的必须条件，全部满足后即可直接与货主对话；可协商条件在会话中确认。
-      <view wx:if="{{ownerPhone}}" class="callout-extra">货主已公开联系电话 {{ownerPhone}}，也可以直接拨打。</view>
-      <view wx:elif="{{memberOnlyContact}}" class="callout-extra">货主公开了联系电话，商机会员可直接查看拨打；也可以先站内对话。<text class="pub-phone-act" bindtap="goBiz">开通商机会员 ›</text></view>
+      <view wx:if="{{ownerPhone}}" class="contact-phone">
+        <text class="cp-k">联系电话</text>
+        <text class="cp-v">{{ownerPhone}}</text>
+        <text class="cp-act" bindtap="copyOwnerPhone">复制</text>
+      </view>
+      <view wx:else class="contact-phone-none">未公开电话号码，请通过私信联系货主</view>
     </view>
   </view>
 
-  <!-- 底部占位 -->
-  <view style="height: 200rpx"></view>
+  <!-- 底部占位：给固定栏留出高度 -->
+  <view style="height: 260rpx"></view>
 
-  <!-- 底部咨询栏 -->
+  <!-- 底部咨询栏：数据单独一行，操作一行；主按钮占满剩余宽度，任何机型都不会被挤掉 -->
   <view class="sticky-consult safe-bottom">
-    <view wx:if="{{isMine}}" class="row">
-      <view class="cnt">我的发布 · {{product.status || '在售'}}</view>
-      <button class="btn ghost share-btn" open-type="share">分享</button>
-      <button class="btn ghost share-btn" catchtap="savePoster">海报</button>
-      <button class="btn ghost lg" bindtap="back">返回</button>
-    </view>
-    <view wx:else class="row">
+    <view class="meta">
       <view class="cnt"><text class="b">{{product.views}}</text> 次浏览<text wx:if="{{product.favCount}}"> · 收藏 {{product.favCount}}</text></view>
+      <text class="meta-tip">{{isMine ? (product.status || '在售') : (product.platformOnly ? '确认条件后与平台对接' : '确认条件后可直接对话')}}</text>
+    </view>
+    <view class="row">
       <button class="btn ghost share-btn" open-type="share">分享</button>
       <button class="btn ghost share-btn" catchtap="savePoster">海报</button>
-      <button class="btn primary lg" bindtap="consult">联系货主</button>
+      <button wx:if="{{isMine}}" class="btn primary lg grow" bindtap="goMyPub">我的发布</button>
+      <button wx:else class="btn primary lg grow" bindtap="consult">{{product.platformOnly ? '咨询平台' : (bizMode ? '领取商机' : '私信货主')}}</button>
     </view>
-    <view class="hint">满足必须条件即可直接对话；可直接发送联系方式<text wx:if="{{!isMine}}" class="hint-report" catchtap="report">举报该商品</text></view>
+    <view class="hint">
+      <block wx:if="{{isMine}}">这是你自己发布的商品，可在「我的发布」里改状态、编辑与分享<text class="hint-report" catchtap="goMyPub">去管理 ›</text></block>
+      <block wx:elif="{{product.platformOnly}}">逐项确认必须条件后，由平台与委托方对接<text class="hint-report" catchtap="report">举报该商品</text></block>
+      <block wx:else>满足必须条件即可直接对话；可直接发送联系方式<text class="hint-report" catchtap="report">举报该商品</text></block>
+    </view>
   </view>
 
   <!-- 必须条件确认弹层：确认完成后直接进入与货主的会话 -->
@@ -270,7 +275,7 @@
       <view class="cs-sub">已确认满足 {{condMet}} / {{condTotal}} 项</view>
       <view class="cs-x" bindtap="closeCondSheet">✕</view>
     </view>
-    <view class="cs-tip">逐项对照自己的实际情况选择「满足 / 不满足」。全部满足后可直接与货主对话。</view>
+    <view class="cs-tip">{{product.platformOnly ? '逐项对照自己的实际情况选择「满足 / 不满足」。全部满足后由平台与委托方对接。' : '逐项对照自己的实际情况选择「满足 / 不满足」。全部满足后可直接与货主对话。'}}</view>
     <scroll-view scroll-y class="cs-list">
       <view wx:for="{{condList}}" wx:key="t" class="cs-item">
         <view class="cs-name">{{item.t}}</view>
@@ -281,9 +286,10 @@
       </view>
     </scroll-view>
     <view class="cs-ft">
-      <button class="btn ghost" bindtap="fullConsult">填完整需求</button>
+      <button wx:if="{{bizMode && !condPass}}" class="btn ghost" bindtap="markUnsatisfied">标记不满足</button>
+      <button wx:else class="btn ghost" bindtap="fullConsult">{{bizMode ? '填写完整需求' : '填完整需求'}}</button>
       <button class="btn primary" bindtap="confirmCond" disabled="{{!condPass || openingChat}}">
-        {{openingChat ? '正在打开…' : (condPass ? '确认并开始对话' : '还有 ' + condUnmet + ' 项未确认')}}
+        {{openingChat ? '正在打开…' : (condPass ? (product.platformOnly ? '确认并咨询平台' : (bizMode ? '领取并发起对话' : '确认并开始对话')) : '还有 ' + condUnmet + ' 项未确认')}}
       </button>
     </view>
   </view>

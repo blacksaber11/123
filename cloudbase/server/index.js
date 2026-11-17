@@ -49,6 +49,8 @@ const { chatCutoff, mediaCutoff } = require('../shared/chatmedia')
 const { ROLES } = require('../shared/constants')
 const { createMysqlRepo } = require('./repo.mysql')
 const { createMarketAdminHandlers, newsScheduleOf, publishScheduledNews } = require('../shared/market')
+const { createPromoteEngine } = require('../shared/promote')
+const { createWxPayoutClient } = require('./payout')
 
 const PORT = Number(process.env.PORT || 3002)
 const HOST = process.env.HOST || '127.0.0.1'
@@ -151,6 +153,10 @@ const notify = {
   })
 }
 
+/* 推广佣金出款：本期人工分账，客户端仅保留接口签名，未配置证书 / 非 auto 模式时一律禁用 */
+const payoutClient = createWxPayoutClient(process.env)
+const promoteEngine = createPromoteEngine({ repo, now: () => Date.now(), payoutClient })
+
 const userRouter = createRouter({
   repo,
   keys,
@@ -159,6 +165,7 @@ const userRouter = createRouter({
   env: process.env,
   now: () => Date.now(),
   notify,
+  payoutClient,
   exchangePhone: phoneByCode
 })
 
@@ -169,7 +176,8 @@ const adminRouter = createRouter({
   scope: 'admin',
   env: process.env,
   now: () => Date.now(),
-  notify
+  notify,
+  payoutClient
 })
 
 /* ---------- 2. 小程序会话令牌（无状态 HMAC，不落库） ---------- */
@@ -396,9 +404,21 @@ async function handleWxacode(req, res) {
     sendJson(res, 400, { ok: false, code: 'VALIDATION', message: '该页面不支持生成小程序码' })
     return
   }
+  /* 推广大使保存的海报：小码里追加他自己的推广码，别人扫码进入即完成绑定 */
+  let target = raw
+  try {
+    const openid = verifyUserToken(bearer(req) || String(body.token || ''))
+    const self = openid ? await repo.get('users', openid) : null
+    const code = self && self.promoterStatus === 'active' ? String(self.refCode || '').trim() : ''
+    if (code && !/(?:^|[?&])ref=/.test(target)) {
+      const withRef = target + (target.indexOf('?') >= 0 ? '&' : '?') + 'ref=' + encodeURIComponent(code)
+      /* getwxacode 的 path 上限 128 字符：超长就不带推广码，保证海报能出图 */
+      if (withRef.length <= 128) target = withRef
+    }
+  } catch (err) { /* 未登录 / 取用户失败：按普通码生成，不影响海报 */ }
   const width = Math.min(430, Math.max(180, Number(body.width) || 280))
   try {
-    const base64 = await wxacodeBase64(raw, width)
+    const base64 = await wxacodeBase64(target, width)
     sendJson(res, 200, { ok: true, data: { image: 'data:image/png;base64,' + base64 } })
   } catch (err) {
     sendJson(res, 500, { ok: false, code: 'INTERNAL', message: '小程序码生成失败，请稍后再试' })
@@ -919,7 +939,10 @@ async function handleUserLogin(req, res) {
   }
   const result = await userRouter.dispatch('auth.login', {
     nick: body.nick,
-    avatar: body.avatar
+    avatar: body.avatar,
+    /* 分享链接带推广码时登录即绑定，必须透传到 auth.login，否则绑定链路断裂 */
+    ref: body.ref,
+    refScene: body.refScene
   }, { openid, ip: clientIp(req), appid: String(process.env.WX_APPID || '') })
   if (!result || !result.ok) {
     return sendJson(res, 200, result || { ok: false, code: 'INTERNAL', message: '登录失败' })
@@ -997,6 +1020,23 @@ function xmlField(xml, tag) {
   return m[1].replace(/^\s*<!\[CDATA\[/, '').replace(/\]\]>\s*$/, '').trim()
 }
 
+/** 同一语义字段在不同事件里命名不同（OutTradeNo / pay_order_id / MchOrderId），按优先级取第一个非空值 */
+function xmlFirst(xml, tags) {
+  for (const tag of tags) {
+    const value = xmlField(xml, tag)
+    if (value) return value
+  }
+  return ''
+}
+
+/** CDATA 文本：内容里出现 ]]> 时拆开，避免破坏报文结构 */
+function xmlCdata(value) {
+  return '<![CDATA[' + String(value == null ? '' : value).replace(/\]\]>/g, ']]]]><![CDATA[>') + ']]>'
+}
+
+/* iOS 退款问询必须 3 秒内应答，这里留出读取报文与校验签名的时间 */
+const IOS_REFUND_QUERY_TIMEOUT = 2200
+
 async function handleWxMsg(req, res, url) {
   if (req.method === 'GET') {
     if (!wxMsgSignatureOk(url.searchParams)) {
@@ -1025,12 +1065,15 @@ async function handleWxMsg(req, res, url) {
   const event = xmlField(raw, 'Event')
   if (event === 'xpay_goods_deliver_notify') {
     const goods = xmlField(raw, 'GoodsInfo')
+    /* 微信支付渠道会带 WeChatPayInfo；iOS 走 Apple 支付，这里用来区分渠道与退款回执文案 */
+    const wechatPay = xmlField(raw, 'WeChatPayInfo')
     const payload = {
       openid: xmlField(raw, 'OpenId'),
       outTradeNo: xmlField(raw, 'OutTradeNo'),
       env: xmlField(raw, 'Env'),
       productId: xmlField(goods, 'ProductId') || xmlField(raw, 'ProductId'),
-      quantity: xmlField(goods, 'Quantity') || xmlField(raw, 'Quantity')
+      quantity: xmlField(goods, 'Quantity') || xmlField(raw, 'Quantity'),
+      channel: wechatPay ? 'wxpay' : 'apple'
     }
     let delivered = false
     try {
@@ -1043,6 +1086,73 @@ async function handleWxMsg(req, res, url) {
     res.end(delivered
       ? '<xml><ErrCode>0</ErrCode><ErrMsg><![CDATA[OK]]></ErrMsg></xml>'
       : '<xml><ErrCode>1</ErrCode><ErrMsg><![CDATA[FAIL]]></ErrMsg></xml>')
+    return
+  }
+  /* 退款完成 / 失败：自动回滚会员（退款即停、剩余天数不补），按 OutTradeNo 幂等 */
+  if (event === 'xpay_refund_notify') {
+    const retCode = xmlFirst(raw, ['RetCode', 'ret_code'])
+    const payload = {
+      outTradeNo: xmlFirst(raw, ['OutTradeNo', 'out_trade_no']),
+      payOrderId: xmlFirst(raw, ['PayOrderId', 'pay_order_id']),
+      mchOrderId: xmlFirst(raw, ['MchOrderId', 'mch_order_id']),
+      mchRefundId: xmlFirst(raw, ['MchRefundId', 'mch_refund_id']),
+      refundFee: xmlFirst(raw, ['RefundFee', 'refund_fee']),
+      openid: xmlFirst(raw, ['OpenId', 'openid']),
+      success: !retCode || retCode === '0'
+    }
+    let done = false
+    try {
+      const result = await marketAdmin()['payment.systemRefund'](payload, {
+        accountId: '',
+        session: { role: 'admin' }
+      })
+      done = true
+      console.log('[xpay] 退款回滚 ' + JSON.stringify(Object.assign({}, payload, result)))
+    } catch (err) {
+      console.error('[xpay] 退款回滚失败 ' + JSON.stringify(payload) + ' ' + (err && err.message ? err.message : err))
+    }
+    res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8' })
+    res.end(done
+      ? '<xml><ErrCode>0</ErrCode><ErrMsg><![CDATA[OK]]></ErrMsg></xml>'
+      : '<xml><ErrCode>1</ErrCode><ErrMsg><![CDATA[FAIL]]></ErrMsg></xml>')
+    return
+  }
+  /* iOS 退款问询：3 秒内必须回答「放过 / 拦截」，超时按拦截兜底（同意需有明确依据） */
+  if (event === 'xpay_subscribe_ios_refund_query_notify') {
+    const payload = {
+      outTradeNo: xmlFirst(raw, ['OutTradeNo', 'out_trade_no']),
+      payOrderId: xmlFirst(raw, ['PayOrderId', 'pay_order_id']),
+      mchOrderId: xmlFirst(raw, ['MchOrderId', 'mch_order_id']),
+      orderTime: xmlFirst(raw, ['OrderTime', 'order_time']),
+      provideStatus: xmlFirst(raw, ['ProvideStatus', 'provide_status']),
+      productId: xmlFirst(raw, ['ProductId', 'product_id']),
+      uid: xmlFirst(raw, ['OpenId', 'openid'])
+    }
+    let decision = { resultCode: 1, resultInfo: '拒绝退款', evidence: '系统繁忙，按平台规则暂不建议退款' }
+    let timer = null
+    try {
+      const timeout = new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), IOS_REFUND_QUERY_TIMEOUT)
+        if (timer && timer.unref) timer.unref()
+      })
+      const raced = await Promise.race([
+        marketAdmin()['biz.iosRefundQuery'](payload, { accountId: '', session: { role: 'admin' } }),
+        timeout
+      ])
+      if (raced) decision = raced
+    } catch (err) {
+      console.error('[xpay] iOS 退款问询失败 ' + JSON.stringify(payload) + ' ' + (err && err.message ? err.message : err))
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+    console.log('[xpay] iOS 退款问询 ' + JSON.stringify(Object.assign({}, payload, decision)))
+    res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8' })
+    res.end('<xml><ErrCode>0</ErrCode><ErrMsg>' + xmlCdata('success') + '</ErrMsg>' +
+      '<IosRefundQueryResponse>' +
+      '<result_code>' + (decision.resultCode === 0 ? 0 : 1) + '</result_code>' +
+      '<result_info>' + xmlCdata(decision.resultInfo) + '</result_info>' +
+      '<evidence>' + xmlCdata(decision.evidence) + '</evidence>' +
+      '</IosRefundQueryResponse></xml>')
     return
   }
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' })
@@ -1108,9 +1218,10 @@ async function deliverXpayGoods(payload) {
     amount: Math.round(item.price * qty * 100) / 100,
     paymentId: outTradeNo,
     method: '微信支付',
+    channel: String(payload.channel || ''),
     note: '微信虚拟支付 · ' + productId + ' × ' + qty
   }, { accountId: '', session: { role: 'admin' } })
-  console.log('[xpay] 已发货 ' + JSON.stringify({ openid, outTradeNo, productId, qty, env: payload.env }))
+  console.log('[xpay] 已发货 ' + JSON.stringify({ openid, outTradeNo, productId, qty, env: payload.env, channel: payload.channel }))
   return true
 }
 
@@ -1158,6 +1269,15 @@ async function handleXpayOrder(req, res) {
   /* 令牌与本次支付必须是同一个微信号，避免「A 付款、B 开通」 */
   if (String(session.openid) !== tokenOpenid) {
     return sendJson(res, 200, { ok: false, code: 'UNAUTHENTICATED', message: '登录状态异常，请重新登录' })
+  }
+  /* 退款风控：90 天内退款 2 次及以上的账号禁止自助开通，避免「开通 → 退款 → 再开通」套利 */
+  const payer = await repo.get('users', tokenOpenid)
+  if (payer && payer.riskFlag && Date.now() - (Number(payer.riskSince) || 0) <= 90 * 24 * 3600 * 1000) {
+    return sendJson(res, 200, {
+      ok: false,
+      code: 'VALIDATION',
+      message: '该账号近期退款次数较多，暂不支持自助开通，请联系平台客服'
+    })
   }
   /* env：0 正式环境，1 沙箱环境（沙箱目前仅支持安卓真机） */
   const env = String(process.env.WX_XPAY_ENV || '1') === '0' ? 0 : 1
@@ -1379,6 +1499,44 @@ function cnNowText(ts) {
 
 let newsTickKey = ''
 
+/* ---------- 推广佣金定时任务（人工分账：系统不发起出款，只做结算 / 对账 / 提醒） ---------- */
+/* 文档 7.4 的六项任务：固定时间点触发，同一分钟只跑一次；方法名做存在性保护，兼容并行改造 */
+const PROMOTE_JOBS = Object.freeze([
+  { at: '01:00', label: '结算', methods: ['settlePending', 'runSettle'] },
+  { at: '02:00', label: '对账', methods: ['reconcile', 'runReconcile', 'reconcileDaily'] },
+  { at: '03:00', label: '计佣补偿', methods: ['compensateCommissions', 'runCommissionCompensation'] },
+  { at: '04:00', label: '分账完结清单', methods: ['buildSplitCompletionList', 'listSplitCompletion'] },
+  { at: '09:00', label: '待打款超时提醒', methods: ['remindPayoutTimeout', 'notifyPayoutTimeout'] },
+  { at: '09:00', label: '超期预警', methods: ['warnExpiringCommissions', 'warnSplitExpire'] }
+])
+let promoteDoneDay = ''
+let promoteDoneJobs = new Set()
+
+async function promoteSchedulerTick() {
+  const clock = cnNowText(Date.now())
+  /* 跨天重置：每个任务每天只跑一次，进程重启后可补跑当天已过点的任务 */
+  if (promoteDoneDay !== clock.day) {
+    promoteDoneDay = clock.day
+    promoteDoneJobs = new Set()
+  }
+  const due = PROMOTE_JOBS.filter((job) => !promoteDoneJobs.has(job.label) && clock.hhmm >= job.at)
+  if (!due.length) return
+  for (const job of due) {
+    promoteDoneJobs.add(job.label)
+    const method = job.methods.find((name) => typeof promoteEngine[name] === 'function')
+    if (!method) {
+      console.warn('[promote] ' + job.label + '跳过：引擎未提供 ' + job.methods.join(' / '))
+      continue
+    }
+    try {
+      const res = await promoteEngine[method]()
+      console.log('[promote] ' + job.label + '完成' + (res && typeof res === 'object' ? '：' + JSON.stringify(res) : ''))
+    } catch (err) {
+      console.error('[promote] ' + job.label + '失败：' + (err && err.message ? err.message : 'unknown error'))
+    }
+  }
+}
+
 async function newsSchedulerTick() {
   const clock = cnNowText(Date.now())
   const key = clock.day + ' ' + clock.hhmm
@@ -1408,6 +1566,9 @@ async function main() {
   /* 资讯定时发布：启动即检查一次（正好在时间点上时补发），之后每 30 秒检查 */
   newsSchedulerTick()
   setInterval(() => { newsSchedulerTick() }, 30 * 1000).unref()
+  /* 推广佣金：启动检查一次（正好在时间点上时补跑），之后每 30 秒对齐文档 7.4 的六个时间点 */
+  promoteSchedulerTick()
+  setInterval(() => { promoteSchedulerTick() }, 30 * 1000).unref()
   /* 登录 / 上传限流计数定期清理：只清已过期键，防止大量来源 IP 把内存撑大 */
   setInterval(() => {
     const ts = Date.now()

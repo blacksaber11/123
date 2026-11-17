@@ -115,8 +115,13 @@ function monthsText(n) {
   if (n < 1) return '< 1 个月'
   /* 超过 2 年用「年 + 月」，否则用月并保留一位小数，电价微调也能看出来 */
   if (n >= 24) {
-    const y = Math.floor(n / 12)
-    const m = Math.round(n - y * 12)
+    /* 先四舍五入到整月再拆年，余数凑满 12 个月时进位到年，避免出现「2 年 12 个月」 */
+    let y = Math.floor(n / 12)
+    let m = Math.round(n - y * 12)
+    if (m === 12) {
+      y += 1
+      m = 0
+    }
     return m > 0 ? y + ' 年 ' + m + ' 个月' : y + ' 年'
   }
   return round1(n) + ' 个月'

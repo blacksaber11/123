@@ -62,8 +62,10 @@ function projectProduct(product) {
   out.accept = product.accept || ''
   out.requirements = product.requirements || ''
   out.limit = product.limit || ''
+  /* 平台发布货源：只展示「平台发布」，不关联任何个人 / 企业主体 */
+  out.platformOnly = product.platformPublished === true
   /* 货主身份只给匿名主体标识，不给 openid、公司名、联系人、电话 */
-  out.ownerLabel = '货主'
+  out.ownerLabel = out.platformOnly ? '平台发布' : '货主'
   /* 形式审核驳回原因：仅属主在「已驳回」状态下可见（对外状态不可见，不会外泄） */
   out.reviewReason = product.reviewReason || ''
   /* 管理端强制下架原因：同样只对属主可见 */
@@ -107,7 +109,9 @@ function projectDemand(demand) {
   out.reviewReason = demand.reviewReason || ''
   out.offlineReason = demand.offlineReason || ''
   /* 买方身份同样不下发 openid */
-  out.publisherLabel = '企业'
+  out.publisherLabel = demand.platformPublished === true ? '平台发布' : '企业'
+  /* 平台代采需求：只展示「平台发布」，不关联任何个人 / 企业主体 */
+  out.platformOnly = demand.platformPublished === true
   out.heat = Number(demand.heat) || 0
   /* 浏览量：详情页被打开的次数 */
   out.views = Number(demand.views) || 0

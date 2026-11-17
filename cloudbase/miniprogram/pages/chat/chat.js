@@ -13,6 +13,9 @@ const { request, uploadFile } = require('../../utils/request')
 /* 会话页水印：铺满 3 列 × 6 行，绑定当前账号；聊天图片右下角再单独叠一条 */
 const WM_TILES = 18
 
+/* 咨询服务评价标签：与服务端 shared/cs.js 的 RATING_TAGS 保持一致 */
+const CS_RATING_TAGS = ['专业', '响应快', '态度好', '讲解清楚', '解决问题', '需要改进']
+
 function pad(n) {
   return n < 10 ? '0' + n : '' + n
 }
@@ -37,7 +40,7 @@ function targetCardOf(t) {
   if (t.priceMode === 'nego') priceText = '价格面议'
   else if (price > 0) priceText = (t.currencySymbol || '¥') + shop.moneyText(price) + (t.priceUnit || '')
   return {
-    type: t.type === 'demand' ? 'demand' : 'product',
+    type: t.type === 'demand' ? 'demand' : (t.type === 'agency' ? 'agency' : 'product'),
     id: String(t.id),
     title: String(t.title || '关联商品'),
     cover: t.cover || '',
@@ -97,6 +100,15 @@ Page({
     chatMember: '',
     /* 私密发布会话：对方身份全程匿名 */
     chatPrivate: false,
+    /* 代采代售咨询：等待平台客服处理 / 客服正在接入 / 已结束评价 */
+    chatCs: null,
+    chatCsTitle: '',
+    csStars: [1, 2, 3, 4, 5],
+    csRatingOpen: false,
+    csScore: 5,
+    csTagList: [],
+    csText: '',
+    csSubmitting: false,
     /* 名片详情弹层：聊天里点方形名片打开 */
     cardOpen: false,
     cardDetail: {},
@@ -107,6 +119,10 @@ Page({
     /* 页内图片查看器：不走 wx.previewImage，避免长按保存 / 转发 */
     imgOpen: false,
     imgSrc: '',
+    /* 页内视频查看器：同样不走 wx.previewMedia，保证画面始终叠账号水印 */
+    videoOpen: false,
+    videoSrc: '',
+    videoPoster: '',
     /* 微信提醒剩余条数：-1 表示还没有授权记录（旧版账号），0 表示已用完 */
     wxRemain: -1
   },
@@ -303,7 +319,8 @@ Page({
       const isMedia = it.kind === 'image' || it.kind === 'video' || !!it.image || !!it.video
       return {
         id: it.id,
-        role: it.role === 'me' ? 'me' : 'sys',
+        /* system = 平台提示（领取 / 结束 / 评价回执），居中展示；peer = 对方消息 */
+        role: it.role === 'me' ? 'me' : (it.role === 'system' ? 'system' : 'sys'),
         kind: it.kind || 'text',
         text: (it.text !== undefined ? it.text : it.body) || '',
         image: it.image || '',
@@ -344,6 +361,8 @@ Page({
     items.forEach((m) => {
       const isChat = m.channel === 'kf' || m.type === 'kf.chat'
       if (!isChat) return
+      /* 代采代售咨询按 threadId 独立成会话，不混进平台客服通道 */
+      if (m.threadId) return
       rows.push({
         id: m.id,
         role: m.from === 'staff' ? 'sys' : 'me',
@@ -391,35 +410,44 @@ Page({
       return
     }
     if (!res || !res.threadId || this.data.chatThread !== id) return
+    const patch = {}
+    /* 代采代售咨询：客服领取 / 结束 / 评价状态变化即时反映到横幅与输入区 */
+    if (res.kind === 'cs') {
+      patch.chatCs = res.cs || null
+      patch.chatCsTitle = res.title || ''
+      if (res.peerName) patch.chatTitle = res.peerName
+    }
     const list = this.enrichMedia(this.mapThreadItems(res.items), id)
     /* 顶部商品卡随会话标的更新；被用户叉掉后同一条不再反复弹出 */
     const card = targetCardOf(res.target)
     if (card && String(card.id) !== this.targetDismissed) {
       const cur = this.data.chatTarget
-      if (!cur || cur.id !== card.id || cur.title !== card.title) this.setData({ chatTarget: card })
+      if (!cur || cur.id !== card.id || cur.title !== card.title) patch.chatTarget = card
     }
     const old = this.data.chatList || []
     const lastOld = old[old.length - 1]
     const lastNew = list[list.length - 1]
     const changed = old.length !== list.length ||
       (lastOld && lastNew && lastOld.id !== lastNew.id)
-    if (!changed) return
-    const patch = { chatList: list }
-    if (res.private === true) {
-      /* 私密发布会话：轮询后仍保持匿名标题，绝不回填昵称与主页入口 */
-      patch.chatPrivate = true
-      patch.chatTitle = '私密发布'
-      patch.chatAvatar = '私'
-      patch.chatPeerKey = ''
-      patch.peerContact = null
-      patch.chatMember = ''
-    } else {
-      patch.chatPeerKey = res.peerKey || this.data.chatPeerKey
-      patch.peerContact = res.peerContact || this.data.peerContact
-      patch.chatMember = res.memberLabel || this.data.chatMember
+    if (changed) {
+      patch.chatList = list
+      if (res.private === true) {
+        /* 私密发布会话：轮询后仍保持匿名标题，绝不回填昵称与主页入口 */
+        patch.chatPrivate = true
+        patch.chatTitle = '私密发布'
+        patch.chatAvatar = '私'
+        patch.chatPeerKey = ''
+        patch.peerContact = null
+        patch.chatMember = ''
+      } else if (res.kind !== 'cs') {
+        patch.chatPeerKey = res.peerKey || this.data.chatPeerKey
+        patch.peerContact = res.peerContact || this.data.peerContact
+        patch.chatMember = res.memberLabel || this.data.chatMember
+      }
     }
+    if (!Object.keys(patch).length) return
     this.setData(patch, () => this.scrollChat())
-    this.writeChatCache(id, patch.chatList)
+    if (changed) this.writeChatCache(id, patch.chatList)
   },
 
   /* 打开平台客服会话；ctx 为商品咨询上下文（从商品页进入时才有） */
@@ -440,7 +468,10 @@ Page({
       toolsOpen: false,
       peerContact: null,
       chatMember: '',
-      chatPrivate: false
+      chatPrivate: false,
+      chatCs: null,
+      chatCsTitle: '',
+      csRatingOpen: false
     }, () => this.scrollChat())
     await this.loadKf()
   },
@@ -464,7 +495,10 @@ Page({
       chatList: this.enrichMedia(this.readChatCache(id), id),
       chatAnchor: 'chat-end',
       toolsOpen: false,
-      chatPrivate: false
+      chatPrivate: false,
+      chatCs: null,
+      chatCsTitle: '',
+      csRatingOpen: false
     }, () => this.scrollChat())
     let res = null
     try {
@@ -474,23 +508,27 @@ Page({
     }
     if (!res || !res.threadId) return
     const chatList = this.enrichMedia(this.mapThreadItems(res.items), id)
-    const name = res.peerName || '直聊会话'
+    /* 代采代售咨询：会话归咨询用户本人，标题随客服接入状态变化 */
+    const isCs = res.kind === 'cs'
+    const name = res.peerName || (isCs ? '平台客服' : '直聊会话')
     /* 私密发布会话：标题 / 头像 / 标识全部匿名，也不提供对方主页入口 */
-    const isPrivate = res.private === true
+    const isPrivate = !isCs && res.private === true
     const card = targetCardOf(res.target)
     this.setData({
       chatThread: id,
       chatCtx: null,
       chatTarget: card && String(card.id) !== this.targetDismissed ? card : null,
       chatTitle: isPrivate ? '私密发布' : name,
-      chatAvatar: isPrivate ? '私' : (String(name).slice(0, 1) || '对'),
-      chatPeerKey: isPrivate ? '' : (res.peerKey || ''),
+      chatAvatar: isPrivate ? '私' : (String(name).slice(0, 1) || (isCs ? '客' : '对')),
+      chatPeerKey: isPrivate || isCs ? '' : (res.peerKey || ''),
       chatList,
       chatAnchor: 'chat-end',
       toolsOpen: false,
-      peerContact: isPrivate ? null : (res.peerContact || null),
-      chatMember: isPrivate ? '' : (res.memberLabel || ''),
-      chatPrivate: isPrivate
+      peerContact: isPrivate || isCs ? null : (res.peerContact || null),
+      chatMember: isPrivate || isCs ? '' : (res.memberLabel || ''),
+      chatPrivate: isPrivate,
+      chatCs: isCs ? (res.cs || null) : null,
+      chatCsTitle: isCs ? (res.title || '') : ''
     }, () => this.scrollChat())
     this.writeChatCache(id, chatList)
   },
@@ -505,6 +543,8 @@ Page({
   /* 点对方头像 / 会话标题进入对方主页：关注、主体信息与联系方式，私信回到本会话 */
   openPeerHome() {
     if (!this.data.chatThread) return
+    /* 代采代售咨询由平台客服接入，没有可查看的对方主页 */
+    if (this.data.chatCs) return
     if (this.data.chatPrivate) {
       wx.showToast({ title: '该会话为私密发布，无法查看对方主页', icon: 'none' })
       return
@@ -535,7 +575,8 @@ Page({
     if (!card || !card.id) return
     const url = card.type === 'demand'
       ? '/pages/demand/demand?id=' + encodeURIComponent(card.id)
-      : '/pages/product/product?id=' + encodeURIComponent(card.id)
+      : '/pages/product/product?id=' + encodeURIComponent(card.id) +
+        (card.type === 'agency' ? '&biz=agency' : '')
     wx.navigateTo({ url })
   },
 
@@ -654,6 +695,12 @@ Page({
   /* 统一发送入口：文本 / 图片 / 视频 / 名片都由这里落库并回显 */
   async sendMessage(msg) {
     if (this.data.sending) return false
+    /* 代采代售咨询：客服未领取 / 已结束时不允许发言 */
+    const cs = this.data.chatCs
+    if (cs && !cs.canSend) {
+      wx.showToast({ title: cs.waiting ? '正在等待平台客服处理' : '本次咨询服务已结束', icon: 'none' })
+      return false
+    }
     this.setData({ sending: true })
     let saved = null
     try {
@@ -692,6 +739,69 @@ Page({
     this.setData({ chatList, sending: false }, () => this.scrollChat())
     this.writeChatCache(this.threadKey(), chatList)
     return true
+  },
+
+  /* ---------- 咨询服务评价 ---------- */
+
+  /* 客服结束服务后才能评价；已评价过不再重复弹出 */
+  openCsRating() {
+    const cs = this.data.chatCs
+    if (!cs || !cs.ended || cs.rated) return
+    this.setData({
+      csRatingOpen: true,
+      csScore: 5,
+      csText: '',
+      csTagList: CS_RATING_TAGS.map((name) => ({ name, on: false }))
+    })
+  },
+
+  closeCsRating() {
+    if (this.data.csSubmitting) return
+    this.setData({ csRatingOpen: false })
+  },
+
+  pickCsScore(e) {
+    const score = Number((e && e.currentTarget && e.currentTarget.dataset.score) || 0)
+    if (score >= 1 && score <= 5) this.setData({ csScore: score })
+  },
+
+  toggleCsTag(e) {
+    const name = String((e && e.currentTarget && e.currentTarget.dataset.name) || '')
+    if (!name) return
+    const csTagList = (this.data.csTagList || []).map((tag) =>
+      tag.name === name ? Object.assign({}, tag, { on: !tag.on }) : tag
+    )
+    this.setData({ csTagList })
+  },
+
+  onCsText(e) {
+    this.setData({ csText: (e && e.detail && e.detail.value) || '' })
+  },
+
+  async submitCsRating() {
+    if (this.data.csSubmitting) return
+    const score = Number(this.data.csScore) || 5
+    const tags = (this.data.csTagList || []).filter((tag) => tag.on).map((tag) => tag.name)
+    this.setData({ csSubmitting: true })
+    try {
+      await request('user', 'consult.rate', {
+        leadId: this.data.chatThread,
+        score,
+        tags,
+        text: String(this.data.csText || '').trim()
+      })
+      const cs = this.data.chatCs || {}
+      this.setData({
+        csSubmitting: false,
+        csRatingOpen: false,
+        chatCs: Object.assign({}, cs, { rated: true, rating: score })
+      })
+      wx.showToast({ title: '评价已提交，感谢反馈', icon: 'none' })
+      await this.refreshThread()
+    } catch (err) {
+      this.setData({ csSubmitting: false })
+      wx.showToast({ title: (err && err.message) || '评价提交失败，请重试', icon: 'none' })
+    }
   },
 
   /* 打开媒体前登记：成功后保留期从 7 天延长到 30 天，过期则阻断查看 */
@@ -783,7 +893,7 @@ Page({
     if (row) this.cacheMedia(row)
   },
 
-  /* 视频消息：封面块点开，先登记再走系统播放器 */
+  /* 视频消息：封面块点开，进页内播放器（画面叠账号水印），不走系统播放器 */
   async playVideo(e) {
     const id = String((e && e.currentTarget && e.currentTarget.dataset.id) || '')
     const row = (this.data.chatList || []).filter((m) => String(m.id) === id)[0]
@@ -794,11 +904,13 @@ Page({
       return
     }
     if (!(await this.ensureMediaOpen(row))) return
-    wx.previewMedia({
-      sources: [{ url: src, type: 'video', poster: row.poster || '' }],
-      fail: () => {}
-    })
+    this.setData({ videoOpen: true, videoSrc: src, videoPoster: row.poster || '' })
     this.cacheMedia(row)
+  },
+
+  closeVideo() {
+    if (!this.data.videoOpen) return
+    this.setData({ videoOpen: false, videoSrc: '', videoPoster: '' })
   },
 
   closeImage() {

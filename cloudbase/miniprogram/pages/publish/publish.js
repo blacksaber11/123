@@ -14,6 +14,23 @@ const GROUPS = {
   closed: { list: ['闭口价（不议价）', '开口价（可议价）'], def: '闭口价（不议价）' },
   deposit: { list: ['免押金', '1 个月租金', '2 个月租金', '可议'], def: '1 个月租金' },
   pay: { list: ['月付', '季付', '半年付', '年付'], def: '季付' },
+  /* 租赁限制条款：与云函数 RENT_LIMITS 枚举一一对应，多选、可留空 */
+  rentLimits: {
+    multi: true,
+    list: [
+      '不得转租或二次转让',
+      '用途仅限训练 / 推理等合规业务',
+      '数据不得落地存储，任务结束须清除',
+      '需签署保密协议（NDA）',
+      '逾期交租按日加收违约金',
+      '提前退租押金不退',
+      '到期未续租须退还并通过验收',
+      '设备损耗按验收标准承担',
+      '租赁期间不得变更机房 / 网络策略',
+      '须配合出租方定期巡检'
+    ],
+    def: []
+  },
   supply: { list: ['现货', '期货'], def: '现货' },
   tax: { list: ['含税', '不含税', '可开专票', '可开普票'], def: '含税' },
   deliver: { list: ['当日可提', '3 天内', '7 天内', '30 天内', '可议'], def: '3 天内' }
@@ -245,7 +262,7 @@ Page({
       { code: 'BTC', symbol: '₿', label: '比特币' }
     ],
     currencyLabels: ['人民币 ¥', '美元 $', 'USDT ₮', '港币 HK$', '欧元 €', '英镑 £', '日元 ¥', '新加坡元 S$', '迪拉姆 د.إ', '比特币 ₿'],
-    form: { title: '', qty: '', minQty: '', price: '', priceMax: '', priceMode: 'fixed', accept: '', limit: '', note: '', requirements: '', cat: '', brand: '', series: '', model: '', device: '', devicePath: '', province: '', city: '', subject: '', phone: '' },
+    form: { title: '', qty: '', minQty: '', price: '', priceMax: '', priceMode: 'fixed', accept: '', limit: '', note: '', cat: '', brand: '', series: '', model: '', device: '', devicePath: '', province: '', city: '', subject: '', phone: '' },
     modeOptions: ['出售', '出租'],
     /* 设备列在 onLoad 里计算：模块加载阶段算会让缺键 / 空目录直接白屏 */
     deviceCols: [],
@@ -483,7 +500,7 @@ Page({
     if (String(f.title || '').trim()) return true
     if (String(f.device || '').trim()) return true
     if (String(f.price || '').trim() || String(f.qty || '').trim()) return true
-    if (String(f.note || '').trim() || String(f.requirements || '').trim()) return true
+    if (String(f.note || '').trim()) return true
     if ((this.data.imgList || []).length) return true
     if ((this.data.videoList || []).length) return true
     return false
@@ -1067,6 +1084,7 @@ Page({
     if (doc.tax) selected.tax = (Array.isArray(doc.tax) ? doc.tax[0] : String(doc.tax).split(' · ')[0]) || selected.tax
     if (isRent) {
       if (Array.isArray(doc.term) && doc.term.length) selected.rentTerm = doc.term.slice()
+      if (Array.isArray(doc.rentLimits) && doc.rentLimits.length) selected.rentLimits = doc.rentLimits.slice()
       selected.deposit = doc.deposit || selected.deposit
       selected.pay = doc.pay || selected.pay
       /* 服务端枚举与表单文案不同，回填时换回表单口径 */
@@ -1166,7 +1184,6 @@ Page({
         accept: String(doc.accept || ''),
         limit: String(doc.limit || ''),
         note: String(doc.note || ''),
-        requirements: String(doc.requirements || ''),
         cat,
         brand,
         series: seriesName,
@@ -1178,7 +1195,7 @@ Page({
         province,
         city,
         subject: this.data.form.subject || '',
-        phone: this.data.form.phone || ''
+        phone: String(doc.phone || '')
       }
     })
     this.checkRent()
@@ -1409,10 +1426,11 @@ Page({
     }
     /* 商品展示信息：验收标准 / 可承接数量 / 交易说明，均由发布者填写 */
     if (!isBuy) {
+      /* 补充手机号：仅平台坐席可见，服务端加密落库；留空表示沿用我的信息里已绑定的号码 */
+      payload.phone = String(f.phone || '').trim()
       payload.accept = String(f.accept || '').trim()
       payload.limit = String(f.limit || '').trim()
       payload.note = String(f.note || '').trim()
-      payload.requirements = String(f.requirements || '').trim()
     } else {
       /* 需求验收方式：现场压测 / 第三方报告 */
       payload.accept = (this.data.acceptOpts || [])
@@ -1440,6 +1458,7 @@ Page({
       payload.closed = closed
       payload.deposit = sel.deposit
       payload.pay = sel.pay
+      payload.rentLimits = (sel.rentLimits || []).slice()
     } else {
       if (isBuy) payload.budget = priceMode === 'nego' ? 0 : num(f.price)
       else payload.price = priceMode === 'nego' ? 0 : num(f.price)
@@ -1609,7 +1628,7 @@ Page({
     const secretPublish = this.data.privatePublish === true
     const successText = secretPublish
       ? '你的' + typeLabel + '已匿名发布' + extraText + '。\n\n内容会正常出现在首页、在售货源与需求列表中，但不会显示你的头像、主体与主页入口，别人也无法通过这条内容进入你的主页；主页列表中也不会出现这条内容。只有你在站内对话里主动告知，对方才知道发布人是谁。可在「我的 · 我发布的」中查看与管理（会标注「匿名发布」）。材料已加密存储，仅平台内可见，查看时叠加账号与昵称水印。'
-      : '你的' + typeLabel + '已发布并上架到「' + (isBuy ? '求购需求' : '在售货源') + '」' + extraText + '。\n\n有用户满足必须条件即可与你直接对话，并会通过站内消息通知你。可在「我的 · 我发布的」中查看与管理。材料已加密存储，仅平台内可见，查看时叠加账号与昵称水印。\n\n平台已自动完成基础审核；命中风险规则的内容会进入风险池人工复核，未处理前照常展示。'
+      : '你的' + typeLabel + '已发布并上架到「' + (isBuy ? '求购需求' : '在售货源') + '」' + extraText + '。\n\n有用户满足必须条件即可与你直接对话，并会通过站内消息通知你。可在「我的 · 我发布的」中查看与管理。材料已加密存储，仅平台内可见，查看时叠加账号与昵称水印。\n\n平台不审核交易流程，只做信息撮合，发现违规内容时按规则处置。'
     wx.showModal({
       title: '发布成功',
       content: successText +
@@ -1645,7 +1664,7 @@ Page({
       condType: 'new',
       condLevel: '9成新',
       moreOpen: false,
-      form: { title: '', qty: '', minQty: '', price: '', priceMax: '', priceMode: 'fixed', accept: '', limit: '', note: '', requirements: '', cat: '', brand: '', series: '', model: '', device: '', devicePath: '', province: '', city: '', subject: '', phone: '' },
+      form: { title: '', qty: '', minQty: '', price: '', priceMax: '', priceMode: 'fixed', accept: '', limit: '', note: '', cat: '', brand: '', series: '', model: '', device: '', devicePath: '', province: '', city: '', subject: '', phone: '' },
       cities: [],
       deviceIndex: [0, 0, 0, 0],
       deviceCols: deviceColumns([0, 0, 0, 0]).cols,
@@ -1720,10 +1739,10 @@ Page({
       feeRule: '填写金额后自动试算',
       agencySubmitText: '填写金额后试算',
       agencySubmitTip: t === 'buy'
-        ? '发布、审核、上架都不收费，成交后支付服务费；审核通过后客服通过预留手机号与你联系。'
+        ? '发布、审核、上架都不收费，成交后支付服务费；审核通过后直接在平台内发布，有人咨询时由客服对接。'
         : '发布、审核、上架都不收费，成交后支付服务费；审核通过后开始代寻、撮合。',
       feeNote: t === 'buy'
-        ? '代采委托直接对接平台，资料仅平台可见；审核通过后客服与你联系确认需求，成交后支付服务费。'
+        ? '代采委托直接对接平台，资料仅平台可见；审核通过后直接在平台内发布，有人咨询时客服对接确认交易条件，成交后支付服务费。'
         : '代售委托直接对接平台，资料仅平台可见；审核通过后开始代寻、撮合，成交后支付服务费。'
     })
     this.setData({ navTitle: t === 'buy' ? '发起代采' : '发起代售' })
@@ -2035,7 +2054,7 @@ Page({
           : '大额代售审核通过后上架；成交后按 0.5% 支付服务费。'
       } else if (this.data.agencyType === 'buy') {
         submitText = '提交审核'
-        submitTip = '审核通过后客服将在 1 个工作日内通过预留手机号与你联系；成交后支付服务费。'
+        submitTip = '审核通过后直接在平台内发布，有人咨询时客服与你对接；成交后支付服务费。'
       } else {
         submitText = '提交审核'
         submitTip = '审核通过后即上架；成交后支付服务费。'
@@ -2048,7 +2067,7 @@ Page({
         feeDeferred: res.deferredFee === true,
       feeRule: res.rule || '填写金额后自动试算',
       feeNote: this.data.agencyType === 'buy'
-        ? '发布、审核、上架都不收费，成交后支付服务费；客服会通过预留手机号与你联系确认需求。'
+        ? '发布、审核、上架都不收费，成交后支付服务费；审核通过后直接在平台内发布，有人咨询时客服对接。'
         : '发布、审核、上架都不收费；审核通过后开始代寻、撮合，成交后支付服务费。',
       agencySubmitText: submitText,
       agencySubmitTip: submitTip
@@ -2252,10 +2271,10 @@ Page({
             ? '你的租赁委托已提交，将在 1 个工作日内完成审核。\n审核通过后即上架；成交后支付半个月租金（服务费为一个月租金，买卖双方各承担 50%）。\n进度可在「我的 - 我的委托」查看，审核前可随时撤销。'
             : (largeAmount
               ? (isBuy
-                ? '本单代采金额达到 1000 万元，成交后按 0.5% 支付服务费，订单只对平台可见。\n将在 1 个工作日内完成审核，通过后客服通过预留手机号与你联系，核对采购意向函、委托授权书与联系人信息。'
+                ? '本单代采金额达到 1000 万元，成交后按 0.5% 支付服务费，订单只对平台可见。\n将在 1 个工作日内完成审核，通过后直接在平台内发布，有人咨询时客服与你对接交易条件。'
                 : '本单代售金额达到 1000 万元，成交后按 0.5% 支付服务费。\n客服将在 1 个工作日内核对营业执照、货源证明、委托授权书与联系人信息，通过后上架。')
               : (isBuy
-                ? '你的代采委托已提交，将在 1 个工作日内完成审核。\n审核通过后客服联系你确认需求；成交后支付服务费。\n进度可在「我的 - 我的委托」查看，审核前可随时撤销。'
+                ? '你的代采委托已提交，将在 1 个工作日内完成审核。\n审核通过后直接在平台内发布，有人咨询时客服对接；成交后支付服务费。\n进度可在「我的 - 我的委托」查看，审核前可随时撤销。'
                 : '你的代售委托已提交，将在 1 个工作日内完成审核。\n审核通过后即上架，成交后支付服务费。\n进度可在「我的 - 我的委托」查看，审核前可随时撤销。'))),
         showCancel: false,
         confirmText: '查看进度',

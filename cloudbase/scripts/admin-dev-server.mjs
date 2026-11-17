@@ -25,6 +25,19 @@ const ROOT = path.resolve(__dirname, '..', '..')
 const PROTOTYPE_DIR = path.join(ROOT, 'prototype')
 const DATA_DIR = path.join(ROOT, 'cloudbase', '.dev-data')
 const STATE_FILE = path.join(DATA_DIR, 'state.json')
+
+/* 本地联调可选读取 cloudbase/.env：REDIS_URL / CACHE_NS / CACHE_L1_MAX
+   等缓存参数不必每次手写 export；已存在的系统环境变量优先 */
+const ENV_FILE = path.join(ROOT, 'cloudbase', '.env')
+if (fs.existsSync(ENV_FILE)) {
+  for (const line of fs.readFileSync(ENV_FILE, 'utf8').split('\n')) {
+    const matched = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line)
+    if (!matched || /^\s*#/.test(line)) continue
+    const value = matched[2].replace(/^['"]|['"]$/g, '')
+    if (process.env[matched[1]] === undefined) process.env[matched[1]] = value
+  }
+}
+
 const PORT = Number(process.env.PORT || 8790)
 const HOST = process.env.HOST || '127.0.0.1'
 
@@ -929,9 +942,8 @@ function demoOps(base) {
         actor: 'o_demo_user_2', ip: '10.0.0.9', at: day(2) + 5 * HOUR
       },
       {
-        id: 'LG_DEMO_3', level: 'info', scope: '管理端接口', action: 'payment.confirm',
-        message: '收款确认成功，已自动开通季度套餐', detail: 'PY_DEMO_1 → BO_DEMO_1',
-        actor: 'admin', ip: '10.0.0.8', at: day(20)
+        id: 'LG_DEMO_3', level: 'info', scope: '管理端接口', action: 'payment.feeConfirm',
+        message: '委托服务费确认到账成功', detail: 'PY_DEMO_1 → 委托服务费', actor: 'admin', ip: '10.0.0.8', at: day(20)
       }
     ],
     loginLogs: [

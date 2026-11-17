@@ -14,17 +14,49 @@ const { ROLES } = require('./constants')
 const ROLE_ACTIONS = Object.freeze({
   [ROLES.CS]: Object.freeze([
     'admin.logout',
+    /* 刷新本地权限快照：角色页面调整后无需重新登录 */
+    'admin.session',
     'product.list',
     'product.detail',
     'demand.list',
     'demand.detail',
     'lead.list',
+    /* 从消息中心生成咨询工单：客服确认需求后直接建单，进入待领取 */
+    'lead.create',
     'lead.detail',
     'lead.assign',
     /* 领取咨询单：认领后归属本人，未成交 / 未关闭前一直留在「我的已领取」 */
     'lead.claim',
     /* 领取后由本人推进状态直到成交 / 关闭；未完成前工单不会离开「我的已领取」 */
     'lead.updateStatus',
+    /* 代采代售咨询：领取人结束服务后用户才能评价，评价自动进客服档案 */
+    'lead.endService',
+    /* 代采代售咨询标准流程：沟通 → 条件 → 居间合同 → 签约 → 成交 → 服务费 → 完成 */
+    'consult.list',
+    'consult.detail',
+    /* 双方联系方式：客服沟通前按需查看，每次查看都留审计 */
+    'consult.reveal',
+    'consult.terms',
+    /* 居间合同扫描件：客服上传，管理员审核 */
+    'consult.contractSubmit',
+    /* 服务费线下打款凭证：客服上传，财务确认到账 */
+    'consult.uploadProof',
+    /* 磋商完成生成工单 / 条件不成立标记无效：咨询与工单分离后的两个出口 */
+    'consult.openTicket',
+    'consult.dismiss',
+    'consult.fileUrls',
+    /* 登记成交（平台直接确认）、终止服务、确认完成 */
+    'consult.proposeDeal',
+    'consult.abort',
+    'consult.complete',
+    /* 合同上传后、审核前确定唯一对接方：跟进客服一键结束同委托的其他对接 */
+    'contract.lock',
+    /* 我的工资：分享开通提成 + 代采代售佣金，按自然月汇总 */
+    'cs.salary',
+    /* 客服业务：查看本人绑定用户、生效比例、业绩提成与评价档案（比例配置归管理员） */
+    'cs.settings',
+    'cs.commissions',
+    'cs.ratings',
     /* 分配 / 转派需要坐席列表；客服只能在自己与同事之间流转工单 */
     'staff.list',
     /* 客服坐席必须能看消息、回消息，否则用户留言无人处理 */
@@ -39,8 +71,8 @@ const ROLE_ACTIONS = Object.freeze({
     'msg.directHandle',
     'favorite.list',
     'follow.list',
-    /* 交易服务：客服负责确认代采 / 代售服务费到账，以及商机权限开通 / 续费；
-       关闭委托、停用权限、资讯发布与下架属于管理员动作 */
+    /* 交易服务：客服负责上传代采 / 代售打款凭证与商机权限开通 / 续费，
+       服务费到账确认归财务；关闭委托、停用权限、资讯发布与下架属于管理员动作 */
     'price.levels',
     'agency.list',
     'agency.confirm',
@@ -56,10 +88,8 @@ const ROLE_ACTIONS = Object.freeze({
     'biz.grant',
     'biz.orders',
     'biz.remindExpiring',
-    /* 收款登记：客服把企微收款同步到用户名下，确认到账后自动开通会员 */
+    /* 收款流水：会员收款由微信支付自动入账，客服只读留痕 */
     'payment.list',
-    'payment.create',
-    'payment.confirm',
     /* 用户页：客服可检索用户、开通商机会员，并做账号状态 / 曝光 / 备注的手动调整 */
     'user.list',
     'user.detail',
@@ -89,36 +119,78 @@ const ROLE_ACTIONS = Object.freeze({
     'report.handle',
     /* 媒体页资讯列表只读：发布 / 审核 / 下架归管理员 */
     'news.list',
+    /* 资讯发布与下架交给客服（日常运营），审核仍归管理员 */
+    'news.create',
+    'news.offline',
+    /* 媒体页「提醒会员续费」与提醒文案 / 时间 / 次数配置 */
+    'biz.remindSetting',
+    /* 客服服务记录与数据看板：只看汇总，不做配置 */
+    'service.records',
+    'stats.overview',
+    'stats.trend',
     /* 工作台待办与作业记录：只读汇总，三类角色都可查看自己的窗口数据 */
     'admin.todos',
     'workbench.data'
   ]),
   /**
-   * 财务专员：只做收款登记、确认到账、退款与营收汇总，
+   * 电销专员：只看「多次打开商机会员页却没下单」的线索，
+   * 可查用户档案与手机号（便于拨号），不碰货盘、咨询单、财务与配置。
+   */
+  [ROLES.SALES]: Object.freeze([
+    'admin.logout',
+    'admin.session',
+    'sales.unpaid',
+    'user.detail',
+    'user.events',
+    'setting.get'
+  ]),
+  /**
+   * 财务专员：只做收款流水、退款与营收汇总，
    * 以及查用户 / 开通会员，不碰货盘、咨询单、风险与系统配置。
    */
   [ROLES.FINANCE]: Object.freeze([
     'admin.logout',
+    'admin.session',
     'finance.summary',
     'payment.list',
-    'payment.create',
-    'payment.confirm',
+    /* 委托服务费账单确认到账：财务核对银行回单后确认，确认后自动计提客服佣金 */
+    'payment.feeConfirm',
     'payment.refund',
     /* 用户发起的退款申请：财务核对后通过 / 驳回 */
     'refund.list',
     'refund.handle',
-    /* 登记收款与开通会员需要检索用户 */
+    /* 退款处理与开通会员需要检索用户 */
     'user.list',
     'user.detail',
     'biz.list',
     'biz.grant',
     'setting.get',
+    /* 推广提现：财务审核、领取打款、导出与回填对账，不碰比例配置与推广者封禁 */
+    'promote.list',
+    'promote.detail',
+    'promote.commissions',
+    'promote.withdrawList',
+    'promote.withdrawApprove',
+    'promote.withdrawReject',
+    'promote.payoutList',
+    'promote.payoutClaim',
+    'promote.payoutExport',
+    'promote.payoutMark',
+    'promote.payoutCancel',
+    'promote.payoutItems',
+    'promote.reconcile',
+    'promote.stats',
+    /* Apple 结算到账确认：到账后按月解冻该月佣金（出款前最后一道资金闸门） */
+    'promote.appleSettle',
+    /* 规则只读：财务需要看到当前比例 / 费率，但不能修改 */
+    'promote.settings',
     /* 工作台待办与作业记录：只读汇总 */
     'admin.todos',
     'workbench.data'
   ]),
   [ROLES.ADMIN]: Object.freeze([
     'admin.logout',
+    'admin.session',
     'admin.login',
     'product.list',
     'product.detail',
@@ -133,10 +205,41 @@ const ROLE_ACTIONS = Object.freeze({
     'demand.close',
     'demand.offline',
     'lead.list',
+    /* 从消息中心生成咨询工单：客服确认需求后直接建单，进入待领取 */
+    'lead.create',
     'lead.detail',
     'lead.assign',
     'lead.claim',
     'lead.updateStatus',
+    'lead.endService',
+    /* 代采代售咨询标准流程：客服可推进，合同审核归管理员 */
+    'consult.list',
+    'consult.detail',
+    'consult.reveal',
+    'consult.terms',
+    'consult.contractSubmit',
+    'consult.uploadProof',
+    /* 磋商完成生成工单 / 条件不成立标记无效 */
+    'consult.openTicket',
+    'consult.dismiss',
+    'consult.fileUrls',
+    'consult.proposeDeal',
+    'consult.abort',
+    'consult.complete',
+    'contract.review',
+    /* 确定唯一对接方：合同上传后、审核前手动锁定，其余对接方一键结束 */
+    'contract.lock',
+    /* 客服业务：绑定用户、提成比例（全局 + 单独覆盖）、提成流水与评价档案 */
+    'cs.settings',
+    'cs.saveSettings',
+    'cs.saveRate',
+    /* 代采代售佣金比例：全局默认 + 客服单独覆盖 */
+    'cs.saveAgencyRate',
+    'cs.salary',
+    'cs.bind',
+    'cs.unbind',
+    'cs.commissions',
+    'cs.ratings',
     'contact.reveal',
     'stats.overview',
     'blocked.list',
@@ -188,6 +291,8 @@ const ROLE_ACTIONS = Object.freeze({
     /* 用户上传的图片 / 视频：审核详情里直接展示原件 */
     'media.fileUrls',
     'user.events',
+    /* 电销线索：多次打开商机会员页却没下单的用户（含拨号用手机号） */
+    'sales.unpaid',
     /* 用户运营数据导出（后台导出，含明文手机号，仅管理员可用） */
     'user.export',
     /* 工作台待办与作业记录 */
@@ -204,6 +309,8 @@ const ROLE_ACTIONS = Object.freeze({
     'agency.review',
     'agency.reveal',
     'agency.close',
+    /* 服务费到账后由平台确认完成，结束交易 */
+    'agency.complete',
     /* 平台对代采代售商品的管理权：直接修改已上架内容、下架，以及查看 / 回复商品对话 */
     'agency.update',
     'agency.offline',
@@ -220,12 +327,13 @@ const ROLE_ACTIONS = Object.freeze({
     'biz.grant',
     'biz.orders',
     'biz.remindExpiring',
+    'biz.remindSetting',
     'biz.revoke',
     'biz.setExpire',
-    /* 财务中心：收款流水登记 / 确认 / 退款与营收汇总 */
+    /* 财务中心：收款流水 / 委托服务费确认 / 退款与营收汇总 */
     'payment.list',
-    'payment.create',
-    'payment.confirm',
+    /* 委托服务费账单确认到账：财务 / 超管可操作 */
+    'payment.feeConfirm',
     'payment.refund',
     /* 用户发起的退款申请：财务核对后通过 / 驳回 */
     'refund.list',
@@ -256,22 +364,45 @@ const ROLE_ACTIONS = Object.freeze({
     'insights.searches',
     'insights.boards',
     'risk.list',
-    'risk.handle'
+    'risk.handle',
+    /* 推广分佣：推广者、佣金流水、提现审核、人工出款与回填、冲正、规则与对账 */
+    'promote.list',
+    'promote.detail',
+    'promote.commissions',
+    'promote.withdrawList',
+    'promote.withdrawApprove',
+    'promote.withdrawReject',
+    'promote.payoutList',
+    'promote.payoutClaim',
+    'promote.payoutExport',
+    'promote.payoutMark',
+    'promote.payoutCancel',
+    'promote.payoutItems',
+    'promote.reconcile',
+    'promote.stats',
+    'promote.settings',
+    'promote.saveSettings',
+    'promote.setStatus',
+    'promote.reverseCommission',
+    'promote.appleSettle',
+    'promote.runSettle'
   ])
 })
 
 /** 客服可见的管理端页面（前端导航与后端 RBAC 用同一份） */
 const ROLE_PAGES = Object.freeze({
-  /* 客服首页即工作台：只显示自己的待办与作业量，其余页面按职责开放 */
-  [ROLES.CS]: Object.freeze(['workbench', 'products', 'demands', 'leads', 'messages', 'users', 'biz', 'boards', 'risk']),
-  /* 财务：工作台 + 财务中心，避免误入业务页面 */
-  [ROLES.FINANCE]: Object.freeze(['workbench', 'finance']),
+  /* 客服首页即工作台：日常对接、工单、媒体资讯与看板都开放，审批 / 财务 / 系统设置仍归管理员 */
+  [ROLES.CS]: Object.freeze(['workbench', 'stats', 'products', 'demands', 'leads', 'consult', 'messages', 'service', 'users', 'biz', 'news', 'boards', 'risk', 'cs']),
+  /* 财务：工作台 + 财务中心 + 推广提现出款，避免误入业务页面 */
+  [ROLES.FINANCE]: Object.freeze(['workbench', 'finance', 'promote']),
+  /* 电销：只有线索页，手机号与拨号都在这一页完成 */
+  [ROLES.SALES]: Object.freeze(['sales']),
   [ROLES.ADMIN]: Object.freeze([
-    'workbench', 'stats', 'products', 'demands', 'leads', 'messages',
+    'workbench', 'stats', 'products', 'demands', 'leads', 'consult', 'messages',
     'service', 'audit', 'behavior', 'blocked', 'rules', 'accounts', 'users', 'biz', 'news',
-    'boards', 'risk', 'settings',
+    'boards', 'risk', 'settings', 'cs',
     /* P0-P3 新增：财务中心、系统日志、角色权限 */
-    'finance', 'logs', 'roles'
+    'finance', 'logs', 'roles', 'promote'
   ])
 })
 

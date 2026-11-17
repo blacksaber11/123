@@ -809,9 +809,9 @@ function createInsightsAdminHandlers(deps) {
         const parts = rest.split(':')
         const n = Number(row.count) || 0
         if (scope && scope !== 'all') {
-          /* 指定维度：只取「search:<日>:<维度>:<词>」这种带维度的键 */
-          if (parts.length < 3 || parts[parts.length - 2] !== scope) continue
-          const word = parts.slice(parts.length - 1).join(':')
+          /* 指定维度：只取「search:<日>:<维度>:<词>」这种带维度的键（去掉日前缀后为 2 段） */
+          if (parts.length < 2 || parts[0] !== scope) continue
+          const word = parts.slice(1).join(':')
           map[word] = (map[word] || 0) + n
           continue
         }

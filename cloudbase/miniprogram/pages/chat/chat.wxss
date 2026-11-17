@@ -15,8 +15,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12rpx 28rpx;
-  font-size: 22rpx;
+  padding: 18rpx 42rpx;
+  font-size: 33rpx;
   color: #8A5A00;
   background: #FFF7E6;
   border-bottom: 1rpx solid var(--line);
@@ -24,18 +24,196 @@
 .wx-bar-t {
   flex: 1;
   min-width: 0;
+  /* 字号放大后允许换行，不再省略成「第一...」 */
+  line-height: 1.35;
+  word-break: break-all;
+}
+.wx-bar-a {
+  flex: none;
+  margin-left: 24rpx;
+  padding: 0 27rpx;
+  height: 60rpx;
+  line-height: 60rpx;
+  font-size: 30rpx;
+  color: #fff;
+  background: #B45309;
+  border-radius: 999rpx;
+}
+
+/* 代采代售咨询状态横幅：待领取 / 客服接入 / 已结束 */
+.cs-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 18rpx 32rpx;
+  border-bottom: 1rpx solid var(--line);
+  background: var(--brand-soft);
+}
+.cs-bar.wait {
+  background: var(--warn-soft);
+}
+.cs-bar.done {
+  background: var(--line-2);
+}
+.cs-bar-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+.cs-bar-t {
+  font-size: 27rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.cs-bar.wait .cs-bar-t {
+  color: var(--warn);
+}
+.cs-bar-s {
+  font-size: 22rpx;
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.wx-bar-a {
+.cs-bar-a {
   flex: none;
-  margin-left: 16rpx;
-  padding: 0 18rpx;
-  height: 40rpx;
-  line-height: 40rpx;
-  font-size: 20rpx;
+  padding: 0 22rpx;
+  height: 56rpx;
+  line-height: 56rpx;
+  font-size: 24rpx;
   color: #fff;
-  background: #B45309;
+  background: var(--brand);
   border-radius: 999rpx;
+}
+.cs-bar-a.flat {
+  color: var(--muted);
+  background: transparent;
+  padding: 0;
+}
+
+/* 平台提示：居中灰色小字，不占左右气泡 */
+.chat-note {
+  margin: 0 auto 20rpx;
+  max-width: 76%;
+  padding: 8rpx 18rpx;
+  border-radius: 10rpx;
+  background: rgba(16, 24, 40, .05);
+  color: var(--muted);
+  font-size: 22rpx;
+  line-height: 32rpx;
+  text-align: center;
+}
+
+/* 未领取 / 已结束：输入区替换为状态条 */
+.chat-lock {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20rpx;
+  padding: 24rpx 32rpx;
+  border-top: 1rpx solid var(--line-2);
+  background: #fff;
+}
+.chat-lock-t {
+  font-size: 25rpx;
+  color: var(--muted);
+}
+.chat-lock-a {
+  flex: none;
+  padding: 0 22rpx;
+  height: 56rpx;
+  line-height: 56rpx;
+  font-size: 24rpx;
+  color: #fff;
+  background: var(--brand);
+  border-radius: 999rpx;
+}
+.chat-lock-a.flat {
+  color: var(--muted);
+  background: var(--line-2);
+}
+
+/* 咨询服务评价弹层 */
+.rate-pop {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(16, 24, 40, .45);
+}
+.rate-sheet {
+  width: 100%;
+  padding: 32rpx 32rpx calc(32rpx + env(safe-area-inset-bottom));
+  border-radius: 24rpx 24rpx 0 0;
+  background: #fff;
+}
+.rate-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: center;
+}
+.rate-sub {
+  margin-top: 8rpx;
+  font-size: 23rpx;
+  color: var(--muted);
+  text-align: center;
+}
+.rate-stars {
+  display: flex;
+  justify-content: center;
+  gap: 18rpx;
+  margin: 26rpx 0 20rpx;
+}
+.rate-star {
+  font-size: 60rpx;
+  line-height: 1;
+  color: var(--line);
+}
+.rate-star.on {
+  color: #F5A524;
+}
+.rate-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14rpx;
+  justify-content: center;
+}
+.rate-tag {
+  padding: 10rpx 22rpx;
+  border-radius: 999rpx;
+  border: 1rpx solid var(--line);
+  color: var(--ink-2);
+  font-size: 24rpx;
+}
+.rate-tag.on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.rate-text {
+  width: 100%;
+  height: 140rpx;
+  margin-top: 22rpx;
+  padding: 16rpx 20rpx;
+  box-sizing: border-box;
+  border-radius: 12rpx;
+  background: var(--paper);
+  font-size: 25rpx;
+  line-height: 36rpx;
+}
+.rate-btns {
+  display: flex;
+  gap: 20rpx;
+  margin-top: 24rpx;
+}
+.rate-btns .btn {
+  flex: 1;
 }

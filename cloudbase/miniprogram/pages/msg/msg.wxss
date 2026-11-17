@@ -49,7 +49,7 @@
   flex: none;
   margin-left: 6rpx;
   font-size: 30rpx;
-  color: var(--muted-2);
+  color: var(--muted);
 }
 
 /* 未登录引导：只做说明，点击后用户自己决定是否登录 */
@@ -102,6 +102,7 @@
   align-items: center;
   justify-content: center;
   gap: 8rpx;
+  white-space: nowrap;
 }
 .tab.on {
   color: var(--ink);
@@ -230,6 +231,20 @@
   background: var(--brand-soft);
   border: 1rpx solid var(--brand-line);
   color: var(--brand);
+  font-size: 18rpx;
+  font-weight: 600;
+  line-height: 26rpx;
+  white-space: nowrap;
+}
+/* 商机发起的会话：名字后挂「商机」小标，和普通商品 / 需求直聊区分 */
+.msg-biz {
+  flex: none;
+  margin-left: 8rpx;
+  padding: 1rpx 8rpx;
+  border-radius: 999rpx;
+  background: var(--warn-soft);
+  border: 1rpx solid var(--warn-line);
+  color: var(--warn);
   font-size: 18rpx;
   font-weight: 600;
   line-height: 26rpx;
@@ -995,7 +1010,11 @@
 }
 .chat-ctx-clear {
   flex: none;
-  padding: 2rpx 16rpx;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 60rpx;
+  padding: 0 20rpx;
   border: 1rpx solid var(--line);
   border-radius: 999rpx;
   color: var(--muted);
@@ -1305,6 +1324,92 @@
   bottom: calc(32rpx + env(safe-area-inset-bottom));
   text-align: center;
   color: rgba(255, 255, 255, 0.5);
+  font-size: 22rpx;
+}
+/* 图片查看器：整屏平铺水印，放大后依然可见，且不拦截点击 */
+.img-pop-wms {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  overflow: hidden;
+  pointer-events: none;
+}
+.img-pop-wms-t {
+  width: 33.33%;
+  height: 16.66%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8rpx;
+  box-sizing: border-box;
+  font-size: 20rpx;
+  color: rgba(255, 255, 255, 0.22);
+  white-space: nowrap;
+  overflow: hidden;
+  transform: rotate(-18deg);
+}
+
+/* 视频查看器：页内播放，封面之上平铺账号水印 */
+.video-pop {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 999;
+  background: #000;
+}
+.video-pop-player {
+  width: 100%;
+  height: 100%;
+}
+.video-pop-wm {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  overflow: hidden;
+  pointer-events: none;
+}
+.video-pop-wm-t {
+  width: 33.33%;
+  height: 16.66%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8rpx;
+  box-sizing: border-box;
+  font-size: 20rpx;
+  color: rgba(255, 255, 255, 0.24);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.video-pop-close {
+  position: absolute;
+  left: 24rpx;
+  top: calc(24rpx + env(safe-area-inset-top));
+  padding: 10rpx 26rpx;
+  border-radius: 999rpx;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 24rpx;
+}
+.video-pop-tip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(120rpx + env(safe-area-inset-bottom));
+  text-align: center;
+  color: rgba(255, 255, 255, 0.55);
   font-size: 22rpx;
 }
 

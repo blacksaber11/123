@@ -25,9 +25,11 @@ const shared = path.join(here, '..', 'shared')
 
 const { createRouter } = require(path.join(shared, 'router.js'))
 const { createMemoryRepo } = require(path.join(shared, 'repo.js'))
-const { loadKeys, encryptField, blindIndex, generateTotp } = require(path.join(shared, 'crypto.js'))
+const { loadKeys, encryptField, decryptField, blindIndex, generateTotp, sha256Hex } = require(path.join(shared, 'crypto.js'))
 const { verifyMaterialLink } = require(path.join(shared, 'files.js'))
 const { buildProduct, buildDemand, judgeTier } = require(path.join(shared, 'domain.js'))
+const { createCsEngine, monthKeyOf, CS_STATUS } = require(path.join(shared, 'cs.js'))
+const { TICKET_STATE } = require(path.join(shared, 'consultflow.js'))
 const { DEMO_ADMIN_ACCOUNTS, TRADE_MODES, LEAD_STATUS, RATE_LIMITS, PRODUCT_STATUS, DEMAND_STATUS, VISIBILITIES } = require(path.join(shared, 'constants.js'))
 
 let pass = 0
@@ -113,6 +115,30 @@ const call = async (router, action, data, ctx) => {
   return router.dispatch(action, data, ctx)
 }
 
+/* 代采 / 代售未单独设置必须条件时的默认三条，与 market.js 的 AGENCY_MUST_DEFAULT 一致 */
+const AGENCY_MUST_FOR_TEST = ['可按委托价格与数量成交', '可在截止时间前完成交付', '接受平台居中对接与订单核验']
+
+/**
+ * 领取商机：按发布方实际必须条件补齐 conds（服务端会逐项复核），用例无需重复书写。
+ * 传 conds: false 时故意不带条件，用于验证服务端拦截。
+ */
+const claimOf = async (data, ctx) => {
+  const ids = {
+    demand: ['demands', data.demandId],
+    supply: ['products', data.supplyId],
+    agency: ['agencies', data.agencyId]
+  }
+  const entry = ids[data.targetType] || []
+  const doc = entry[1] ? await repo.get(entry[0], entry[1]) : null
+  const must = doc && Array.isArray(doc.must) && doc.must.length
+    ? doc.must
+    : (data.targetType === 'agency' ? AGENCY_MUST_FOR_TEST : [])
+  const payload = Object.assign({}, data)
+  if (payload.conds !== false) payload.conds = must
+  else delete payload.conds
+  return call(userRouter, 'biz.claim', payload, ctx)
+}
+
 const USER = { openid: 'o_user_0001', ip: '10.0.0.1' }
 const USER2 = { openid: 'o_user_0002', ip: '10.0.0.2' }
 const USER3 = { openid: 'o_user_0003', ip: '10.0.0.3' }
@@ -178,8 +204,11 @@ section('2. 登录、个人信息与保密')
   /* 公开范围：默认不公开主体，可切换为公开主体，并冗余到 users 供平台侧查看 */
   const expDefault = await call(userRouter, 'profile.save', { nick: '张三', phone: '13800138000', realname: '张三' }, USER)
   ok(expDefault.ok && expDefault.data.exposure === 'hidden', '未选择时公开范围默认「不公开主体」')
-  const expOpen = await call(userRouter, 'profile.save', { nick: '张三', phone: '13800138000', realname: '张三', exposure: 'open' }, USER)
-  ok(expOpen.ok && expOpen.data.exposure === 'open' && expOpen.data.exposureLabel === '公开主体', '可切换为「公开主体」')
+  /* 公开主体前提：主体名称 + 职位 / 身份，营业执照等原件可后补 */
+  const expNoPos = await call(userRouter, 'profile.save', { nick: '张三', phone: '13800138000', realname: '张三', exposure: 'open' }, USER)
+  ok(!expNoPos.ok && expNoPos.code === 'VALIDATION', '未填职位时不能切换为「公开主体」')
+  const expOpen = await call(userRouter, 'profile.save', { nick: '张三', phone: '13800138000', realname: '张三', subject: '杭州云帆数据科技有限公司', position: '采购经理', exposure: 'open' }, USER)
+  ok(expOpen.ok && expOpen.data.exposure === 'open' && expOpen.data.exposureLabel === '公开主体', '填好主体名称与职位后可切换为「公开主体」')
   const expRaw = (await repo.find('profiles', { uid: USER.openid }))[0]
   ok(expRaw.exposure === 'open', '公开范围落库')
   const userRawExp = await repo.get('users', USER.openid)
@@ -341,7 +370,7 @@ let leadId = ''
 {
   /* 两个账号各完成登录与实名 */
   await call(userRouter, 'auth.login', { nick: '张三' }, USER)
-  await call(userRouter, 'profile.save', { nick: '张三', realname: '张三', exposure: 'open' }, USER)
+  await call(userRouter, 'profile.save', { nick: '张三', realname: '张三', subject: '杭州云帆数据科技有限公司', position: '采购经理', exposure: 'open' }, USER)
   await call(userRouter, 'auth.login', { nick: '李四' }, USER2)
   await call(userRouter, 'profile.save', { nick: '李四', realname: '李四' }, USER2)
   await call(userRouter, 'auth.login', { nick: '王五' }, USER3)
@@ -566,6 +595,12 @@ let adminToken = ''
   ok(csLogin.ok, '客服账号登录成功')
   const csCtx = { token: csLogin.data.token }
 
+  /* 带 token 自动登录时前端靠该接口刷新权限快照：必须带出两个新菜单页 */
+  const csSession = await call(adminRouter, 'admin.session', {}, csCtx)
+  ok(csSession.ok && csSession.data.pages.includes('consult') && csSession.data.pages.includes('cs'),
+    '权限刷新接口带出咨询工单与客服业务页面',
+    JSON.stringify(csSession.data && csSession.data.pages))
+
   const csList = await call(adminRouter, 'product.list', {}, csCtx)
   ok(csList.ok, '客服可访问商品池')
   const csDemand = await call(adminRouter, 'demand.list', {}, csCtx)
@@ -581,7 +616,7 @@ let adminToken = ''
   ok(csLead.ok, '客服可访问咨询单')
 
   const csStats = await call(adminRouter, 'stats.overview', {}, csCtx)
-  ok(!csStats.ok && csStats.code === 'FORBIDDEN', '客服访问统计被拒（越权）')
+  ok(csStats.ok, '客服可查看数据看板（只读）')
   const csBlocked = await call(adminRouter, 'blocked.list', {}, csCtx)
   ok(!csBlocked.ok && csBlocked.code === 'FORBIDDEN', '客服访问已拦截箱被拒（越权）')
   const csRules = await call(adminRouter, 'rules.list', {}, csCtx)
@@ -914,6 +949,19 @@ section('11. 限流')
     leadId, name: 'x.pdf', size: 100, type: 'application/pdf'
   }, USER)
   ok(after.ok, '窗口滚动后限流解除')
+
+  /* 代采代售对接 10 次 / 小时：每次都会写咨询消息与材料，超限必须拦截 */
+  let bizLimited = false
+  let bizCalls = 0
+  for (let i = 0; i < 14; i += 1) {
+    bizCalls += 1
+    const r = await call(limiter, 'biz.consult', { agencyId: 'AG-not-exist' }, USER)
+    if (!r.ok && r.code === 'RATE_LIMITED') {
+      bizLimited = true
+      break
+    }
+  }
+  ok(bizLimited && bizCalls === 11, '代采代售对接超过 10 次/小时后触发限流', `calls=${bizCalls}`)
 }
 
 /* ============================================================
@@ -1111,7 +1159,7 @@ section('18. 工单分配、服务记录与操作日志')
   const csStaff = await call(adminRouter, 'staff.list', {}, csCtx)
   ok(csStaff.ok, '客服可读取坐席列表（转派需要）')
   const csService = await call(adminRouter, 'service.records', {}, csCtx)
-  ok(!csService.ok && csService.code === 'FORBIDDEN', '客服访问服务记录被拒（越权）')
+  ok(csService.ok, '客服可查看自己的服务记录')
 
   /* 造一条待分配线索，验证坐席必须真实存在 */
   await repo.updateWhere('leads', { id: leadId }, { status: LEAD_STATUS.PENDING, assignedTo: '', assignedAccount: '' })
@@ -1583,7 +1631,7 @@ section('22. 业务全链路回归')
   await call(userRouter, 'auth.login', { nick: '链路买家' }, BUYER)
   await call(userRouter, 'profile.save', {
     nick: '链路买家', phone: '13900139003', realname: '买家乙', exposure: 'open',
-    subject: '链路采购有限公司', city: '上海'
+    position: '采购经理', subject: '链路采购有限公司', city: '上海'
   }, BUYER)
 
   /* ① 存草稿：草稿只有自己可见 */
@@ -1610,6 +1658,21 @@ section('22. 业务全链路回归')
   /* ③ 公开检索：按关键词能搜到刚发布的商品 */
   const search = await call(userRouter, 'product.list', { q: MARK }, BUYER)
   ok(search.ok && (search.data.items || []).some((p) => p.id === draft.data.id), '③ 首页搜索能检索到新发布的商品')
+
+  /* ③.1 首页筛选 / 排序下推：城市、品类、关键词（跨字段）、价格排序都要由服务端生效 */
+  const byCity = await call(userRouter, 'product.list', { city: '上海', limit: 50 }, BUYER)
+  ok(byCity.ok && (byCity.data.items || []).length > 0 &&
+    byCity.data.items.every((p) => String(p.city || '').indexOf('上海') === 0),
+    '③.1 城市筛选由服务端过滤生效')
+  const byCat = await call(userRouter, 'product.list', { cat: 'GPU 服务器', limit: 50 }, BUYER)
+  ok(byCat.ok && (byCat.data.items || []).length > 0 &&
+    byCat.data.items.every((p) => p.cat === 'GPU 服务器'), '③.1 品类筛选由服务端过滤生效')
+  const kwCity = await call(userRouter, 'product.list', { q: '上海', limit: 50 }, BUYER)
+  ok(kwCity.ok && (kwCity.data.items || []).some((p) => p.id === draft.data.id),
+    '③.1 关键词可命中城市等非标题字段（与首页搜索口径一致）')
+  const priceAsc = await call(userRouter, 'product.list', { sort: '价格升序', limit: 50 }, BUYER)
+  const ascPrices = (priceAsc.ok ? priceAsc.data.items : []).map((p) => Number(p.price) || 0).filter((n) => n > 0)
+  ok(ascPrices.every((n, i) => i === 0 || ascPrices[i - 1] <= n), '③.1 价格升序排序由服务端生效')
 
   /* ④ 咨询：必须条件逐项满足才能提交 */
   const notMet = await call(userRouter, 'consult.submit', {
@@ -1666,6 +1729,36 @@ section('22. 业务全链路回归')
     leadId: chainLeadId, action: 'contact.reveal'
   }, { token: adminToken })
   ok(revealAudit.ok && revealAudit.data.items.some((a) => a.result === 'allow'), '⑧ 释放联系方式写入审计日志')
+
+  /* ⑧.1 咨询电话与档案解耦：提交时的号码只落线索，不能覆盖实名档案手机号 */
+  const phoneProduct = await call(userRouter, 'product.publish', {
+    tradeMode: TRADE_MODES.SELL, title: MARK + ' 咨询电话隔离用例', cat: 'GPU 服务器',
+    brand: 'NVIDIA', model: 'A800 80G', qty: 1, price: '120000', cond: '全新',
+    tax: ['含税'], city: '北京', supply: '现货'
+  }, SELLER)
+  ok(phoneProduct.ok, '⑧.1 新建咨询电话隔离用例商品')
+  const otherPhoneConsult = await call(userRouter, 'consult.submit', {
+    productId: phoneProduct.data.id, phone: '13900139099', conds: [],
+    summary: MARK + ' 用另一个号码发起咨询'
+  }, BUYER)
+  ok(otherPhoneConsult.ok, '⑧.1 用与档案不同的号码提交咨询')
+  const buyerAfterSubmit = await repo.get('users', BUYER.openid)
+  const buyerPhoneNow = decryptField({ keys, token: buyerAfterSubmit.phoneCipher, aad: 'users.phoneCipher.' + BUYER.openid })
+  ok(buyerPhoneNow === '13900139003', '⑧.1 咨询手机号不回写档案（档案仍为授权号码）')
+  const leadPhoneDoc = await repo.get('leads', otherPhoneConsult.data.leadId)
+  ok(leadPhoneDoc.contactPhoneMasked === '139****9099' && !!leadPhoneDoc.contactPhoneCipher &&
+    JSON.stringify(leadPhoneDoc).indexOf('13900139099') < 0, '⑧.1 咨询电话加密落在线索并保留脱敏值')
+  await call(adminRouter, 'lead.assign', { leadId: otherPhoneConsult.data.leadId, assignee: 'admin' }, { token: adminToken })
+  await call(adminRouter, 'lead.updateStatus', {
+    leadId: otherPhoneConsult.data.leadId, to: LEAD_STATUS.FOLLOWING, reason: '电话隔离用例跟进'
+  }, { token: adminToken })
+  await call(adminRouter, 'lead.updateStatus', {
+    leadId: otherPhoneConsult.data.leadId, to: LEAD_STATUS.MATCHED, reason: '电话隔离用例对接'
+  }, { token: adminToken })
+  const otherReveal = await call(adminRouter, 'contact.reveal', {
+    leadId: otherPhoneConsult.data.leadId, reason: '按咨询留存号码联系'
+  }, { token: adminToken })
+  ok(otherReveal.ok && otherReveal.data.phone === '13900139099', '⑧.1 释放的是本次咨询留存的号码')
 
   /* ⑨ 成交：线索与商品同步完结 */
   const dealt = await call(adminRouter, 'lead.updateStatus', {
@@ -1797,6 +1890,63 @@ section('11. 管理端用户数据（多维筛选 / 脱敏）')
 }
 
 /* ============================================================
+   22.1 举报处置：客服可受理回复，但联动下架必须握有内容下架权限
+   ============================================================ */
+{
+  const OWNER_R = { openid: 'o_report_owner', ip: '10.11.1.1' }
+  const REPORTER_R = { openid: 'o_report_reporter', ip: '10.11.1.2' }
+  await call(userRouter, 'auth.login', { nick: '被举报货主' }, OWNER_R)
+  await call(userRouter, 'profile.save', {
+    nick: '被举报货主', phone: '13500135000', realname: '举报甲',
+    subject: '举报测试科技有限公司', city: '北京'
+  }, OWNER_R)
+  await call(userRouter, 'auth.login', { nick: '举报人' }, REPORTER_R)
+  const rpProduct = await call(userRouter, 'product.publish', {
+    tradeMode: TRADE_MODES.SELL, title: '举报用例商品', cat: 'GPU 服务器',
+    brand: 'NVIDIA', model: 'A100 40G', qty: 2, price: '88000', cond: '二手',
+    tax: ['含税'], city: '北京', supply: '现货'
+  }, OWNER_R)
+  ok(rpProduct.ok, '举报用例商品已上架', JSON.stringify(rpProduct))
+  const rid = rpProduct.data.id
+  const report = await call(userRouter, 'report.create', {
+    type: '举报', targetType: 'product', targetId: rid, targetTitle: '举报用例商品',
+    content: '该商品图片与描述涉嫌虚假，请核实处理', contact: '13700137000'
+  }, REPORTER_R)
+  ok(report.ok && report.data.status === '待处理', '用户可提交商品举报')
+
+  const csDemoR = DEMO_ADMIN_ACCOUNTS.find((a) => a.key === 'cs')
+  const csLoginR = await call(adminRouter, 'admin.login', {
+    username: 'cs', password: csDemoR.password, otp: generateTotp(csDemoR.totpSecret, now())
+  }, {})
+  const csCtxR = { token: csLoginR.data.token }
+  const csOffline = await call(adminRouter, 'report.handle', {
+    id: report.data.id, status: '已处理', note: '客服尝试联动下架', targetAction: 'offline'
+  }, csCtxR)
+  ok(!csOffline.ok && csOffline.code === 'FORBIDDEN', '客服不能借举报处置下架商品（缺内容下架权限）')
+  const stillOn = await repo.get('products', rid)
+  ok(stillOn && stillOn.status === PRODUCT_STATUS.ON_SALE, '被拒后商品状态不变')
+
+  const csReply = await call(adminRouter, 'report.handle', {
+    id: report.data.id, status: '已处理', note: '已核实，商品信息已要求货主补充', targetAction: ''
+  }, csCtxR)
+  ok(csReply.ok, '客服可受理举报并回复用户（不动内容）')
+  const csReport = await repo.get('reports', report.data.id)
+  ok(csReport && csReport.status === '已处理' && csReport.targetAction === '', '客服处置仅记录结论，不联动内容')
+
+  const report2 = await call(userRouter, 'report.create', {
+    type: '举报', targetType: 'product', targetId: rid, targetTitle: '举报用例商品',
+    content: '同一商品再次举报，交由管理员下架核实', contact: '13700137000'
+  }, REPORTER_R)
+  const adminOffline = await call(adminRouter, 'report.handle', {
+    id: report2.data.id, status: '已处理', note: '管理员核实后下架', targetAction: 'offline'
+  }, { token: adminToken })
+  ok(adminOffline.ok && adminOffline.data.targetResult && adminOffline.data.targetResult.to === PRODUCT_STATUS.OFFLINE,
+    '管理员可按举报联动下架商品')
+  const offDoc = await repo.get('products', rid)
+  ok(offDoc && offDoc.status === PRODUCT_STATUS.OFFLINE, '下架后商品状态为已下架')
+}
+
+/* ============================================================
    23. 编辑商品 / 求购需求：属主可改、状态不变、终态不可改
    ============================================================ */
 section('23. 编辑商品与求购需求')
@@ -1816,15 +1966,28 @@ section('23. 编辑商品与求购需求')
     cat: 'GPU 服务器', brand: 'NVIDIA', model: 'H100 80G',
     qty: 8, minQty: 1, price: '248000', cond: '全新',
     tax: ['含税'], city: '北京', supply: '现货', deliver: '7 天内',
-    must: ['接受同台互验'], nego: [], flow: [],
+    must: ['接受同台互验'], nego: [], flow: [], phone: '13800138000',
     media: [{ name: '设备正面.png', type: 'image/png', size: 204800 }]
   }
   const pub = await call(userRouter, 'product.publish', baseProduct, OWNER)
   ok(pub.ok && pub.data.status === PRODUCT_STATUS.ON_SALE, '编辑用例商品已直接上架')
   const pid = pub.data.id
 
+  /* 发布页补充手机号：必须加密落库、仅属主可解密回填、管理端只得到脱敏值 */
+  const phoneDoc = await repo.get('products', pid)
+  ok(!!phoneDoc.ownerPhoneCipher && !!phoneDoc.ownerPhoneBidx, '发布补充手机号加密落库并生成盲索引')
+  ok(String(phoneDoc.ownerPhoneCipher).indexOf('13800138000') < 0, '落库手机号为密文而非明文')
+  const publicDetail = await call(userRouter, 'product.detail', { id: pid }, OTHER)
+  ok(publicDetail.ok && JSON.stringify(publicDetail.data).indexOf('13800138000') < 0,
+    '公开详情不下发货主手机号明文')
+
   const backfill = await call(userRouter, 'mine.publish.detail', { id: pid, kind: 'product' }, OWNER)
   ok(backfill.ok && backfill.data.id === pid, '属主可读取编辑回填数据')
+  ok(backfill.data.phone === '13800138000', '编辑回填带回货主补充手机号（属主解密）')
+  const adminDetail = await call(adminRouter, 'product.detail', { id: pid }, { token: adminToken })
+  ok(adminDetail.ok && adminDetail.data.product && adminDetail.data.product.ownerPhoneMasked === '138****8000',
+    '管理端审核详情展示脱敏手机号')
+  ok(JSON.stringify(adminDetail.data).indexOf('13800138000') < 0, '管理端详情不下发明文手机号')
   ok((backfill.data.media || []).length === 1, '回填带回媒体等对外投影没有的字段')
   ok(typeof backfill.data.must !== 'undefined' && backfill.data.must.length === 1, '回填带回必须条件')
   ok(JSON.stringify(backfill.data).indexOf('ownerId') < 0, '回填不下发 ownerId')
@@ -1891,9 +2054,9 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
   const POOR = { openid: 'o_mk_poor', ip: '10.20.0.3' }
 
   await call(userRouter, 'auth.login', { nick: '委托方' }, AGENT)
-  await call(userRouter, 'profile.save', { nick: '委托方', phone: '13900002222', realname: '赵敏', exposure: 'open' }, AGENT)
+  await call(userRouter, 'profile.save', { nick: '委托方', phone: '13900002222', realname: '赵敏', subject: '委托测试有限公司', position: '采购经理', exposure: 'open' }, AGENT)
   await call(userRouter, 'auth.login', { nick: '库存方' }, SEEKER)
-  await call(userRouter, 'profile.save', { nick: '库存方', phone: '13700003333', realname: '钱进', exposure: 'open' }, SEEKER)
+  await call(userRouter, 'profile.save', { nick: '库存方', phone: '13700003333', realname: '钱进', subject: '库存测试有限公司', position: '采购经理', exposure: 'open' }, SEEKER)
   await call(userRouter, 'auth.login', { nick: '无库存' }, POOR)
   await call(userRouter, 'profile.save', { nick: '无库存', phone: '13600004444', realname: '孙空' }, POOR)
 
@@ -1990,6 +2153,12 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
   ok(bigMismatch.ok, '授权书电话与联系人电话不一致不再拦截提交')
   const bigMismatchDoc = bigMismatch.ok ? await repo.get('agencies', bigMismatch.data.id) : {}
   ok(bigMismatchDoc.authPhoneMatched === false, '不一致仅落库标记，交由客服审核核验')
+  ok(typeof bigMismatchDoc.authPhoneCipher === 'string' && bigMismatchDoc.authPhoneCipher &&
+    JSON.stringify(bigMismatchDoc).indexOf('13800000000') < 0 && bigMismatchDoc.authPhoneMasked === '138****0000',
+    '授权书联系人电话加密落库并保留脱敏值')
+  const bigMismatchDetail = await call(userRouter, 'agency.detail', { id: bigMismatch.data.id }, BIGAGENT)
+  ok(bigMismatchDetail.ok && bigMismatchDetail.data.authPhone === '13800000000',
+    '属主重新编辑时可回填授权书联系人电话（解密）')
   if (bigMismatch.ok) await call(userRouter, 'agency.cancel', { id: bigMismatch.data.id }, BIGAGENT)
 
   const bigOk = await call(userRouter, 'agency.submit', Object.assign({}, bigBase, { authPhone: '13900002222' }), BIGAGENT)
@@ -2011,6 +2180,7 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
     item: 'A100 40G PCIE',
     qty: 1,
     price: 50000,
+    currency: 'USD',
     city: '广州',
     subjectType: 'person',
     subject: '赵敏',
@@ -2023,6 +2193,15 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
     ]
   }, AGENT)
   ok(agencyCancel.ok && agencyCancel.data.canCancel === true, '未缴费的委托可自助撤销')
+  ok(agencyCancel.data.currency === 'USD' && agencyCancel.data.currencySymbol === '$' &&
+    agencyCancel.data.currencyLabel === '美元', '委托币种随单落库并回显（美元）')
+  const cancelDoc = await repo.get('agencies', agencyCancel.data.id)
+  ok(cancelDoc.currency === 'USD' && cancelDoc.currencySymbol === '$' && cancelDoc.currencyLabel === '美元',
+    '委托币种持久化到委托单，详情与账单不会回退人民币')
+  const adminAgencyRow = (await call(adminRouter, 'agency.list', { keyword: 'A100 40G PCIE' },
+    { token: adminToken })).data.items.filter((row) => row.id === agencyCancel.data.id)[0]
+  ok(!!adminAgencyRow && adminAgencyRow.authPhoneMasked === '139****2222' &&
+    adminAgencyRow.currencyLabel === '美元', '管理端委托列表展示授权书电话（脱敏）与币种')
   const cancelByOther = await call(userRouter, 'agency.cancel', { id: agencyCancel.data.id }, SEEKER)
   ok(!cancelByOther.ok && cancelByOther.code === 'FORBIDDEN', '非属主不能撤销他人委托')
   const cancelOk = await call(userRouter, 'agency.cancel', { id: agencyCancel.data.id }, AGENT)
@@ -2099,11 +2278,10 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
 
   /* 成交后账单业务类型为「租赁服务费」，金额等于委托方应承担的半个月租金 */
   await call(adminRouter, 'agency.review', { id: rentPub.data.id, decision: '通过' }, csCtxMk)
-  await call(adminRouter, 'agency.close', {
+  const rentDeal = await call(adminRouter, 'agency.close', {
     id: rentPub.data.id, dealt: true, dealAmount: 120000
   }, { token: adminToken })
-  const rentDeal = await call(userRouter, 'agency.dealConfirm', { id: rentPub.data.id }, RENTAGENT)
-  ok(rentDeal.ok && rentDeal.data.status === '已成交', '租赁委托确认成交')
+  ok(rentDeal.ok && rentDeal.data.status === '已成交', '平台直接确认租赁委托成交（无需委托方确认）')
   const rentBill = (await repo.find('payments', { agencyId: rentPub.data.id }, { limit: 1 }))[0]
   ok(!!rentBill && rentBill.bizType === '租赁服务费' && rentBill.amount === 60000,
     '租赁成交后账单业务类型为「租赁服务费」，金额为半个月租金 6 万')
@@ -2230,6 +2408,21 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
   ok(!('raw' in quoteDoc) && quoteRaw.indexOf('原始长文本') < 0, '粘贴报价原始长文本不落库')
   ok(quoteRaw.indexOf('13900002222') < 0, '粘贴报价中的手机号被拒绝 / 不入库')
 
+  /* 客户端粘贴解析：支持「万」量级；没写城市不生成占位假城市；0 价不允许落库 */
+  const { parseQuoteLine } = require(path.join(here, '..', 'miniprogram', 'utils', 'board.js'))
+  const wanRow = parseQuoteLine('H100 SXM 22万 8张 上海')
+  ok(!!wanRow && wanRow.price === 220000, '报价解析支持「万」量级（22万 → 220000）')
+  ok(!!wanRow && wanRow.model.indexOf('22万') < 0 && wanRow.city === '上海' && wanRow.qty === '8',
+    '万级价格不混入型号，数量与城市解析正确')
+  const yuanRow = parseQuoteLine('DDR5 64G 6400 金百达 ¥1850 200根 杭州')
+  ok(!!yuanRow && yuanRow.price === 1850 && yuanRow.city === '杭州', '报价解析兼容 ¥ 元级价格')
+  const noCityRow = parseQuoteLine('A100 80G PCIE 96000元')
+  ok(!!noCityRow && noCityRow.price === 96000 && noCityRow.city === '', '未写城市时留空，不生成占位城市分组')
+  const zeroQuote = await call(userRouter, 'quote.paste', {
+    items: [{ cat: '其他', model: 'H100 80G SXM', price: 0, city: '深圳' }]
+  }, SEEKER)
+  ok(!zeroQuote.ok && zeroQuote.code === 'VALIDATION', '0 价报价被拒绝落库（避免货盘假盘口）')
+
   const boardSell = await call(userRouter, 'agency.board', {}, SEEKER)
   const sellRow = boardSell.data.items.find((i) => i.model === 'H100 80G SXM')
   ok(!!sellRow && sellRow.sellPrice === 230000, '现货盘聚合粘贴报价卖价')
@@ -2238,6 +2431,22 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
   ok(!!sellRow && Number(sellRow.priceLow) > 0 &&
     Number(sellRow.priceLow) <= Number(sellRow.priceHigh) && !!sellRow.confidenceText,
     '价格水平给出参考区间与置信度')
+
+  /* 求购需求接入买方盘口：预算取上限、数量累加，且不泄漏求购方身份 */
+  const buyDemand = await call(userRouter, 'demand.publish', {
+    tradeMode: TRADE_MODES.BUY,
+    title: '现货盘买方需求 H100',
+    cat: 'GPU 加速卡', brand: 'NVIDIA', model: 'H100 80G SXM',
+    qty: 6, budget: '236000', tax: ['含税'],
+    city: '深圳', supply: '现货', cond: '全新'
+  }, OWNER)
+  ok(buyDemand.ok, '求购需求发布成功（现货盘买方数据源）')
+  const boardBuy = await call(userRouter, 'agency.board', {}, SEEKER)
+  const buyRow = boardBuy.data.items.find((i) => i.model === 'H100 80G SXM')
+  ok(!!buyRow && Number(buyRow.buyPrice) >= 236000, '现货盘买方价取自求购预算（不再恒为空）')
+  const buyRowText = JSON.stringify(buyRow || {})
+  ok(buyRowText.indexOf('o_user_owner') < 0 && buyRowText.indexOf('139') < 0,
+    '现货盘买方聚合不泄漏求购方身份与联系方式')
 
   const priceLevels = await call(adminRouter, 'price.levels', { limit: 50 }, csCtxMk)
   ok(priceLevels.ok && priceLevels.data.items.some((i) => i.model === 'H100 80G SXM' && i.priceLevel > 0),
@@ -2255,6 +2464,27 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
   const userNews0 = await call(userRouter, 'news.list', {}, SEEKER)
   ok(userNews0.data.items.some((n) => n.title === 'H100 现货行情周报'), '发布后的资讯立即对用户可见')
 
+  /* 评论链路：可评论 / 回复；删除根评论级联隐藏回复；下架后禁止读评论 */
+  const cRoot = await call(userRouter, 'news.comment.add', {
+    id: newsSub.data.id,
+    content: '这条行情对采购很有参考价值'
+  }, SEEKER)
+  ok(cRoot.ok && !!cRoot.data.id, '已发布资讯可发表评论')
+  const cReply = await call(userRouter, 'news.comment.add', {
+    id: newsSub.data.id,
+    content: '同感，本周价格确实回落了',
+    parentId: cRoot.data.id
+  }, SEEKER)
+  ok(cReply.ok, '可回复已有评论')
+  const cList0 = await call(userRouter, 'news.comment.list', { id: newsSub.data.id }, SEEKER)
+  ok(cList0.ok && cList0.data.total === 2 && cList0.data.items.length === 1 &&
+    cList0.data.items[0].replies.length === 1, '评论列表返回根评论及其回复')
+  const cDel = await call(userRouter, 'news.comment.delete', { id: cRoot.data.id }, SEEKER)
+  ok(cDel.ok, '可删除自己的评论')
+  const cList1 = await call(userRouter, 'news.comment.list', { id: newsSub.data.id }, SEEKER)
+  ok(cList1.ok && cList1.data.total === 0 && cList1.data.items.length === 0,
+    '删除根评论后回复一并隐藏，评论数归零')
+
   const badNews = await call(userRouter, 'news.submit', {
     title: '测试违禁词拦截',
     content: '这里写着赌博和色情等违禁内容，应该被系统自动驳回。',
@@ -2271,6 +2501,9 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
 
   const newsOff = await call(adminRouter, 'news.offline', { id: newsSub.data.id, reason: '内容过期' }, { token: adminToken })
   ok(newsOff.ok && newsOff.data.status === '已下架', '管理员可下架已发布资讯')
+
+  const closedComments = await call(userRouter, 'news.comment.list', { id: newsSub.data.id }, SEEKER)
+  ok(!closedComments.ok && closedComments.code === 'NOT_FOUND', '已下架资讯不再开放评论读取')
 
   const userNews2 = await call(userRouter, 'news.list', {}, SEEKER)
   ok(!userNews2.data.items.some((n) => n.title === 'H100 现货行情周报'), '已下架资讯不再对外展示')
@@ -2334,23 +2567,50 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
     updatedAt: now()
   })
 
+  /* 代售＝平台代卖，匹配需求方：SEEKER 发布一条能对上代售委托的求购 */
+  await repo.insert('demands', {
+    id: 'd_mk_seeker_h100',
+    ownerId: SEEKER.openid,
+    tradeMode: TRADE_MODES.BUY,
+    title: '求购 H100',
+    cat: '其他',
+    model: 'H100 80G SXM',
+    qty: 1,
+    budget: 200000,
+    city: '深圳',
+    status: DEMAND_STATUS.OPEN,
+    deleted: false,
+    createdAt: now(),
+    updatedAt: now()
+  })
+
   const list0 = await call(userRouter, 'biz.list', {}, SEEKER)
   const mkItem0 = list0.data.items.find((i) => i.type === 'agency' && i.id === poolAgency.data.id)
-  ok(!!mkItem0 && mkItem0.matched === true, '商机池按我的库存匹配出公开代售委托')
-  /* 代采委托由平台代为对接、联系缴费，进入商机池但不可自助领取 */
+  ok(!!mkItem0 && mkItem0.matched === true && mkItem0.matchVia === '我的需求',
+    '商机池按我发布的需求匹配出公开代售委托')
+  /* 代采 / 代售统一走「先确认交易流程条件 → 领取 → 平台对接」 */
   const buyItem0 = list0.data.items.find((i) => i.type === 'agency' && i.id === agencyPub.data.id)
-  ok(!!buyItem0, '1000 万元以下的公开代采委托进入商机池')
+  ok(!!buyItem0 && buyItem0.matchVia === '我的库存', '1000 万元以下的公开代采委托按我的库存进入商机池')
   ok(!!buyItem0 && buyItem0.canClaim === false && buyItem0.contact === '平台代为对接',
-    '代采委托由平台代为对接，不开放自助领取')
-  ok(mkItem0.contactVisible === false && mkItem0.canClaim === false, '未开通时只能看到脱敏信息')
+    '未开通时代采委托不可领取，只提示平台代为对接')
+  ok(mkItem0.contactVisible === false && mkItem0.canClaim === false, '未开通时联系方式与领取能力锁定')
+  ok(buyItem0.model === 'H100 80G SXM' && buyItem0.qty === 2 && buyItem0.priceText.includes('2 万'),
+    '委托未领取也直接展示型号、数量与金额', JSON.stringify({ model: buyItem0.model, qty: buyItem0.qty, price: buyItem0.priceText }))
+  ok(!('masked' in buyItem0) && !('masked' in mkItem0), '委托不再有「领取后可见」的脱敏字段')
+  ok(Array.isArray(buyItem0.info) && buyItem0.info.some((r) => r.k === '所在城市') &&
+    buyItem0.info.some((r) => r.k === '委托数量'),
+    '未领取的委托同样下发全部信息（含数量）', JSON.stringify(buyItem0.info))
   /* 代采 / 代售只在商机池展示，不再提供普通信息流 */
   const feedSell = await call(userRouter, 'agency.feed', { side: 'sell' }, SEEKER)
   ok(!feedSell.ok && feedSell.code === 'NOT_FOUND', '代采 / 代售不再进入普通信息流')
   ok(!list0.data.items.some((i) => i.type === 'demand' && i.id === 'd_mk_open'),
     '库存不满足的求购不进入商机列表')
 
-  const apply = await call(userRouter, 'biz.apply', { note: '需要查看联系方式' }, SEEKER)
-  ok(apply.ok && apply.data.status === '待确认', '商机开通申请进入待确认')
+  const statusBefore = await call(userRouter, 'biz.status', {}, SEEKER)
+  ok(statusBefore.ok && statusBefore.data.status === '未开通' && statusBefore.data.unlocked === false,
+    '未开通时商机权限为未开通且不可查看联系方式')
+  const applyGone = await call(userRouter, 'biz.apply', { note: '需要查看联系方式' }, SEEKER)
+  ok(!applyGone.ok && applyGone.code === 'NOT_FOUND', '人工商机申请入口已下线，统一走微信支付开通')
 
   const csGrant = await call(adminRouter, 'biz.grant', { uid: SEEKER.openid, note: '微信收款 99 元' }, csCtxMk)
   ok(csGrant.ok && csGrant.data.status === '已开通', '客服确认收款后开通商机权限')
@@ -2376,23 +2636,86 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
   const status1 = await call(userRouter, 'biz.status', {}, SEEKER)
   ok(status1.ok && status1.data.unlocked === true, '开通后商机权限生效')
 
-  /* 代采 / 代售均由平台代为对接并联系缴费，开通商机后也不开放自助领取 */
-  const claim1 = await call(userRouter, 'biz.claim', { targetType: 'agency', agencyId: poolAgency.data.id }, SEEKER)
-  ok(!claim1.ok && String(claim1.message || '').includes('平台代为对接'), '代售委托不支持自助领取，由平台对接缴费')
-  const buyClaim = await call(userRouter, 'biz.claim', { targetType: 'agency', agencyId: agencyPub.data.id }, SEEKER)
-  ok(!buyClaim.ok && String(buyClaim.message || '').includes('平台代为对接'), '代采委托不支持自助领取，由平台对接缴费')
+  /* 代采 / 代售：未领取前不允许直接申请平台对接 */
+  const consultBeforeClaim = await call(userRouter, 'biz.consult', { agencyId: agencyPub.data.id }, SEEKER)
+  ok(!consultBeforeClaim.ok && consultBeforeClaim.code === 'CONFLICT',
+    '未领取代采委托时不能提交平台对接申请')
+
+  /* 发布者的必须条件由服务端复核：不带条件直接领取要被拦下 */
+  const claimNoConds = await claimOf({
+    targetType: 'agency', agencyId: poolAgency.data.id, conds: false
+  }, SEEKER)
+  ok(!claimNoConds.ok && claimNoConds.code === 'CONFLICT' && String(claimNoConds.message || '').includes('必须条件'),
+    '未逐项确认发布者必须条件时领取被拒')
+
+  const claim1 = await claimOf({ targetType: 'agency', agencyId: poolAgency.data.id }, SEEKER)
+  ok(claim1.ok, '代售委托可确认交易条件后自助领取')
+  const buyClaim = await claimOf({ targetType: 'agency', agencyId: agencyPub.data.id }, SEEKER)
+  ok(buyClaim.ok, '代采委托可确认交易条件后自助领取')
   const listAgency1 = await call(userRouter, 'biz.list', {}, SEEKER)
   const agencyItem1 = listAgency1.data.items.find((i) => i.type === 'agency' && i.id === poolAgency.data.id)
-  ok(!!agencyItem1 && agencyItem1.contact === '平台代为对接' && agencyItem1.contactVisible === false,
-    '开通商机后委托仍显示「平台代为对接」，不下发联系方式')
+  ok(!!agencyItem1 && agencyItem1.claimed === true && agencyItem1.contact === '平台代为对接' &&
+    agencyItem1.contactVisible === false, '领取后委托显示「平台代为对接」，联系方式仍由平台居中')
+  ok(agencyItem1.org === '平台' && agencyItem1.media.length === 0,
+    '委托方统一显示为平台，营业执照 / 授权书等材料不下发商机池')
+  ok(agencyItem1.model === 'H100 80G SXM' && agencyItem1.priceText.includes('20 万'),
+    '委托型号与金额全程可见（领取前后一致）', JSON.stringify({ model: agencyItem1.model, price: agencyItem1.priceText }))
+  ok(Array.isArray(agencyItem1.info) &&
+    agencyItem1.info.some((r) => r.k === '委托数量' && r.v === '1 台') &&
+    agencyItem1.info.some((r) => r.k === '所在城市' && r.v === '深圳'),
+    '商机详情下发发布者设定的全部信息（数量 / 城市）', JSON.stringify(agencyItem1.info))
 
-  /* 代采 / 代售进商机池后只能「联系平台」：生成客服工单，平台核实后再推送采购方 */
+  /* 不做独家锁：委托对匹配会员始终可见，其他会员也可以领取并申请平台对接 */
+  const RIVAL = { openid: 'o_user_rival', ip: '10.0.9.9' }
+  await call(userRouter, 'auth.login', { nick: '竞争会员' }, RIVAL)
+  await ensureProfileReady(userRouter, RIVAL)
+  await call(userRouter, 'profile.save', {
+    nick: '竞争会员', phone: '13900009999', realname: '竞争会员',
+    subject: '竞争主体商贸有限公司', position: '采购经理', exposure: 'open'
+  }, RIVAL)
+  await call(userRouter, 'stock.save', {
+    cat: '其他', model: 'H100 80G SXM', qty: 2, price: 205000, city: '深圳'
+  }, RIVAL)
+  /* 代售匹配需求方：竞争会员也要有能对上的需求，验证多条领取记录并存 */
+  await repo.insert('demands', {
+    id: 'd_rival_h100',
+    ownerId: RIVAL.openid,
+    tradeMode: TRADE_MODES.BUY,
+    title: '求购 H100',
+    cat: '其他',
+    model: 'H100 80G SXM',
+    qty: 1,
+    budget: 200000,
+    city: '深圳',
+    status: DEMAND_STATUS.OPEN,
+    deleted: false,
+    createdAt: now(),
+    updatedAt: now()
+  })
+  await call(adminRouter, 'biz.grant', { uid: RIVAL.openid, note: '微信收款 99 元' }, csCtxMk)
+  const rivalList = await call(userRouter, 'biz.list', {}, RIVAL)
+  const rivalItem = rivalList.data.items.find((i) => i.type === 'agency' && i.id === poolAgency.data.id)
+  ok(!!rivalItem, '已被他人领取的委托仍出现在其他匹配会员的商机池')
+  ok(rivalItem.claimed === false && rivalItem.canClaim === true && rivalItem.org === '平台',
+    '他人领取不影响本人领取，且委托方统一显示为平台', JSON.stringify(rivalItem))
+  const rivalClaim = await claimOf({ targetType: 'agency', agencyId: poolAgency.data.id }, RIVAL)
+  ok(rivalClaim.ok && rivalClaim.data.claimCount >= 2,
+    '多个匹配会员可以领取同一委托', JSON.stringify(rivalClaim))
+  const rivalConsult = await call(userRouter, 'biz.consult', { agencyId: poolAgency.data.id }, RIVAL)
+  ok(rivalConsult.ok, '领取后多个会员都可以申请平台对接')
+
+  /* 代采 / 代售领取即生成绑定工单；「联系平台」复用同一张工单，不再重复建单 */
   const consult1 = await call(userRouter, 'biz.consult', { agencyId: agencyPub.data.id }, SEEKER)
-  ok(consult1.ok && consult1.data.consulted === true && consult1.data.already === false,
-    '代采委托可提交平台对接申请')
+  ok(consult1.ok && consult1.data.consulted === true && consult1.data.already === true,
+    '领取时已自动建单，代采委托提交对接申请复用同一张工单')
   const consultLead = await repo.get('leads', consult1.data.leadId)
-  ok(!!consultLead && consultLead.targetType === 'agency' && consultLead.status === LEAD_STATUS.PENDING,
-    '对接申请生成待处理客服工单')
+  ok(!!consultLead && consultLead.targetType === 'agency' && consultLead.agencyId === agencyPub.data.id &&
+    consultLead.status === LEAD_STATUS.PENDING && consultLead.ticketState === TICKET_STATE.TICKETED &&
+    consultLead.serviceStage === 'communicating' && consultLead.threadId === consultLead.id,
+    '领取生成的工单与商机绑定并进入客服待领取', JSON.stringify(consultLead && {
+      targetType: consultLead.targetType, agencyId: consultLead.agencyId, ticketState: consultLead.ticketState,
+      serviceStage: consultLead.serviceStage
+    }))
   const consult2 = await call(userRouter, 'biz.consult', { agencyId: agencyPub.data.id }, SEEKER)
   ok(consult2.ok && consult2.data.already === true && consult2.data.leadId === consult1.data.leadId,
     '重复提交对接申请返回同一张工单')
@@ -2442,12 +2765,12 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
   const listCat = await call(userRouter, 'biz.list', {}, SEEKER)
   const catItem = listCat.data.items.find((i) => i.type === 'demand' && i.id === 'd_mk_cat_only')
   ok(!!catItem && catItem.matched === true && catItem.canClaim === true, '未填型号的求购需求按品类命中，可正常领取')
-  const catClaim = await call(userRouter, 'biz.claim', { targetType: 'demand', demandId: 'd_mk_cat_only' }, SEEKER)
+  const catClaim = await claimOf({ targetType: 'demand', demandId: 'd_mk_cat_only' }, SEEKER)
   ok(catClaim.ok && catClaim.data.already === false, '需求方未填型号时领取成功')
 
   /* 有权限但库存不匹配：仍不能领取需求联系方式 */
   await call(adminRouter, 'biz.grant', { uid: POOR.openid }, csCtxMk)
-  const poorClaim = await call(userRouter, 'biz.claim', { targetType: 'demand', demandId: 'd_mk_open' }, POOR)
+  const poorClaim = await claimOf({ targetType: 'demand', demandId: 'd_mk_open' }, POOR)
   ok(!poorClaim.ok && poorClaim.code === 'FORBIDDEN', '库存不匹配时领取被拒')
 
   const list1 = await call(userRouter, 'biz.list', {}, SEEKER)
@@ -2505,30 +2828,33 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
     chatMsgs.some((m) => m.kind === 'video' && m.video.indexOf('https://') === 0),
   '委托会话按时间返回文本与图片 / 视频')
 
+  /* 平台直接确认成交：不再有「平台发起 → 委托方确认」两步，委托方只收通知 */
   const closed = await call(adminRouter, 'agency.close', { id: agencyPub.data.id, dealt: true, dealAmount: 250000 }, { token: adminToken })
-  ok(closed.ok && closed.data.status === '待确认成交' && closed.data.dealAmount === 250000 &&
-    closed.data.dealProposedAt > 0 && !!closed.data.dealProposedBy,
-  '管理员发起成交后进入「待确认成交」，登记成交金额与处理人')
+  ok(closed.ok && closed.data.status === '已成交' && closed.data.dealAmount === 250000 &&
+    closed.data.dealConfirmedAt > 0 && !!closed.data.dealConfirmedBy,
+  '平台确认成交：直接置为已成交并留下金额与确认人')
 
-  /* 成交两步确认：平台发起 → 委托方确认，确认后才算成交并生成后付费账单 */
-  const receiptBeforeDeal = await call(userRouter, 'agency.receipt', { id: agencyPub.data.id }, AGENT)
-  ok(!receiptBeforeDeal.ok && receiptBeforeDeal.code === 'CONFLICT', '委托方未确认成交前不能确认收货')
-  const dealByOther = await call(userRouter, 'agency.dealConfirm', { id: agencyPub.data.id }, SEEKER)
-  ok(!dealByOther.ok && dealByOther.code === 'FORBIDDEN', '非委托方不能确认成交')
-  const minePending = await call(userRouter, 'agency.mine', {}, AGENT)
-  const pendingItem = minePending.data.items.find((i) => i.id === agencyPub.data.id)
-  ok(!!pendingItem && pendingItem.canConfirmDeal === true && pendingItem.statusText === '待确认成交' &&
-    pendingItem.flowNodes.some((n) => n.label === '待确认成交'), '我的委托详情带确认成交入口与流程节点')
+  const dealByOwner = await call(userRouter, 'agency.dealConfirm', { id: agencyPub.data.id }, AGENT)
+  ok(!dealByOwner.ok, '委托方确认成交接口已下线')
+  const receiptGone = await call(userRouter, 'agency.receipt', { id: agencyPub.data.id }, AGENT)
+  ok(!receiptGone.ok, '委托方确认收货接口已下线')
 
-  const dealConfirmed = await call(userRouter, 'agency.dealConfirm', { id: agencyPub.data.id }, AGENT)
-  ok(dealConfirmed.ok && dealConfirmed.data.status === '已成交' && dealConfirmed.data.dealConfirmedAt > 0,
-    '委托方确认后委托才算成交')
-  ok(dealConfirmed.data.feeStatus === 'pending' && dealConfirmed.data.feeDueAt > 0 &&
-    dealConfirmed.data.feeStatusText.indexOf('前到账') > -1, '成交后生成服务费账单并给出应到账日')
+  const mineDealt = await call(userRouter, 'agency.mine', {}, AGENT)
+  const dealtItem = mineDealt.data.items.find((i) => i.id === agencyPub.data.id)
+  ok(!!dealtItem && dealtItem.statusText === '已成交' && dealtItem.canConfirmDeal !== true &&
+    dealtItem.canConfirmReceipt !== true && !!dealtItem.dealAmountText &&
+    !!dealtItem.dealConfirmedAtText && !!dealtItem.dealConfirmedBy &&
+    dealtItem.progress.some((p) => p.key === 'dealt' && p.done),
+  '我的委托展示平台确认成交信息与进度，不再有委托方确认入口')
+  ok(dealtItem.flowNodes.some((n) => n.label === '平台确认成交') &&
+    !dealtItem.flowNodes.some((n) => n.label === '待确认成交'), '流程节点展示「平台确认成交」')
+  ok(dealtItem.feeStatus === 'pending' && dealtItem.feeDueAt > 0 &&
+    dealtItem.feeStatusText.indexOf('前到账') > -1, '成交后生成服务费账单并给出应到账日')
   const feeBill = (await repo.find('payments', { agencyId: agencyPub.data.id }, { limit: 1 }))[0]
-  ok(!!feeBill && feeBill.amount === 400 && feeBill.bizType === '代采服务费' &&
-    feeBill.status === '待确认', '后付费账单为待确认收款单，金额等于服务费')
-  const workdayDue = dealConfirmed.data.feeDueAt
+  /* 挂牌 4 万、议价成交 25 万：服务费按成交金额重算（1% = 2500，未触顶 5000） */
+  ok(!!feeBill && feeBill.amount === 2500 && feeBill.bizType === '代采服务费' &&
+    feeBill.status === '待确认', '后付费账单为待确认收款单，金额按成交金额重算')
+  const workdayDue = dealtItem.feeDueAt
   ok(workdayDue === (function () {
     let day = Math.floor((now() + 8 * 3600 * 1000) / 86400000) * 86400000 - 8 * 3600 * 1000
     let left = 3
@@ -2540,29 +2866,33 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
     return day + 86400000 - 1
   })(), '应到账日按打款后 3 个工作日（跳过周六日）计算')
 
-  const mineDealt = await call(userRouter, 'agency.mine', {}, AGENT)
-  const dealtItem = mineDealt.data.items.find((i) => i.id === agencyPub.data.id)
-  ok(!!dealtItem && dealtItem.canConfirmReceipt === true && !!dealtItem.dealAmountText &&
-    dealtItem.progress.some((p) => p.key === 'dealt' && p.done), '成交后我的委托展示成交金额、确认收货入口与进度')
-  const receipt = await call(userRouter, 'agency.receipt', { id: agencyPub.data.id }, AGENT)
-  ok(receipt.ok && receipt.data.status === '已完成' && !!receipt.data.receiptText, '委托方确认收货后委托完成')
-  ok(receipt.data.flowNodes.some((n) => n.label === '已成交') &&
-    receipt.data.flowNodes.some((n) => n.label === '已完成') &&
-    !JSON.stringify(receipt.data.flowNodes).includes('平台'), '流程节点按时间展示且不出现平台内部动作文案')
-  const receiptAgain = await call(userRouter, 'agency.receipt', { id: agencyPub.data.id }, AGENT)
-  ok(!receiptAgain.ok && receiptAgain.code === 'CONFLICT', '已完成委托不能重复确认收货')
+  /* 服务费未到账前不能确认完成：收尾必须发生在收款之后 */
+  const earlyComplete = await call(adminRouter, 'agency.complete', { id: agencyPub.data.id }, { token: adminToken })
+  ok(!earlyComplete.ok && earlyComplete.code === 'CONFLICT', '服务费未到账不能确认完成')
 
   /* 财务确认服务费到账后回写委托单 */
   const paidBill = (await repo.find('payments', { agencyId: agencyPub.data.id }, { limit: 1 }))[0]
-  const financeOk = await call(adminRouter, 'payment.confirm', { id: paidBill.id }, { token: adminToken })
+  const financeOk = await call(adminRouter, 'payment.feeConfirm', { id: paidBill.id }, { token: adminToken })
   ok(financeOk.ok, '财务确认服务费到账')
   const feePaidDoc = await repo.get('agencies', agencyPub.data.id)
   ok(feePaidDoc.feeStatus === 'paid' && feePaidDoc.feePaidAt > 0,
     '收款单确认后回写委托单 feeStatus=paid 与到账时间')
   const minePaid = await call(userRouter, 'agency.mine', {}, AGENT)
   const paidItem = minePaid.data.items.find((i) => i.id === agencyPub.data.id)
-  ok(!!paidItem && paidItem.feeStatusText === '已到账' && paidItem.flowNodes.some((n) => n.label === '已付款'),
-    '我的委托展示服务费已到账与已付款节点')
+  ok(!!paidItem && paidItem.feeStatusText === '已到账' && paidItem.feeStatus === 'paid' &&
+    paidItem.flowNodes.some((n) => n.label === '服务费到账'),
+    '我的委托展示服务费已到账节点，且不再有上报支付入口')
+
+  /* 交易收尾：服务费到账后平台确认完成，委托归档 */
+  const doneRes = await call(adminRouter, 'agency.complete', { id: agencyPub.data.id }, { token: adminToken })
+  ok(doneRes.ok && doneRes.data.status === '已完成' && doneRes.data.completedAt > 0 &&
+    !!doneRes.data.completedBy, '服务费到账后平台确认完成，交易结束')
+  const doneAgain = await call(adminRouter, 'agency.complete', { id: agencyPub.data.id }, { token: adminToken })
+  ok(!doneAgain.ok && doneAgain.code === 'CONFLICT', '已完成委托不能重复确认完成')
+  const mineDone = await call(userRouter, 'agency.mine', {}, AGENT)
+  const doneItem = mineDone.data.items.find((i) => i.id === agencyPub.data.id)
+  ok(!!doneItem && doneItem.progress.some((p) => p.key === 'done' && p.done) &&
+    doneItem.flowNodes.some((n) => n.label === '已完成'), '我的委托进度以「已完成」收尾')
 
   /* 到截止时间仍未成交：读取时惰性关闭，已成交 / 已完成不受影响 */
   const EXPIRE_USER = { openid: 'o_user_expire', ip: '10.0.0.99' }
@@ -2589,13 +2919,13 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
   ok(expiredDetail.ok && expiredDetail.data.status === '已关闭' && expiredDetail.data.expired === true &&
     expiredDetail.data.closeReason === '已到截止时间' && expiredDetail.data.closedAt > 0,
   '过截止时间仍未成交的委托在读取时自动关闭并记录原因')
-  ok(expiredDetail.data.canConfirmDeal === false &&
-    expiredDetail.data.flowNodes.some((n) => n.label === '已关闭'), '到期委托不再提供成交确认入口')
+  ok(!expiredDetail.data.canConfirmDeal &&
+    expiredDetail.data.flowNodes.some((n) => n.label === '已关闭'), '到期委托不再提供任何成交入口')
 
   /* 并发兜底：同一账号同时提交 10 条，进行中的委托不得超过 5 条 */
   const BURST = { openid: 'o_mk_agent_burst', ip: '10.20.0.9' }
   await call(userRouter, 'auth.login', { nick: '并发委托方' }, BURST)
-  await call(userRouter, 'profile.save', { nick: '并发委托方', phone: '13500005555', realname: '周齐', exposure: 'open' }, BURST)
+  await call(userRouter, 'profile.save', { nick: '并发委托方', phone: '13500005555', realname: '周齐', subject: '并发委托有限公司', position: '采购经理', exposure: 'open' }, BURST)
   const burstBase = {
     side: 'buy', mode: TRADE_MODES.BUY, rental: false, term: [], qty: 1, price: 20000,
     amount: 20000, detail: '并发提交校验', city: '深圳', subjectType: 'company',
@@ -2619,15 +2949,15 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
   })
   ok(burstOkCount === 5 && burstActive === 5, '并发提交 10 条代采委托：每日 5 条限流生效，仅 5 条落库')
 
-  /* 并发确认成交：同一委托只生成一张服务费账单 */
+  /* 并发确认成交：平台直接确认（管理员），同一委托只生成一张服务费账单 */
   const feeAgency = burst.filter((r) => r.ok)[0].data
   const burstConfirm = await call(adminRouter, 'agency.review', { id: feeAgency.id, decision: '通过' }, csCtxMk)
   ok(burstConfirm.ok && burstConfirm.data.status === '已上架', '并发用例的委托可正常审核上架' + (burstConfirm.ok ? '' : `（${burstConfirm.code} ${burstConfirm.message}）`))
   const burstClose = await call(adminRouter, 'agency.close', { id: feeAgency.id, dealt: true, dealAmount: 30000 }, { token: adminToken })
-  ok(burstClose.ok && burstClose.data.status === '待确认成交', '并发用例的委托可正常发起成交' + (burstClose.ok ? '' : `（${burstClose.code} ${burstClose.message}）`))
+  ok(burstClose.ok && burstClose.data.status === '已成交', '平台可直接确认成交（无需委托方确认）' + (burstClose.ok ? '' : `（${burstClose.code} ${burstClose.message}）`))
   const burstDeals = await Promise.all([
-    call(userRouter, 'agency.dealConfirm', { id: feeAgency.id }, BURST),
-    call(userRouter, 'agency.dealConfirm', { id: feeAgency.id }, BURST)
+    call(adminRouter, 'agency.close', { id: feeAgency.id, dealt: true, dealAmount: 30000 }, { token: adminToken }),
+    call(adminRouter, 'agency.close', { id: feeAgency.id, dealt: true, dealAmount: 30000 }, { token: adminToken })
   ])
   ok(burstDeals.some((r) => r.ok && r.data.status === '已成交'), '并发确认成交至少一次成功')
   const feeBills = await repo.find('payments', { agencyId: feeAgency.id })
@@ -2637,7 +2967,7 @@ section('24. 交易服务：代采 / 代售、现货盘、资讯与商机')
   /* 进行中上限：已有 10 条进行中委托时，再提交应被拒绝且数量不增加 */
   const CAP = { openid: 'o_mk_agent_cap', ip: '10.20.0.10' }
   await call(userRouter, 'auth.login', { nick: '委托上限' }, CAP)
-  await call(userRouter, 'profile.save', { nick: '委托上限', phone: '13500006666', realname: '吴限', exposure: 'open' }, CAP)
+  await call(userRouter, 'profile.save', { nick: '委托上限', phone: '13500006666', realname: '吴限', subject: '委托上限有限公司', position: '采购经理', exposure: 'open' }, CAP)
   for (let i = 0; i < 10; i++) {
     await repo.insert('agencies', {
       id: 'AG_CAP_' + i,
@@ -2676,11 +3006,11 @@ section('25. 运营洞察：浏览量、风险池、在线人数与榜单')
   const csTokenIns = csLoginIns.data.token
 
   await call(userRouter, 'auth.login', { nick: '浏览者一' }, V1)
-  await call(userRouter, 'profile.save', { nick: '浏览者一', phone: '13500001111', realname: '甲一', exposure: 'open' }, V1)
+  await call(userRouter, 'profile.save', { nick: '浏览者一', phone: '13500001111', realname: '甲一', subject: '浏览者一有限公司', position: '采购经理', exposure: 'open' }, V1)
   await call(userRouter, 'auth.login', { nick: '浏览者二' }, V2)
-  await call(userRouter, 'profile.save', { nick: '浏览者二', phone: '13500002222', realname: '乙二', exposure: 'open' }, V2)
+  await call(userRouter, 'profile.save', { nick: '浏览者二', phone: '13500002222', realname: '乙二', subject: '浏览者二有限公司', position: '采购经理', exposure: 'open' }, V2)
   await call(userRouter, 'auth.login', { nick: '浏览者三' }, V3)
-  await call(userRouter, 'profile.save', { nick: '浏览者三', phone: '13500003333', realname: '丙三', exposure: 'open' }, V3)
+  await call(userRouter, 'profile.save', { nick: '浏览者三', phone: '13500003333', realname: '丙三', subject: '浏览者三有限公司', position: '采购经理', exposure: 'open' }, V3)
 
   /* 供浏览量与榜单使用的在售商品 */
   const viewProduct = await call(userRouter, 'product.publish', {
@@ -2843,13 +3173,13 @@ section('25. 运营洞察：浏览量、风险池、在线人数与榜单')
   for (const buyer of [V2, V3]) {
     await call(adminRouter, 'biz.grant', { uid: buyer.openid }, { token: csTokenIns })
   }
-  const claimA = await call(userRouter, 'biz.claim', { targetType: 'demand', demandId: demandForClaim.data.id }, V2)
-  const claimB = await call(userRouter, 'biz.claim', { targetType: 'demand', demandId: demandForClaim.data.id }, V3)
+  const claimA = await claimOf({ targetType: 'demand', demandId: demandForClaim.data.id }, V2)
+  const claimB = await claimOf({ targetType: 'demand', demandId: demandForClaim.data.id }, V3)
   ok(claimA.ok && claimB.ok, '同一商机可被多个用户分别领取' +
     (claimA.ok && claimB.ok ? '' : ' → ' + (claimA.message || 'A 无返回') + ' / ' + (claimB.message || 'B 无返回')))
   ok(!!(claimA.data && claimB.data) && claimA.data.id !== claimB.data.id, '每个用户有独立的领取记录')
 
-  const claimA2 = await call(userRouter, 'biz.claim', { targetType: 'demand', demandId: demandForClaim.data.id }, V2)
+  const claimA2 = await claimOf({ targetType: 'demand', demandId: demandForClaim.data.id }, V2)
   ok(claimA2.ok && claimA2.data.already === true && claimA2.data.id === claimA.data.id,
     '同一用户重复领取幂等，不产生第二条记录')
   ok(/已有\s*\d+\s*家领取/.test(String(claimA.data.claimText || '')), '领取响应返回领取人数（已有 N 家领取）')
@@ -2859,13 +3189,13 @@ section('25. 运营洞察：浏览量、风险池、在线人数与榜单')
   const V5 = { openid: 'o_ins_v5', ip: '10.30.0.5' }
   for (const buyer of [V4, V5]) {
     await call(userRouter, 'auth.login', { nick: '并发领取用户' }, buyer)
-    await call(userRouter, 'profile.save', { nick: '并发领取用户', realname: '并发领取用户', exposure: 'open' }, buyer)
+    await call(userRouter, 'profile.save', { nick: '并发领取用户', realname: '并发领取用户', subject: '并发领取有限公司', position: '采购经理', exposure: 'open' }, buyer)
     await call(userRouter, 'stock.save', { cat: 'GPU 服务器', model: 'A100 40G', qty: 4, price: 90000, city: '上海' }, buyer)
     await call(adminRouter, 'biz.grant', { uid: buyer.openid }, { token: csTokenIns })
   }
-  const claimThird = await call(userRouter, 'biz.claim', { targetType: 'demand', demandId: demandForClaim.data.id }, V4)
+  const claimThird = await claimOf({ targetType: 'demand', demandId: demandForClaim.data.id }, V4)
   ok(claimThird.ok, '第 3 家可正常领取（不设名额上限）')
-  const claimFourth = await call(userRouter, 'biz.claim', { targetType: 'demand', demandId: demandForClaim.data.id }, V5)
+  const claimFourth = await claimOf({ targetType: 'demand', demandId: demandForClaim.data.id }, V5)
   ok(claimFourth.ok, '第 4 家仍可领取，商机会员都可领取')
 
   const listAfterClaim = await call(userRouter, 'biz.list', {}, V5)
@@ -3019,7 +3349,7 @@ section('27. 可见范围：公开 / 保密')
   ok(privateProduct.ok && privateProduct.data.visibility === VISIBILITIES.PRIVATE && privateProduct.data.visibilityLabel === '保密',
     '商品可发布为保密并返回可见范围')
 
-  const publicList = await call(userRouter, 'product.list', {}, VIEWER)
+  const publicList = await call(userRouter, 'product.list', { limit: 100 }, VIEWER)
   ok(publicList.ok && publicList.data.items.some((p) => p.id === privateProduct.data.id),
     '保密商品内容仍在公共列表匿名展示（不隐藏内容）')
   ok(publicList.data.items.some((p) => p.id === defaultPub.data.id), '公共商品列表正常展示公开商品')
@@ -3210,10 +3540,52 @@ section('35. 系统设置 / 单用户手动调整')
   ok(readSet.data.settings.qrUrl === png && readSet.data.settings.planDays === 90 &&
     readSet.data.settings.planPrice === '129 元 / 月', '保存后设置持久化可读回')
 
+  /* 设置页各自提交自己的字段：套餐页保存不能清空通知模板与企微活码 */
+  await call(adminRouter, 'setting.save', {
+    planPrice: '129 元 / 月', planDays: 90, siteName: '算力聚合',
+    tmplInquiry: 'TPL_INQ', tmplChat: 'TPL_CHAT', tmplSystem: 'TPL_SYS', tmplBiz: 'TPL_BIZ'
+  }, adminCtx)
+  const partialSave = await call(adminRouter, 'setting.save', {
+    planPrice: '139 元 / 月', planDays: 90, siteName: '算力聚合'
+  }, adminCtx)
+  const afterPartial = await call(adminRouter, 'setting.get', {}, adminCtx)
+  ok(partialSave.ok && afterPartial.data.settings.tmplSystem === 'TPL_SYS' &&
+    afterPartial.data.settings.tmplBiz === 'TPL_BIZ' && afterPartial.data.settings.tmplInquiry === 'TPL_INQ' &&
+    afterPartial.data.settings.qrUrl === png, '套餐页部分保存不会清空通知模板与企微活码')
+
   /* 小程序商机页读取同一份配置，扫码即可加企微开通 */
   const sitePublic = await call(userRouter, 'site.get', {}, { openid: 'o_usr_list', ip: '10.40.0.1' })
   ok(sitePublic.ok && sitePublic.data.site.qrUrl === png && sitePublic.data.site.planDays === 90,
     '小程序可读取企微活码与套餐口径')
+
+  /* 首页横幅：管理端配置多条标题 / 正文 / 滚动速度，小程序读取后横向滚动，点击弹窗展示 */
+  const bannerSave = await call(adminRouter, 'setting.save', {
+    qrUrl: png, qrNote: '扫码添加企业微信', planPrice: '129 元 / 月', planDays: 90,
+    planNote: '按需求匹配', siteName: '算力聚合', servicePhone: '400-000-0000', serviceTime: '工作日 09:00 - 18:00',
+    bannerEnabled: true, bannerSpeed: 60,
+    bannerItems: [
+      { id: 'bn1', title: '平台服务费改为成交后支付', content: '买卖双方成交后各承担 50%。' },
+      { id: 'bn2', title: '本周 H100 现货报价回落 4%', content: '' }
+    ]
+  }, adminCtx)
+  ok(bannerSave.ok, '管理员可保存首页横幅内容与滚动速度')
+
+  const bannerRead = await call(adminRouter, 'setting.get', {}, adminCtx)
+  ok(bannerRead.data.settings.bannerSpeed === 60 && bannerRead.data.settings.bannerItems.length === 2 &&
+    bannerRead.data.settings.bannerItems[0].title === '平台服务费改为成交后支付', '横幅配置持久化可读回')
+
+  const siteBanner = await call(userRouter, 'site.get', {}, { openid: 'o_usr_list', ip: '10.40.0.1' })
+  ok(siteBanner.data.site.banner.enabled === true && siteBanner.data.site.banner.speed === 60 &&
+    siteBanner.data.site.banner.items.length === 2, '小程序可读取首页横幅')
+
+  const badSpeed = await call(adminRouter, 'setting.save', {
+    planPrice: '99 元 / 月', planDays: 30, siteName: 'x', bannerSpeed: 500
+  }, adminCtx)
+  ok(!badSpeed.ok && badSpeed.code === 'VALIDATION', '横幅滚动速度越界被拒')
+  const badBanner = await call(adminRouter, 'setting.save', {
+    planPrice: '99 元 / 月', planDays: 30, siteName: 'x', bannerItems: [{ title: '' }]
+  }, adminCtx)
+  ok(!badBanner.ok && badBanner.code === 'VALIDATION', '横幅缺少标题被拒')
 
   const badDays = await call(adminRouter, 'setting.save', { planPrice: '99 元 / 月', planDays: 0, siteName: 'x' }, adminCtx)
   ok(!badDays.ok && badDays.code === 'VALIDATION', '默认开通天数非法被拒')
@@ -3267,20 +3639,26 @@ section('36. P0 数据底座')
   const missingExpire = await call(adminRouter, 'biz.setExpire', { uid: 'o_not_exist', expireAt }, adminCtx)
   ok(!missingExpire.ok && missingExpire.code === 'NOT_FOUND', '未开通会员的用户改到期返回 NOT_FOUND')
 
-  /* 收款登记 → 财务确认 → 自动开通并回填订单 */
-  const pay = await call(adminRouter, 'payment.create', {
-    uid, bizType: '会员续费', plan: 'month', amount: 99, method: '企业微信', note: '企微转账'
+  /* 微信支付自动入账 → 收款流水可查；人工确认只服务委托服务费 */
+  const WXPAY_NO = 'WXPAY_VERIFY_MEMBER_' + now()
+  const pay = await call(adminRouter, 'biz.grant', {
+    uid, plan: 'month', amount: 99, method: '微信支付', paymentId: WXPAY_NO, note: '微信支付自动入账'
   }, adminCtx)
-  ok(pay.ok && pay.data.status === '已确认' && !!pay.data.orderId, '收款登记即入账，会员续费自动开通并回填订单')
-  const payConfirm = await call(adminRouter, 'payment.confirm', { id: pay.data.id }, adminCtx)
-  ok(payConfirm.ok && payConfirm.data.status === '已确认' && !!payConfirm.data.orderId, '已入账收款单补确认保持幂等并保留订单号')
+  ok(pay.ok && !!pay.data.orderId && pay.data.orderId.indexOf('BO') === 0, '微信支付开通会员并回填订单号')
+  const payAgain = await call(adminRouter, 'biz.grant', {
+    uid, plan: 'month', amount: 99, method: '微信支付', paymentId: WXPAY_NO
+  }, adminCtx)
+  ok(payAgain.ok && payAgain.data.orderId === pay.data.orderId, '同一微信支付单重复投递保持幂等')
   const payList = await call(adminRouter, 'payment.list', { uid }, adminCtx)
-  ok(payList.ok && payList.data.totals.confirmed >= 99 && payList.data.items[0].status === '已确认', '收款流水可按用户查询并汇总')
-  const payBad = await call(adminRouter, 'payment.create', { uid, amount: 0 }, adminCtx)
-  ok(!payBad.ok && payBad.code === 'VALIDATION', '收款金额为 0 被拒绝')
+  const memberBill = payList.ok ? payList.data.items[0] : null
+  ok(!!memberBill && payList.data.items.length === 1 && memberBill.status === '已确认' &&
+    memberBill.method === '微信支付' && memberBill.amount === 99 && memberBill.received === 99 &&
+    memberBill.agencyId === '', '微信支付自动写入收款流水：应收 / 实收 99 元、已确认、方式为微信支付')
+  const feeBad = await call(adminRouter, 'payment.feeConfirm', { id: memberBill.id }, adminCtx)
+  ok(!feeBad.ok && feeBad.code === 'VALIDATION', '会员流水不能走服务费确认到账')
   const finance = await call(adminRouter, 'finance.summary', {}, adminCtx)
-  ok(finance.ok && finance.data.totals.revenue === 0 && finance.data.months.length === 6,
-    '财务汇总只统计微信端支付：手动开通 / 线下登记不计营收，仍返回近 6 个月趋势')
+  ok(finance.ok && finance.data.totals.revenue === 99 && finance.data.months.length === 6,
+    '财务汇总统计微信支付营收：手动开通不计营收，仍返回近 6 个月趋势')
   const csDemo2 = DEMO_ADMIN_ACCOUNTS.find((a) => a.key === 'cs')
   const csLogin2 = await call(adminRouter, 'admin.login', {
     username: 'cs', password: csDemo2.password, otp: generateTotp(csDemo2.totpSecret, now())
@@ -3289,6 +3667,8 @@ section('36. P0 数据底座')
   ok(!csFinance.ok && csFinance.code === 'FORBIDDEN', '客服默认无权查看财务汇总')
   const csExpire = await call(adminRouter, 'biz.setExpire', { uid, expireAt }, { token: csLogin2.data.token })
   ok(!csExpire.ok && csExpire.code === 'FORBIDDEN', '客服默认无权修改会员到期时间')
+  const csFee = await call(adminRouter, 'payment.feeConfirm', { id: memberBill.id }, { token: csLogin2.data.token })
+  ok(!csFee.ok && csFee.code === 'FORBIDDEN', '客服默认无权确认委托服务费到账')
 
   /* 日趋势与漏斗 */
   const trend = await call(adminRouter, 'stats.trend', { days: 30 }, adminCtx)
@@ -3323,6 +3703,26 @@ section('36. P0 数据底座')
     '角色列表包含内置角色、自定义角色与可选页面')
   const roleBuiltin = await call(adminRouter, 'role.save', { roleKey: 'admin', name: '改超管', pages: ['stats'] }, adminCtx)
   ok(!roleBuiltin.ok && roleBuiltin.code === 'CONFLICT', '内置角色不可修改')
+  /* 角色收敛：只保留管理员 / 客服坐席，财务 / 电销 / 预设岗位不再下发 */
+  const builtinKeys = roleList.data.roles.filter((r) => r.builtin).map((r) => r.roleKey).sort().join(',')
+  ok(builtinKeys === 'admin,cs', '角色列表只保留管理员 / 客服坐席两类内置角色', builtinKeys)
+  const presetCreate = await call(adminRouter, 'account.create', {
+    username: 'verifyops', name: '预设运营', org: '算力聚合', role: 'ops',
+    password: 'VerifyOps@2026', totpSecret: 'JBSWY3DPEHPK3PXP'
+  }, adminCtx)
+  ok(!presetCreate.ok, '已下线的预设岗位不能再创建账号', presetCreate.message)
+  /* 客服权限扩大：看板与服务记录可看，财务 / 系统设置仍受限 */
+  const csToken = { token: csLogin2.data.token }
+  const csStatsNew = await call(adminRouter, 'stats.overview', {}, csToken)
+  ok(csStatsNew.ok, '客服可查看数据看板')
+  const csServiceNew = await call(adminRouter, 'service.records', {}, csToken)
+  ok(csServiceNew.ok, '客服可查看服务记录')
+  const csSetting = await call(adminRouter, 'setting.save', { hotline: '400-000-0000' }, csToken)
+  ok(!csSetting.ok && csSetting.code === 'FORBIDDEN', '系统设置仍仅管理员可改')
+  const csRemindSet = await call(adminRouter, 'biz.remindSetting', {
+    memberRemind: { enabled: true, days: 5, hour: 9, maxTimes: 2, intervalDays: 1, title: '会员即将到期', body: '还有 {days} 天到期（{expire}）' }
+  }, csToken)
+  ok(csRemindSet.ok && csRemindSet.data.memberRemind.days === 5, '客服可调整会员到期提醒文案与次数')
   const permBad = await call(adminRouter, 'permission.save', { username: 'cs', extraPages: ['finance'], expiresAt: now() - 1000 }, adminCtx)
   ok(!permBad.ok && permBad.code === 'VALIDATION', '临时权限到期时间必须晚于当前时间')
   const perm = await call(adminRouter, 'permission.save', {
@@ -3356,7 +3756,7 @@ section('28. 商机池：主体可见门槛 / 会员分层 / 发布方开关')
     '主体隐藏时不能把需求放进商机池')
 
   await call(userRouter, 'profile.save', {
-    nick: '商机发布者', realname: '发布者丙', phone: '13900006001', subject: '商机测试有限公司', exposure: 'open'
+    nick: '商机发布者', realname: '发布者丙', phone: '13900006001', subject: '商机测试有限公司', position: '采购经理', exposure: 'open'
   }, PUB2)
 
   const poolPub = await call(userRouter, 'demand.publish', {
@@ -3373,7 +3773,7 @@ section('28. 商机池：主体可见门槛 / 会员分层 / 发布方开关')
 
   await call(userRouter, 'auth.login', { nick: '商机查看者' }, SEEK)
   await call(userRouter, 'profile.save', {
-    nick: '商机查看者', realname: '商机查看者', phone: '13900006002', exposure: 'open'
+    nick: '商机查看者', realname: '商机查看者', phone: '13900006002', subject: '商机查看有限公司', position: '采购经理', exposure: 'open'
   }, SEEK)
   const seekStock = await call(userRouter, 'stock.save', {
     cat: 'GPU 服务器', brand: 'NVIDIA', model: 'H200 141G', qty: 15, price: 250000, city: '深圳',
@@ -3392,8 +3792,11 @@ section('28. 商机池：主体可见门槛 / 会员分层 / 发布方开关')
     '未开通商机会员也显示商机角标', badge.message)
   const listLocked = await call(userRouter, 'biz.list', {}, SEEK)
   ok(listLocked.ok && listLocked.data.locked === true, '未开通商机会员时商机列表为锁定态')
-  ok((listLocked.data.items || []).every((i) => i.masked === true && i.model === '****'),
-    '未开通时商机内容全部脱敏')
+  const lockedItems = listLocked.data.items || []
+  ok(lockedItems.length > 0 && lockedItems.every((i) => !('masked' in i) && i.canClaim === false &&
+    i.phone === '' && i.contactVisible === false), '未开通时联系方式与领取能力锁定')
+  ok(lockedItems.some((i) => i.model && i.model !== '****' && /^¥/.test(String(i.priceText || ''))),
+    '未开通时型号与价格仍可见，便于判断商机真实性')
   const lockIds = (listLocked.data.items || []).map((i) => i.id)
   ok(lockIds.indexOf(poolPub.data.id) >= 0 && lockIds.indexOf(outPub.data.id) < 0,
     '商机池只包含发布方允许进池的需求')
@@ -3416,14 +3819,14 @@ section('28. 商机池：主体可见门槛 / 会员分层 / 发布方开关')
   /* 「我的商机」角标与列表只算已领取，不把商机池里可领取的也计进去 */
   const badgeBefore = await call(userRouter, 'biz.badge', {}, SEEK)
   ok(badgeBefore.ok && badgeBefore.data.claimed === 0, '「我的商机」角标统计已领取条数：领取前为 0')
-  const claimPool = await call(userRouter, 'biz.claim', { targetType: 'demand', demandId: poolPub.data.id }, SEEK)
+  const claimPool = await claimOf({ targetType: 'demand', demandId: poolPub.data.id }, SEEK)
   ok(claimPool.ok, '商机会员可领取匹配的商机', claimPool.message)
   /* 商机被领取不再提醒：提醒只发生在「发布新商机」时，领取后由对方主动发消息才产生聊天提醒 */
   const claimNotices = await repo.find('outbox', {
     'payload.targetType': 'biz', 'payload.targetId': poolPub.data.id
   }, { limit: 10 })
   ok(claimNotices.length === 0, '领取商机不再给领取方 / 发布方发站内提醒')
-  await call(userRouter, 'biz.claim', { targetType: 'demand', demandId: poolPub.data.id }, SEEK)
+  await claimOf({ targetType: 'demand', demandId: poolPub.data.id }, SEEK)
   const claimNoticesAgain = await repo.find('outbox', {
     'payload.targetType': 'biz', 'payload.targetId': poolPub.data.id
   }, { limit: 10 })
@@ -3437,7 +3840,7 @@ section('28. 商机池：主体可见门槛 / 会员分层 / 发布方开关')
   ok(mineClaimedIds.indexOf(poolPub.data.id) >= 0 && mineClaimedIds.indexOf(outPub.data.id) < 0,
     '「我的商机」列表只包含已领取的条目')
 
-  const claimOut = await call(userRouter, 'biz.claim', { targetType: 'demand', demandId: outPub.data.id }, SEEK)
+  const claimOut = await claimOf({ targetType: 'demand', demandId: outPub.data.id }, SEEK)
   ok(!claimOut.ok && claimOut.code === 'NOT_FOUND', '未进入商机池的需求不可领取')
 
   /* 发布即提醒：新需求进池时，匹配会员与发布者各收到一条站内信，同一条商机只提醒一次 */
@@ -3461,7 +3864,7 @@ section('28. 商机池：主体可见门槛 / 会员分层 / 发布方开关')
   const NOMEM = { openid: 'o_pool_nomem', ip: '10.60.0.3' }
   await call(userRouter, 'auth.login', { nick: '未开通会员的货源方' }, NOMEM)
   await call(userRouter, 'profile.save', {
-    nick: '未开通会员的货源方', realname: '未开通会员', phone: '13900006003', exposure: 'open'
+    nick: '未开通会员的货源方', realname: '未开通会员', phone: '13900006003', subject: '未开通会员货源有限公司', position: '采购经理', exposure: 'open'
   }, NOMEM)
   await call(userRouter, 'stock.save', {
     cat: 'GPU 服务器', brand: 'NVIDIA', model: 'H200 141G', qty: 30, price: 252000, city: '深圳'
@@ -3489,7 +3892,7 @@ section('28. 商机池：主体可见门槛 / 会员分层 / 发布方开关')
   const PROD = { openid: 'o_pool_prod', ip: '10.60.0.4' }
   await call(userRouter, 'auth.login', { nick: '商机池货源方' }, PROD)
   await call(userRouter, 'profile.save', {
-    nick: '商机池货源方', realname: '货源方丁', phone: '13900006004', subject: '货源测试有限公司', exposure: 'open'
+    nick: '商机池货源方', realname: '货源方丁', phone: '13900006004', subject: '货源测试有限公司', position: '采购经理', exposure: 'open'
   }, PROD)
   await call(adminRouter, 'biz.grant', { uid: PROD.openid, note: '微信收款 99 元' }, { token: adminToken })
   const prodPool = await call(userRouter, 'product.publish', {
@@ -3506,7 +3909,7 @@ section('28. 商机池：主体可见门槛 / 会员分层 / 发布方开关')
   const PUB5 = { openid: 'o_pool_pub2', ip: '10.60.0.5' }
   await call(userRouter, 'auth.login', { nick: '商机发布者乙' }, PUB5)
   await call(userRouter, 'profile.save', {
-    nick: '商机发布者乙', realname: '发布者戊', phone: '13900006005', subject: '商机测试乙有限公司', exposure: 'open'
+    nick: '商机发布者乙', realname: '发布者戊', phone: '13900006005', subject: '商机测试乙有限公司', position: '采购经理', exposure: 'open'
   }, PUB5)
   const poolPub4 = await call(userRouter, 'demand.publish', {
     tradeMode: TRADE_MODES.BUY, title: '求购 6 台 H200', cat: 'GPU 服务器', brand: 'NVIDIA', model: 'H200 141G',
@@ -3578,7 +3981,7 @@ section('29. 商机匹配收敛：三渠道 / 反向货源 / 三榜')
   }
   await call(userRouter, 'profile.save', {
     nick: '渠道发布者', realname: '渠道发布者', phone: '13900007001',
-    subject: '渠道测试有限公司', exposure: 'open', phonePublic: true
+    subject: '渠道测试有限公司', position: '采购经理', exposure: 'open', phonePublic: true
   }, CH_PUB)
 
   /* ① 仅商机：不进普通列表，非本人打不开详情 */
@@ -3628,7 +4031,7 @@ section('29. 商机匹配收敛：三渠道 / 反向货源 / 三榜')
 
   /* ⑤ 反向货源：求购方无库存，别人货源命中自己的需求才出现 */
   await call(userRouter, 'profile.save', {
-    nick: '商机求购方', realname: '商机求购方', phone: '13900007002', exposure: 'open'
+    nick: '商机求购方', realname: '商机求购方', phone: '13900007002', subject: '商机求购有限公司', position: '采购经理', exposure: 'open'
   }, CH_SEEK)
   const seekDemand = await call(userRouter, 'demand.publish', {
     tradeMode: TRADE_MODES.BUY, title: '求购 12 台 H200', cat: 'GPU 服务器',
@@ -3646,10 +4049,10 @@ section('29. 商机匹配收敛：三渠道 / 反向货源 / 三榜')
     '自己发布的需求不会出现在自己的商机列表')
 
   /* ⑥ supply 领取：解锁货主联系方式，重复领取幂等 */
-  const supplyClaim = await call(userRouter, 'biz.claim', { targetType: 'supply', supplyId: bothPub.data.id }, CH_SEEK)
+  const supplyClaim = await claimOf({ targetType: 'supply', supplyId: bothPub.data.id }, CH_SEEK)
   ok(supplyClaim.ok && !!supplyClaim.data.contact && !!supplyClaim.data.contact.phone,
     '领取匹配货源的商机后可获取联系方式', supplyClaim.message)
-  const supplyClaim2 = await call(userRouter, 'biz.claim', { targetType: 'supply', supplyId: bothPub.data.id }, CH_SEEK)
+  const supplyClaim2 = await claimOf({ targetType: 'supply', supplyId: bothPub.data.id }, CH_SEEK)
   ok(supplyClaim2.ok && supplyClaim2.data.already === true, '重复领取同一货源幂等')
   const revAfter = await call(userRouter, 'biz.list', {}, CH_SEEK)
   const revItemAfter = (revAfter.data.items || []).filter((i) => i.id === bothPub.data.id)[0]
@@ -3657,7 +4060,7 @@ section('29. 商机匹配收敛：三渠道 / 反向货源 / 三榜')
     '领取后商机列表回显联系方式可见')
 
   await call(adminRouter, 'biz.grant', { uid: CH_OTHER.openid, note: '无需求领取测试' }, { token: adminToken })
-  const otherNoDemand = await call(userRouter, 'biz.claim', { targetType: 'supply', supplyId: bothPub.data.id }, CH_OTHER)
+  const otherNoDemand = await claimOf({ targetType: 'supply', supplyId: bothPub.data.id }, CH_OTHER)
   ok(!otherNoDemand.ok && otherNoDemand.code === 'FORBIDDEN', '没有匹配求购时不能领取货源')
 
   /* ⑦ 三个榜单：需求榜 / 火热榜 / 供给榜 */
@@ -3938,6 +4341,1775 @@ section('31. 商品对话 / 作业记录 / 待办 / 用户导出')
   const dDetail = await call(adminRouter, 'demand.detail', { id: 'DM_CHAT_31' }, { token: adminToken })
   ok(dDetail.ok && dDetail.data.demand && dDetail.data.demand.id === 'DM_CHAT_31',
     '需求详情可读取（历史发布跳转）', dDetail.message)
+}
+
+/* ============================================================
+   32. 退款自动回滚与 iOS 退款问询
+   ============================================================ */
+section('32. 退款自动回滚与 iOS 退款问询')
+{
+  const { createMarketAdminHandlers } = require(path.join(shared, 'market.js'))
+  /* 退款推送与 iOS 问询是服务端内部动作，不经 router / RBAC，直接调用 handler */
+  const marketAdmin = createMarketAdminHandlers({ repo, keys, now })
+  const internalCtx = { accountId: '', session: { role: 'admin' } }
+
+  const R1 = { openid: 'o_refund_0001', ip: '10.50.0.1' }
+  const R2 = { openid: 'o_refund_0002', ip: '10.50.0.2' }
+  const R3 = { openid: 'o_refund_0003', ip: '10.50.0.3' }
+  await call(userRouter, 'auth.login', { nick: '退款测试1' }, R1)
+  await call(userRouter, 'auth.login', { nick: '退款测试2' }, R2)
+  await call(userRouter, 'auth.login', { nick: '退款测试3' }, R3)
+
+  const NO1 = 'XP_REFUND_V1'
+  const NO2 = 'XP_REFUND_V2'
+  const NO3 = 'XP_REFUND_V3'
+  /* 同一用户（R1）的第二笔会员单：用于验证 90 天内第 2 次退款触发风控 */
+  const NO4 = 'XP_REFUND_V4'
+  const g1 = await call(adminRouter, 'biz.grant', {
+    uid: R1.openid, plan: 'month', amount: 99, method: '微信支付', paymentId: NO1, channel: 'apple'
+  }, { token: adminToken })
+  ok(g1.ok, '会员开通成功（iOS 渠道）', g1.message)
+  const pay1 = (await repo.find('payments', { paymentId: NO1 }, { limit: 1 }))[0]
+  ok(!!pay1 && pay1.channel === 'apple' && pay1.status === '已确认',
+    '收款单记录支付渠道 channel=apple')
+  await call(adminRouter, 'biz.grant', {
+    uid: R2.openid, plan: 'month', amount: 99, method: '微信支付', paymentId: NO2, channel: 'apple'
+  }, { token: adminToken })
+  await call(adminRouter, 'biz.grant', {
+    uid: R3.openid, plan: 'month', amount: 99, method: '微信支付', paymentId: NO3, channel: 'apple'
+  }, { token: adminToken })
+  await call(adminRouter, 'biz.grant', {
+    uid: R1.openid, plan: 'month', amount: 99, method: '微信支付', paymentId: NO4, channel: 'apple'
+  }, { token: adminToken })
+
+  const todaySec = Math.floor(now() / 1000)
+  const nowQuery = await marketAdmin['biz.iosRefundQuery']({
+    outTradeNo: NO1, provideStatus: '1', orderTime: String(todaySec)
+  }, internalCtx)
+  ok(nowQuery.resultCode === 0 && /未领取/.test(nowQuery.evidence),
+    'iOS 问询：7 天内且未领取商机 → 建议退款', JSON.stringify(nowQuery))
+
+  const undelivered = await marketAdmin['biz.iosRefundQuery']({
+    outTradeNo: NO1, provideStatus: '0', orderTime: String(todaySec)
+  }, internalCtx)
+  ok(undelivered.resultCode === 0 && /未发货/.test(undelivered.evidence),
+    'iOS 问询：未发货 → 建议退款', JSON.stringify(undelivered))
+
+  await repo.insert('bizClaims', {
+    id: 'BC_REFUND_1', uid: R1.openid, targetType: 'demand', targetId: 'DM_REFUND_1', at: now()
+  })
+  const claimedQuery = await marketAdmin['biz.iosRefundQuery']({
+    outTradeNo: NO1, provideStatus: '1', orderTime: String(todaySec)
+  }, internalCtx)
+  ok(claimedQuery.resultCode === 1 && claimedQuery.claimed === 1 && /已领取 1 条商机/.test(claimedQuery.evidence),
+    'iOS 问询：已领取商机 → 拒绝退款并附使用凭据', JSON.stringify(claimedQuery))
+
+  const oldQuery = await marketAdmin['biz.iosRefundQuery']({
+    outTradeNo: NO2, provideStatus: '2', orderTime: String(Math.floor((now() - 8 * 86400e3) / 1000))
+  }, internalCtx)
+  ok(oldQuery.resultCode === 1 && /超过 7 天/.test(oldQuery.evidence),
+    'iOS 问询：超过 7 天且未领商机 → 拒绝退款', JSON.stringify(oldQuery))
+
+  const unknownQuery = await marketAdmin['biz.iosRefundQuery']({
+    outTradeNo: 'XP_NOT_EXIST', provideStatus: '1', orderTime: String(todaySec)
+  }, internalCtx)
+  ok(unknownQuery.resultCode === 0, 'iOS 问询：查不到开通记录 → 建议退款')
+
+  const refund1 = await marketAdmin['payment.systemRefund']({
+    outTradeNo: NO1, success: true
+  }, internalCtx)
+  const pay1After = await repo.get('payments', pay1.id)
+  const access1 = await repo.get('bizAccess', R1.openid)
+  const user1 = await repo.get('users', R1.openid)
+  ok(refund1.found === true && refund1.refunded === true, '退款推送：定位到收款单并完成回滚')
+  ok(pay1After.status === '已退款' && pay1After.refundSource === 'Apple 退款',
+    '退款推送：收款单置已退款且记录来源')
+  ok(access1.status === '已停用' && access1.expireAt === now(),
+    '退款推送：会员权限立即停用且剩余天数不补')
+  ok(user1.refundCount === 1 && !user1.riskFlag, '首次退款：风控计数为 1，未标记风险')
+
+  const refund2 = await marketAdmin['payment.systemRefund']({
+    outTradeNo: NO4, success: true
+  }, internalCtx)
+  const user1After = await repo.get('users', R1.openid)
+  ok(refund2.found === true && refund2.refunded === true, '第二次退款推送：回滚成功')
+  ok(user1After.refundCount === 2 && user1After.riskFlag === true && !!user1After.riskSince,
+    '90 天内第 2 次退款：标记风险账号')
+
+  const dupRefund = await marketAdmin['payment.systemRefund']({ outTradeNo: NO1, success: true }, internalCtx)
+  const user1Dup = await repo.get('users', R1.openid)
+  ok(dupRefund.refunded === true && user1Dup.refundCount === 2,
+    '重复推送同一退款：幂等，不重复累计风控次数')
+
+  const refundedQuery = await marketAdmin['biz.iosRefundQuery']({
+    outTradeNo: NO1, provideStatus: '1', orderTime: String(todaySec)
+  }, internalCtx)
+  ok(refundedQuery.resultCode === 0 && /已退款/.test(refundedQuery.evidence),
+    'iOS 问询：订单已退款 → 同意退款（无重复扣费风险）')
+
+  const notFound = await marketAdmin['payment.systemRefund']({ outTradeNo: 'XP_NOT_EXIST' }, internalCtx)
+  ok(notFound.found === false && notFound.refunded === false,
+    '未知单号：返回 found=false，避免微信无限重推')
+
+  const failed = await marketAdmin['payment.systemRefund']({ outTradeNo: NO3, success: false }, internalCtx)
+  const pay3After = (await repo.find('payments', { paymentId: NO3 }, { limit: 1 }))[0]
+  const access3 = await repo.get('bizAccess', R3.openid)
+  ok(failed.found === true && failed.refunded === false && pay3After.status === '已确认' &&
+    access3.status === '已开通', '退款失败通知：不回滚收款单与会员权限')
+
+  /* appendAudit 不阻塞业务，等一个事件循环再断言审计落库 */
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const refundAudits = await repo.find('audit', { action: 'payment.refund' })
+  const queryAudits = await repo.find('audit', { action: 'payment.iosRefundQuery' })
+  ok(refundAudits.some((item) => item.target === pay1.id) && queryAudits.length >= 3,
+    '退款与 iOS 问询均写入审计', `refund=${refundAudits.length} query=${queryAudits.length}`)
+}
+
+/* ============================================================
+   37. 推广分佣与人工分账（v5.1 人工分账交付版）
+   ============================================================ */
+section('37. 推广分佣与人工分账')
+{
+  const promoLogin = (ctx, nick, ref) => {
+    const body = { nick }
+    if (ref) {
+      body.ref = ref
+      body.refScene = 'share'
+    }
+    return call(userRouter, 'auth.login', body, ctx)
+  }
+  const promoOpen = async (ctx, nick) => {
+    await promoLogin(ctx, nick)
+    const ag = await call(userRouter, 'promote.agreement', {}, ctx)
+    const res = await call(userRouter, 'promote.open', {
+      agreed: true, agreementVersion: ag.data.version
+    }, ctx)
+    return { ag, res }
+  }
+  const promoGrant = (buyerUid, paymentId, amount) => call(adminRouter, 'biz.grant', {
+    uid: buyerUid,
+    plan: 'month',
+    amount,
+    method: '微信支付',
+    paymentId,
+    channel: 'wxpay',
+    transactionId: 'TX' + paymentId
+  }, { token: adminToken })
+  const commissionOf = async (paymentId) =>
+    (await repo.find('commissions', { paymentId }, { limit: 1 }))[0]
+  const loginAdmin = async (key) => {
+    const acc = DEMO_ADMIN_ACCOUNTS.find((a) => a.key === key)
+    const r = await call(adminRouter, 'admin.login', {
+      username: acc.username, password: acc.password, otp: generateTotp(acc.totpSecret, now())
+    }, {})
+    return r.ok ? r.data.token : ''
+  }
+
+  const P1 = { openid: 'o_promo_p1' }
+  const B1 = { openid: 'o_buyer_p1' }
+  const P2 = { openid: 'o_promo_p2' }
+  const B2 = { openid: 'o_buyer_p2' }
+  const P3 = { openid: 'o_promo_p3' }
+  const B3 = { openid: 'o_buyer_p3' }
+  const P4 = { openid: 'o_promo_p4' }
+  const B4A = { openid: 'o_buyer_p4a' }
+  const B4B = { openid: 'o_buyer_p4b' }
+  const P5 = { openid: 'o_promo_p5' }
+  const B5 = { openid: 'o_buyer_p5' }
+  const B6 = { openid: 'o_buyer_p6' }
+  const P6 = { openid: 'o_promo_p6' }
+  const B7 = { openid: 'o_buyer_p7' }
+
+  let financeToken = await loginAdmin('finance')
+  ok(!!financeToken, '财务账号可登录（人工审核 / 执行分离用）')
+
+  /* ---- 开通推广：协议、统一比例、推广码 ---- */
+  await promoLogin(P1, '推广者一')
+  const agBad = await call(userRouter, 'promote.open', {
+    agreed: true, agreementVersion: '2000-01-01'
+  }, P1)
+  ok(!agBad.ok && agBad.code === 'VALIDATION', '协议版本不匹配时不能开通推广')
+  const noAgree = await call(userRouter, 'promote.open', { agreed: false }, P1)
+  ok(!noAgree.ok && noAgree.code === 'VALIDATION', '未勾选协议不能开通推广')
+  const p1 = await promoOpen(P1, '推广者一')
+  ok(p1.res.ok && p1.res.data.active === true && /^R[A-Z0-9]{7}$/.test(p1.res.data.refCode || ''),
+    '开通推广成功并生成推广码')
+  ok(p1.res.data.rate === 0.15 && p1.res.data.level2Rate === 0.15 &&
+    p1.res.data.rateEditable === false && p1.res.data.feeRate === 0.05,
+    '一级 / 二级佣金均 15%（只读），提现手续费 5%')
+  const refCode = p1.res.data.refCode
+  const p1Login = await call(userRouter, 'auth.login', {}, P1)
+  ok(p1Login.ok && p1Login.data.promoter && p1Login.data.promoter.active === true &&
+    p1Login.data.promoter.refCode === refCode,
+  '登录态下发自己的推广码（任意页面分享 / 海报据此带上 ref，别人打开即绑定）')
+  const bLoginNoPromoter = await call(userRouter, 'auth.login', {}, B1)
+  ok(bLoginNoPromoter.ok && bLoginNoPromoter.data.promoter && bLoginNoPromoter.data.promoter.active === false &&
+    bLoginNoPromoter.data.promoter.refCode === '',
+  '未开通推广的账号不下发推广码，避免分享被误记到上家')
+
+  const selfBind = await promoLogin(P1, '推广者一', refCode)
+  const selfBindRow = await repo.get('referralBindings', P1.openid)
+  ok(selfBind.ok && !selfBindRow, '推广者用自己推广码登录不会自绑')
+
+  /* ---- 绑定：首次登录即绑定，不支持改绑 ---- */
+  const b1Login = await promoLogin(B1, '买家一', refCode)
+  const bind1 = await repo.get('referralBindings', B1.openid)
+  ok(b1Login.ok && bind1 && bind1.refUid === P1.openid, '买家带推广码登录自动绑定推广人')
+  const rebind = await call(userRouter, 'promote.bind', { ref: 'RZZZZZZZ' }, B1)
+  ok(rebind.ok && rebind.data.bound === false && rebind.data.reason === 'already',
+    '已绑定用户不可改绑')
+
+  /* ---- 资金口径：默认不开分账，订单资金不冻结，只有佣金在台账预留 ---- */
+  const cfgDefault = await call(adminRouter, 'promote.settings', {}, { token: adminToken })
+  ok(cfgDefault.ok && cfgDefault.data.splitEnabled === false,
+    '默认关闭分账：订单资金正常结算可随时取用，只有佣金在台账预留')
+  /* 本场景显式开启分账，用于覆盖路径 A（分账出款 / 分账回退）链路 */
+  const splitOn = await call(adminRouter, 'promote.saveSettings', { splitEnabled: true }, { token: adminToken })
+  ok(splitOn.ok && splitOn.data.splitEnabled === true, '开启路径 A 分账以覆盖分账出款链路')
+
+  /* ---- 实时计佣：999 元 → 通道费 9.99 / 佣金 148.35 / 净额 140.93 ---- */
+  const pay1 = await promoGrant(B1.openid, 'PROMO_PAY_001', 999)
+  const c1 = await commissionOf('PROMO_PAY_001')
+  ok(pay1.ok && c1 && c1.uid === P1.openid && c1.buyerUid === B1.openid,
+    '支付成功实时计佣且佣金落在推广者（不是付款人）')
+  ok(c1.channelCost === 9.99 && c1.base === 989.01 && c1.amount === 148.35 && c1.netAmount === 140.93,
+    '计佣公式：通道费 9.99 / 基数 989.01 / 佣金 148.35 / 净额 140.93')
+  ok(c1.status === '待结算' && c1.eligibleAt === Date.parse('2026-04-14T16:00:00Z'),
+    '佣金冻结至支付月次月 15 日 00:00（北京时间）')
+  const s1Pending = await call(userRouter, 'promote.summary', {}, P1)
+  ok(s1Pending.data.totals.pending === 148.35 && s1Pending.data.totals.available === 0,
+    '冻结期内佣金显示待结算、可提现为 0')
+  const early = await call(userRouter, 'promote.withdraw', {
+    amount: 148.35, requestId: 'WQ_EARLY'
+  }, P1)
+  ok(!early.ok && early.code === 'VALIDATION', '冻结期内无法申请提现')
+
+  /* 未绑定推广人的支付不计佣 */
+  await promoLogin(B6, '未绑定买家')
+  await promoGrant(B6.openid, 'PROMO_PAY_UNBOUND', 999)
+  ok(!(await commissionOf('PROMO_PAY_UNBOUND')), '未绑定推广人的支付不计佣')
+
+  /* ---- 其余场景数据准备（均为 3 月支付，4 月 15 日统一结算） ---- */
+  const p2 = await promoOpen(P2, '推广者二')
+  await promoLogin(B2, '买家二', p2.res.data.refCode)
+  await promoGrant(B2.openid, 'PROMO_PAY_002', 999)
+
+  const p3 = await promoOpen(P3, '推广者三')
+  await promoLogin(B3, '买家三', p3.res.data.refCode)
+  await promoGrant(B3.openid, 'PROMO_PAY_003', 999)
+
+  const p4 = await promoOpen(P4, '推广者四')
+  await promoLogin(B4A, '买家四A', p4.res.data.refCode)
+  await promoLogin(B4B, '买家四B', p4.res.data.refCode)
+  await promoGrant(B4A.openid, 'PROMO_PAY_004A', 999)
+  await promoGrant(B4B.openid, 'PROMO_PAY_004B', 999)
+
+  const p5 = await promoOpen(P5, '推广者五')
+  await promoLogin(B5, '买家五', p5.res.data.refCode)
+  await promoGrant(B5.openid, 'PROMO_PAY_005', 40000)
+  const c5 = await commissionOf('PROMO_PAY_005')
+  ok(c5 && c5.amount === 5940 && c5.netAmount === 5643, '大额订单计佣：佣金 5940 / 净额 5643')
+
+  /* ---- 次月 15 日后自动结算 ---- */
+  CLOCK = Date.parse('2026-04-15T00:00:00Z')
+  adminToken = await loginAdmin('admin')
+  financeToken = await loginAdmin('finance')
+  const settle = await call(adminRouter, 'promote.runSettle', {}, { token: adminToken })
+  ok(settle.ok, '日终结算任务执行成功')
+  const c1After = await repo.get('commissions', c1.id)
+  ok(c1After.status === '可提现', '次月 15 日后佣金自动转为可提现')
+  const s1Ready = await call(userRouter, 'promote.summary', {}, P1)
+  ok(s1Ready.data.totals.available === 148.35 && s1Ready.data.totals.pending === 0,
+    '结算后可提现余额 148.35 元')
+
+  /* ---- 主链路：申请 → 审核 → 领取 → 回填 → 核销 ---- */
+  const w1 = await call(userRouter, 'promote.withdraw', {
+    amount: 148.35, requestId: 'WQ_P1_A'
+  }, P1)
+  ok(w1.ok && w1.data.withdrawal.status === '待审核' &&
+    w1.data.withdrawal.fee === 7.42 && w1.data.withdrawal.net === 140.93,
+    '提现申请：手续费 7.42、净额 140.93、进入待审核')
+  const w1id = w1.data.withdrawal.id
+  const w1dup = await call(userRouter, 'promote.withdraw', {
+    amount: 100, requestId: 'WQ_P1_A'
+  }, P1)
+  ok(w1dup.ok && w1dup.data.idempotent === true && w1dup.data.withdrawal.id === w1id,
+    '同一 requestId 重复提交保持幂等')
+  const w1more = await call(userRouter, 'promote.withdraw', {
+    amount: 100, requestId: 'WQ_P1_B'
+  }, P1)
+  ok(!w1more.ok && w1more.code === 'CONFLICT', '已有在途提现单时不允许再申请')
+
+  const appr1 = await call(adminRouter, 'promote.withdrawApprove', { id: w1id }, { token: financeToken })
+  ok(appr1.ok && appr1.data.status === '待打款' && appr1.data.items.length === 1 &&
+    appr1.data.items[0].amount === 140.93, '审核通过生成 1 条出款明细，金额 140.93')
+  ok(appr1.data.items[0].path === 'A' && appr1.data.items[0].type === 'manualSplit',
+    '有微信交易号时走人工分账（路径 A）')
+  const items1 = await call(adminRouter, 'promote.payoutItems', { withdrawalId: w1id }, { token: adminToken })
+  ok(items1.ok && Array.isArray(items1.data.items) && items1.data.items.length === 1,
+    '出款明细接口可按提现单查询')
+
+  const claim1 = await call(adminRouter, 'promote.payoutClaim', { id: w1id }, { token: adminToken })
+  ok(claim1.ok && claim1.data.status === '打款中', '财务领取后进入打款中')
+  const noVoucher = await call(adminRouter, 'promote.payoutMark', {
+    id: w1id, payoutNo: 'PN-PROMO-001', amount: 140.93
+  }, { token: adminToken })
+  ok(!noVoucher.ok && noVoucher.code === 'VALIDATION', '回填必须上传出款凭证')
+  const badAmount = await call(adminRouter, 'promote.payoutMark', {
+    id: w1id, payoutNo: 'PN-PROMO-001', amount: 180, voucherUrl: 'https://img.example/v1.png'
+  }, { token: adminToken })
+  ok(!badAmount.ok && badAmount.code === 'VALIDATION', '回填金额与明细合计不一致被拒')
+  const mark1 = await call(adminRouter, 'promote.payoutMark', {
+    id: w1id, payoutNo: 'PN-PROMO-001', amount: 140.93,
+    payoutAt: now(), voucherUrl: 'https://img.example/v1.png'
+  }, { token: adminToken })
+  ok(mark1.ok && mark1.data.status === '已到账' && mark1.data.payoutAmount === 140.93 &&
+    mark1.data.items === 1, '回填成功：提现单已到账并核销 1 条明细')
+  const w1doc = await repo.get('promoterWithdrawals', w1id)
+  ok(w1doc.activeKey === 'R#' + w1id && w1doc.payoutNo === 'PN-PROMO-001' &&
+    w1doc.voucherUrl === 'https://img.example/v1.png', '终态改写唯一退休键并留痕单据号 / 凭证')
+  const c1paid = await repo.get('commissions', c1.id)
+  ok(c1paid.status === '已提现' && c1paid.withdrawnAmount === 148.35 && c1paid.payoutAmount === 140.93,
+    '佣金核销：已提现、毛额 148.35、实付净额 140.93')
+  const u1 = await repo.get('users', P1.openid)
+  ok(u1.promoterAvailable === 0 && u1.promoterWithdrawing === 0 && u1.promoterWithdrawn === 148.35,
+    '用户余额归零并累计已到账 148.35')
+  const markAgain = await call(adminRouter, 'promote.payoutMark', {
+    id: w1id, payoutNo: 'PN-PROMO-001', amount: 140.93, voucherUrl: 'https://img.example/v1.png'
+  }, { token: adminToken })
+  ok(markAgain.ok && markAgain.data.idempotent === true, '重复回填同一提现单保持幂等')
+  /* I9 硬约束：在途明细占用 commissionId，终态改写唯一退休键；同一佣金第二条在途明细必须被拒 */
+  const w1items = await repo.find('promotePayoutItems', { withdrawalId: w1id }, { limit: 10 })
+  ok(w1items.length === 1 && w1items[0].status === 'done' &&
+    w1items[0].activeCommissionKey === 'R#' + w1items[0].id,
+    '已出款明细改写入唯一退休键，不再占用佣金位')
+  await repo.insert('promotePayoutItems', {
+    id: 'PI_DUP_GUARD_1', withdrawalId: 'W_DUP_GUARD_1', commissionId: c1.id,
+    activeCommissionKey: c1.id, status: 'todo', grossPart: 0
+  })
+  let dupRejected = false
+  try {
+    await repo.insert('promotePayoutItems', {
+      id: 'PI_DUP_GUARD_2', withdrawalId: 'W_DUP_GUARD_2', commissionId: c1.id,
+      activeCommissionKey: c1.id, status: 'todo', grossPart: 0
+    })
+  } catch (err) {
+    dupRejected = true
+  }
+  ok(dupRejected, '同一佣金第二条在途明细被唯一约束拒绝')
+  await repo.removeWhere('promotePayoutItems', {
+    withdrawalId: { $in: ['W_DUP_GUARD_1', 'W_DUP_GUARD_2'] }
+  })
+  const payoutList1 = await call(adminRouter, 'promote.payoutList', { status: '已到账' }, { token: adminToken })
+  ok(payoutList1.ok && Array.isArray(payoutList1.data.items) && payoutList1.data.items.length >= 1,
+    '已到账出款列表可查询')
+
+  /* ---- 单据号唯一 → 打款失败 → 重新领取 → 重试成功 ---- */
+  const w2 = await call(userRouter, 'promote.withdraw', {
+    amount: 148.35, requestId: 'WQ_P2_A'
+  }, P2)
+  const w2id = w2.data.withdrawal.id
+  await call(adminRouter, 'promote.withdrawApprove', { id: w2id }, { token: financeToken })
+  await call(adminRouter, 'promote.payoutClaim', { id: w2id }, { token: adminToken })
+  const dupNo = await call(adminRouter, 'promote.payoutMark', {
+    id: w2id, payoutNo: 'PN-PROMO-001', amount: 140.93, voucherUrl: 'https://img.example/v2.png'
+  }, { token: adminToken })
+  ok(!dupNo.ok && dupNo.code === 'CONFLICT', '出款单据号全局唯一，重复使用被拒')
+  const fail2 = await call(adminRouter, 'promote.payoutMark', {
+    id: w2id, result: 'failed', failReason: '商户号余额不足'
+  }, { token: adminToken })
+  ok(fail2.ok && fail2.data.status === '打款失败', '打款失败可登记并保留原因')
+  const u2fail = await repo.get('users', P2.openid)
+  ok(u2fail.promoterWithdrawing === 148.35 && u2fail.promoterAvailable === 0,
+    '打款失败仍占用余额，不自动退回（I3）')
+  const w2blocked = await call(userRouter, 'promote.withdraw', {
+    amount: 100, requestId: 'WQ_P2_B'
+  }, P2)
+  ok(!w2blocked.ok && w2blocked.code === 'CONFLICT', '失败单未处理前不允许再申请提现')
+  const reclaim = await call(adminRouter, 'promote.payoutClaim', { id: w2id }, { token: adminToken })
+  ok(reclaim.ok && reclaim.data.status === '打款中', '打款失败可重新领取出款')
+  const retry2 = await call(adminRouter, 'promote.payoutMark', {
+    id: w2id, payoutNo: 'PN-PROMO-002', amount: 140.93, voucherUrl: 'https://img.example/v2b.png'
+  }, { token: adminToken })
+  ok(retry2.ok && retry2.data.status === '已到账', '失败后重新打款成功')
+
+  /* ---- 退回余额：释放占用、余额原路恢复 ---- */
+  const w3 = await call(userRouter, 'promote.withdraw', {
+    amount: 148.35, requestId: 'WQ_P3_A'
+  }, P3)
+  const w3id = w3.data.withdrawal.id
+  await call(adminRouter, 'promote.withdrawApprove', { id: w3id }, { token: financeToken })
+  const cancel3 = await call(adminRouter, 'promote.payoutCancel', {
+    id: w3id, reason: '财务退回余额'
+  }, { token: adminToken })
+  ok(cancel3.ok && cancel3.data.status === '已撤销', '退回余额：提现单置已撤销')
+  const u3 = await repo.get('users', P3.openid)
+  ok(u3.promoterAvailable === 148.35 && u3.promoterWithdrawing === 0,
+    '退回余额：可提现余额恢复 148.35')
+
+  /* ---- 批量审核：逐笔独立事务，失效单不影响其他单 ---- */
+  const w3b = await call(userRouter, 'promote.withdraw', {
+    amount: 148.35, requestId: 'WQ_P3_B'
+  }, P3)
+  const w3bid = w3b.data.withdrawal.id
+  const batchAppr = await call(adminRouter, 'promote.withdrawApprove', {
+    ids: [w3bid, w3id], note: '中台批量审核'
+  }, { token: financeToken })
+  ok(batchAppr.ok && batchAppr.data.approved === 1 && batchAppr.data.failed.length === 1,
+    '批量审核逐笔独立：成功 1 笔，已撤销单失败 1 笔')
+  const w3bdoc = await repo.get('promoterWithdrawals', w3bid)
+  ok(w3bdoc.status === '待打款', '批量审核通过后进入待打款')
+
+  /* ---- 已冲正佣金：跳过核销并记 uncovered（文档 3.9） ---- */
+  const w4 = await call(userRouter, 'promote.withdraw', {
+    amount: 296.70, requestId: 'WQ_P4_A'
+  }, P4)
+  const w4id = w4.data.withdrawal.id
+  const appr4 = await call(adminRouter, 'promote.withdrawApprove', { id: w4id }, { token: financeToken })
+  ok(appr4.ok && appr4.data.items.length === 2, '跨两笔佣金生成 2 条出款明细')
+  const rev4 = await call(adminRouter, 'promote.reverseCommission', {
+    paymentId: 'PROMO_PAY_004A', reason: '买家退款'
+  }, { token: adminToken })
+  ok(rev4.ok && rev4.data.reversed === true, '未出款佣金退款后立即冲正')
+  await call(adminRouter, 'promote.payoutClaim', { id: w4id }, { token: adminToken })
+  const mark4 = await call(adminRouter, 'promote.payoutMark', {
+    id: w4id, payoutNo: 'PN-PROMO-004', amount: 140.93, voucherUrl: 'https://img.example/v4.png'
+  }, { token: adminToken })
+  ok(mark4.ok && mark4.data.status === '已到账' && mark4.data.uncoveredAmount === 140.93,
+    '已冲正明细跳过核销，记 uncovered=140.93')
+  const w4doc = await repo.get('promoterWithdrawals', w4id)
+  ok(w4doc.uncoveredAmount === 140.93, '提现单留存 uncoveredAmount 供对账告警')
+
+  /* ---- 大额双人复核：≥5000 元复核人 ≠ 审核人 ≠ 执行人 ---- */
+  const w5 = await call(userRouter, 'promote.withdraw', {
+    amount: 5940, requestId: 'WQ_P5_A'
+  }, P5)
+  ok(w5.ok && w5.data.withdrawal.net === 5643, '大额提现：手续费 297、净额 5643')
+  const w5id = w5.data.withdrawal.id
+  await call(adminRouter, 'promote.withdrawApprove', { id: w5id }, { token: financeToken })
+  await call(adminRouter, 'promote.payoutClaim', { id: w5id }, { token: adminToken })
+  const noCheck = await call(adminRouter, 'promote.payoutMark', {
+    id: w5id, payoutNo: 'PN-PROMO-005', amount: 5643, voucherUrl: 'https://img.example/v5.png'
+  }, { token: adminToken })
+  ok(!noCheck.ok && noCheck.code === 'VALIDATION', '≥5000 元必须填写复核人')
+  const sameReviewer = await call(adminRouter, 'promote.payoutMark', {
+    id: w5id, payoutNo: 'PN-PROMO-005', amount: 5643,
+    voucherUrl: 'https://img.example/v5.png', checkedBy: 'finance'
+  }, { token: adminToken })
+  ok(!sameReviewer.ok && sameReviewer.code === 'VALIDATION', '复核人不能与审核人相同')
+  const sameExecutor = await call(adminRouter, 'promote.payoutMark', {
+    id: w5id, payoutNo: 'PN-PROMO-005', amount: 5643,
+    voucherUrl: 'https://img.example/v5.png', checkedBy: 'admin'
+  }, { token: adminToken })
+  ok(!sameExecutor.ok && sameExecutor.code === 'VALIDATION', '复核人不能与执行人相同')
+  const okCheck = await call(adminRouter, 'promote.payoutMark', {
+    id: w5id, payoutNo: 'PN-PROMO-005', amount: 5643,
+    voucherUrl: 'https://img.example/v5.png', checkedBy: 'risk_checker'
+  }, { token: adminToken })
+  ok(okCheck.ok && okCheck.data.status === '已到账', '双人复核通过后完成大额出款')
+
+  /* ---- 管理端查询与对账 ---- */
+  const list = await call(adminRouter, 'promote.list', {}, { token: adminToken })
+  ok(list.ok && list.data.items.length === 5 && list.data.payoutMode === 'manual',
+    '推广者列表 5 人，出款模式为人工')
+  const stats = await call(adminRouter, 'promote.stats', {}, { token: adminToken })
+  ok(stats.ok && stats.data.promoters === 5 && stats.data.paidCount === 4,
+    '推广统计：推广者 5 人、已到账 4 笔')
+  const settings = await call(adminRouter, 'promote.settings', {}, { token: adminToken })
+  ok(settings.ok && settings.data.commissionRate === 0.15 && settings.data.level2Rate === 0.15 &&
+    settings.data.payoutMode === 'manual' && settings.data.autoApprove === false,
+    '规则设置：一级 / 二级均 15% · 人工分账 · 必须人工审核')
+  const export1 = await call(adminRouter, 'promote.payoutExport', { id: w1id }, { token: adminToken })
+  ok(export1.ok && export1.data.rows === 1 && export1.data.content.indexOf(w1id) > -1,
+    '人工出款 CSV 导出包含提现单号')
+  const rec = await call(adminRouter, 'promote.reconcile', {}, { token: adminToken })
+  const fundingIssueTypes = ['user-ledger-drift', 'commission-overpaid', 'commission-over-withdrawn', 'duplicate-payout-no', 'duplicate-active-item']
+  const fundingIssues = rec.ok
+    ? rec.data.issues.filter((issue) => fundingIssueTypes.indexOf(issue.type) > -1)
+    : [{ type: 'reconcile-failed' }]
+  ok(rec.ok && fundingIssues.length === 0, '对账无资金类差异（台账 / 佣金 / 单据号 / 占用）',
+    JSON.stringify(fundingIssues.slice(0, 2)))
+
+  /* ---- 中台检索 / 状态筛选（与 console 传参保持同一口径） ---- */
+  const p1row = list.data.items.find((it) => it.nick === '推广者一')
+  const searchWd = await call(adminRouter, 'promote.withdrawList', { q: w1id }, { token: adminToken })
+  ok(searchWd.ok && searchWd.data.total === 1 && searchWd.data.items[0].id === w1id,
+    '提现单按单号检索命中')
+  const searchCm = await call(adminRouter, 'promote.commissions', { q: '推广者一', limit: 5 }, { token: adminToken })
+  ok(searchCm.ok && searchCm.data.items.length > 0 && searchCm.data.items.every((it) => it.uid === p1row.uid),
+    '佣金明细按昵称检索命中')
+  const searchPm = await call(adminRouter, 'promote.list', { q: '推广者一' }, { token: adminToken })
+  ok(searchPm.ok && searchPm.data.items.length === 1 && searchPm.data.items[0].uid === p1row.uid,
+    '推广者按昵称检索命中')
+  const block = await call(adminRouter, 'promote.setStatus', {
+    uid: p1row.uid, status: 'blocked', reason: 'verify'
+  }, { token: adminToken })
+  const blockedList = await call(adminRouter, 'promote.list', { status: '封禁' }, { token: adminToken })
+  ok(block.ok && blockedList.ok && blockedList.data.items.length === 1 &&
+    blockedList.data.items[0].uid === p1row.uid, '封禁推广者按状态筛选命中')
+  const unblock = await call(adminRouter, 'promote.setStatus', {
+    uid: p1row.uid, status: 'active', reason: 'verify-restore'
+  }, { token: adminToken })
+  ok(unblock.ok && unblock.data.status === 'active', '推广者解封恢复 active')
+
+  /* ---- 两级推广链路：up → mid → buyer → deepBuyer ---- */
+  const upPromo = await promoOpen({ openid: 'o_promo_up' }, '上级推广')
+  await promoLogin({ openid: 'o_promo_mid' }, '中级推广', upPromo.res.data.refCode)
+  const midPromo = await promoOpen({ openid: 'o_promo_mid' }, '中级推广')
+  await promoLogin({ openid: 'o_buyer_l2' }, '二级买家', midPromo.res.data.refCode)
+  const buyerPromo = await promoOpen({ openid: 'o_buyer_l2' }, '二级买家')
+  await promoLogin({ openid: 'o_deep_buyer' }, '三级买家', buyerPromo.res.data.refCode)
+  await promoGrant('o_promo_mid', 'PROMO_PAY_L1_001', 999)
+  await promoGrant('o_deep_buyer', 'PROMO_PAY_L2_001', 999)
+
+  const cUp = await commissionOf('PROMO_PAY_L1_001')
+  const cBuyer = await commissionOf('PROMO_PAY_L2_001')
+  const cMid = await commissionOf('PROMO_PAY_L2_001#L2')
+  ok(cUp && cUp.uid === 'o_promo_up' && cUp.level === 1 && cUp.amount === 148.35,
+    '一级佣金 15% 给直接推广人（上级推广 148.35）')
+  ok(cBuyer && cBuyer.uid === 'o_buyer_l2' && cBuyer.level === 1 && cBuyer.amount === 148.35,
+    '下级首次付款照常给一级推广人 15%')
+  ok(!cMid, '普通推广人只有一级佣金，不产生二级佣金')
+
+  const midSummary = await call(userRouter, 'promote.summary', {}, { openid: 'o_promo_mid' })
+  ok(midSummary.ok && midSummary.data.totals.level2Earning === 0 && midSummary.data.counts.level1 === 1 &&
+    midSummary.data.counts.level2 === 1, '推广中心汇总：普通推广人二级收入为 0，名单仍可见两级人数')
+
+  const detailUp = await call(adminRouter, 'promote.detail', { uid: 'o_promo_up' }, { token: adminToken })
+  const detailMid = await call(adminRouter, 'promote.detail', { uid: 'o_promo_mid' }, { token: adminToken })
+  ok(detailUp.ok && detailUp.data.counts.level1 === 1 && detailUp.data.level1[0].uid === 'o_promo_mid' &&
+    detailUp.data.counts.level2 === 1 && detailUp.data.level2[0].uid === 'o_buyer_l2' &&
+    detailUp.data.level2[0].parentUid === 'o_promo_mid',
+    '推广详情：上级的一级名单含中级、二级名单含二级买家（带所属一级）')
+  ok(detailMid.ok && detailMid.data.counts.level1 === 1 && detailMid.data.level1[0].uid === 'o_buyer_l2' &&
+    detailMid.data.counts.level2 === 1 && detailMid.data.level2[0].uid === 'o_deep_buyer' &&
+    detailUp.data.opened.level1Promoter === 1 && detailMid.data.opened.level1Promoter === 1,
+    '同一用户可同时出现在某人的一级名单与另一人的二级名单，开通情况逐人可见')
+
+  /* ---- 二级佣金只发给客服绑定账号：中级推广被客服绑定后，其下级的首次付款才额外计二级 ---- */
+  await repo.insert('csBindings', {
+    id: 'cs_verify_mid', csId: 'cs_verify_mid', csName: '客服M', uid: 'o_promo_mid',
+    nick: '中级推广', boundAt: now() - 2000, updatedAt: now() - 2000
+  })
+  await promoLogin({ openid: 'o_deep_buyer_cs' }, '客服二级买家', buyerPromo.res.data.refCode)
+  await promoGrant('o_deep_buyer_cs', 'PROMO_PAY_CS_L2', 999)
+  const cCsL2 = await commissionOf('PROMO_PAY_CS_L2#L2')
+  ok(cCsL2 && cCsL2.uid === 'o_promo_mid' && cCsL2.level === 2 && cCsL2.amount === 148.35,
+    '客服绑定账号额外获得二级佣金（其下级的首次付款 15%）')
+
+  /* ---- 客服绑定账号：未开通推广也按两级佣金计入其推广收入 ---- */
+  await promoLogin({ openid: 'o_cs_bound_user' }, '客服绑定用户')
+  await promoLogin({ openid: 'o_cs_buyer' }, '客服买家')
+  await repo.insert('csBindings', {
+    id: 'cs_verify_x', csId: 'cs_verify_x', csName: '客服X', uid: 'o_cs_bound_user',
+    nick: '客服绑定用户', boundAt: now() - 1000, updatedAt: now() - 1000
+  })
+  await repo.insert('referralBindings', {
+    id: 'o_cs_buyer', refUid: 'o_cs_bound_user', boundAt: now() - 1000
+  })
+  await promoGrant('o_cs_buyer', 'PROMO_PAY_CS_001', 999)
+  const cCs = await commissionOf('PROMO_PAY_CS_001')
+  ok(cCs && cCs.uid === 'o_cs_bound_user' && cCs.amount === 148.35,
+    '客服绑定账号未开通推广也按一级计佣，计入其推广收入')
+  const detailCs = await call(adminRouter, 'promote.list', { q: '客服绑定用户' }, { token: adminToken })
+  ok(detailCs.ok && detailCs.data.items.length === 1 && detailCs.data.items[0].csBound === true,
+    '推广管理名单可见客服绑定账号及其开通情况')
+
+  /* ============================================================
+     37.1 退款闭环回归（3.9 / 8.7 / 8.8）
+     ============================================================ */
+  /* 2000 元订单 → 通道费 20 / 基数 1980 / 佣金 297 / 净额 282.15 */
+  const op6 = await promoOpen({ openid: 'o_promo_r6' }, '退款推广六')
+  const b6a = { openid: 'o_buyer_r6a' }
+  const b6b = { openid: 'o_buyer_r6b' }
+  await promoLogin(b6a, '退款买家六A', op6.res.data.refCode)
+  await promoLogin(b6b, '退款买家六B', op6.res.data.refCode)
+  await promoGrant(b6a.openid, 'PROMO_PAY_006A', 2000)
+  await promoGrant(b6b.openid, 'PROMO_PAY_006B', 2000)
+
+  const op7 = await promoOpen({ openid: 'o_promo_r7' }, '退款推广七')
+  const b7a = { openid: 'o_buyer_r7a' }
+  const b7b = { openid: 'o_buyer_r7b' }
+  await promoLogin(b7a, '退款买家七A', op7.res.data.refCode)
+  await promoLogin(b7b, '退款买家七B', op7.res.data.refCode)
+  await promoGrant(b7a.openid, 'PROMO_PAY_007A', 2000)
+  await promoGrant(b7b.openid, 'PROMO_PAY_007B', 2000)
+
+  const op8 = await promoOpen({ openid: 'o_promo_r8' }, '退款推广八')
+  const b8a = { openid: 'o_buyer_r8a' }
+  const b8b = { openid: 'o_buyer_r8b' }
+  await promoLogin(b8a, '退款买家八A', op8.res.data.refCode)
+  await promoLogin(b8b, '退款买家八B', op8.res.data.refCode)
+  await promoGrant(b8a.openid, 'PROMO_PAY_008A', 2000)
+  await promoGrant(b8b.openid, 'PROMO_PAY_008B', 2000)
+
+  const op10 = await promoOpen({ openid: 'o_promo_r10' }, '退款推广十')
+  const b10 = { openid: 'o_buyer_r10' }
+  await promoLogin(b10, '退款买家十', op10.res.data.refCode)
+  await promoGrant(b10.openid, 'PROMO_PAY_010', 2000)
+  /* 路径 B：不可分账（模拟虚拟支付 / 超期），出款只能走商家转账 */
+  const c10row = await commissionOf('PROMO_PAY_010')
+  await repo.updateWhere('commissions', { id: c10row.id }, {
+    splitBlocked: true, splitBlockedReason: 'verify-path-B'
+  })
+
+  CLOCK = Date.parse('2026-05-15T00:00:00Z')
+  adminToken = await loginAdmin('admin')
+  financeToken = await loginAdmin('finance')
+  const settle2 = await call(adminRouter, 'promote.runSettle', {}, { token: adminToken })
+  ok(settle2.ok, '退款闭环回归：5 月 15 日结算完成')
+
+  /* ---- 场景一：佣金仍在「待审核」时退款 ---- */
+  const s6 = await call(userRouter, 'promote.summary', {}, { openid: 'o_promo_r6' })
+  ok(s6.data.totals.available === 594, '待审核退款用例：两笔佣金结算后可提现 594')
+  const w6 = await call(userRouter, 'promote.withdraw', {
+    amount: 300, requestId: 'WQ_R6'
+  }, { openid: 'o_promo_r6' })
+  const w6id = w6.data.withdrawal.id
+  const rev6 = await call(adminRouter, 'promote.reverseCommission', {
+    paymentId: 'PROMO_PAY_006A', reason: '买家退款（待审核期间）'
+  }, { token: adminToken })
+  const w6doc = await repo.get('promoterWithdrawals', w6id)
+  const u6 = await repo.get('users', 'o_promo_r6')
+  ok(rev6.ok && rev6.data.reversed === true, '待审核期间退款：佣金直接冲正')
+  ok(w6doc.status === '已撤销' && /退款冲正自动撤销/.test(w6doc.cancelReason || ''),
+    '待审核提现单被自动撤销并留痕原因')
+  ok(u6.promoterAvailable === 297 && u6.promoterWithdrawing === 0,
+    '撤销后只扣被冲正佣金：另一笔 297 完好、无占用残留')
+
+  /* ---- 场景二：佣金在「待打款 / 打款中」时退款 ---- */
+  const w7 = await call(userRouter, 'promote.withdraw', {
+    amount: 400, requestId: 'WQ_R7'
+  }, { openid: 'o_promo_r7' })
+  const w7id = w7.data.withdrawal.id
+  await call(adminRouter, 'promote.withdrawApprove', { id: w7id }, { token: financeToken })
+  const u7a = await repo.get('users', 'o_promo_r7')
+  const s7 = await call(userRouter, 'promote.summary', {}, { openid: 'o_promo_r7' })
+  ok(u7a.promoterAvailable === 194 && u7a.promoterWithdrawing === 400,
+    '待打款期间：占用 400，可用 194')
+  ok(s7.data.totals.available === 194, '待打款期间可提现不虚高（仍为 194）')
+  const rev7 = await call(adminRouter, 'promote.reverseCommission', {
+    paymentId: 'PROMO_PAY_007A', reason: '买家退款（待打款期间）'
+  }, { token: adminToken })
+  const u7b = await repo.get('users', 'o_promo_r7')
+  ok(rev7.ok && rev7.data.reversed === true, '待打款期间退款：佣金冲正照常')
+  ok(u7b.promoterAvailable === 194 && u7b.promoterWithdrawing === 400,
+    '冲正不重复扣减可提现（在途毛额已在提现中）')
+  await call(adminRouter, 'promote.payoutClaim', { id: w7id }, { token: adminToken })
+  const mark7 = await call(adminRouter, 'promote.payoutMark', {
+    id: w7id, payoutNo: 'PN-PROMO-R7', amount: 97.85, voucherUrl: 'https://img.example/r7.png'
+  }, { token: adminToken })
+  ok(mark7.ok && mark7.data.payoutAmount === 97.85 && mark7.data.uncoveredAmount === 282.15,
+    '打款跳过已冲正明细：实付 97.85、uncovered 282.15')
+  const w7doc = await repo.get('promoterWithdrawals', w7id)
+  ok(w7doc.uncoveredAmount === 282.15 && w7doc.status === '已到账',
+    '提现单按可用明细合计闭合到账')
+  const u7c = await repo.get('users', 'o_promo_r7')
+  ok(u7c.promoterAvailable === 194 && u7c.promoterWithdrawing === 0,
+    '到账后可用余额仍为 194（未被重复扣减）')
+  ok(u7c.promoterWithdrawn === 103,
+    '累计已提现只统计真实出款毛额 103，冲正失效部分不虚增')
+
+  /* 剩余 194 继续可提现，出款后佣金累计实付 = 净额 */
+  const w7b = await call(userRouter, 'promote.withdraw', {
+    amount: 194, requestId: 'WQ_R7B'
+  }, { openid: 'o_promo_r7' })
+  ok(w7b.ok && w7b.data.withdrawal.net === 184.30, '退款后剩余 194 可再次申请，净额 184.30')
+  const w7bid = w7b.data.withdrawal.id
+  await call(adminRouter, 'promote.withdrawApprove', { id: w7bid }, { token: financeToken })
+  await call(adminRouter, 'promote.payoutClaim', { id: w7bid }, { token: adminToken })
+  await call(adminRouter, 'promote.payoutMark', {
+    id: w7bid, payoutNo: 'PN-PROMO-R7B', amount: 184.30, voucherUrl: 'https://img.example/r7b.png'
+  }, { token: adminToken })
+  const c7b = await repo.get('commissions', (await commissionOf('PROMO_PAY_007B')).id)
+  ok(c7b.status === '已提现' && c7b.payoutAmount === 282.15,
+    '佣金分两次出款，累计实付等于净额 282.15')
+  const u7f = await repo.get('users', 'o_promo_r7')
+  ok(u7f.promoterWithdrawn === 297 && u7f.promoterAvailable === 0 && u7f.promoterDebt === 0,
+    '两笔出款后累计已提现 297，与剩余佣金毛额闭合')
+
+  /* 路径 A 已出款：未回退禁止退款 → 回填回退单号 → 退款闭环 */
+  const pay7bRow = (await repo.find('payments', { paymentId: 'PROMO_PAY_007B' }, { limit: 1 }))[0]
+  const blockRefund7a = await call(adminRouter, 'payment.refund', {
+    id: pay7bRow.id, reason: '买家申请退款'
+  }, { token: adminToken })
+  ok(!blockRefund7a.ok && blockRefund7a.code === 'CONFLICT', '已出款未回退：禁止退款（路径 A）')
+  const rev7b = await call(adminRouter, 'promote.reverseCommission', {
+    paymentId: 'PROMO_PAY_007B', reason: '已出款，等待分账回退'
+  }, { token: adminToken })
+  const u7d = await repo.get('users', 'o_promo_r7')
+  ok(rev7b.ok && rev7b.data.reversed === false && rev7b.data.debt === 282.15,
+    '分账路径未回退：不标记冲正，按净额记欠款 282.15')
+  ok(u7d.promoterDebt === 282.15, '欠款 282.15 落账')
+  const recDebt = await call(adminRouter, 'promote.reconcile', {}, { token: adminToken })
+  const debtIssues = recDebt.ok
+    ? recDebt.data.issues.filter((issue) => issue.type === 'user-ledger-drift')
+    : [{ type: 'reconcile-failed' }]
+  ok(recDebt.ok && debtIssues.length === 0,
+    '已出款待回退期间对账不误报余额漂移', JSON.stringify(debtIssues.slice(0, 2)))
+  const blockRefund7b = await call(adminRouter, 'payment.refund', {
+    id: pay7bRow.id, reason: '买家申请退款'
+  }, { token: adminToken })
+  ok(!blockRefund7b.ok && blockRefund7b.code === 'CONFLICT', '仅记欠款仍禁止退款，需先回填回退单号')
+  const backfill7 = await call(adminRouter, 'promote.reverseCommission', {
+    paymentId: 'PROMO_PAY_007B', reason: '分账回退成功',
+    splitRefundDone: true, splitRefundNo: 'RF-PROMO-007B'
+  }, { token: adminToken })
+  const c7bdoc = await commissionOf('PROMO_PAY_007B')
+  const u7e = await repo.get('users', 'o_promo_r7')
+  ok(backfill7.ok && backfill7.data.reversed === true && c7bdoc.status === '已冲正' &&
+    c7bdoc.refundNo === 'RF-PROMO-007B', '回填回退单号后佣金冲正并留痕')
+  ok(u7e.promoterDebt === 0, '回填成功后欠款清零')
+  const refund7 = await call(adminRouter, 'payment.refund', {
+    id: pay7bRow.id, reason: '分账回退完成后退款'
+  }, { token: adminToken })
+  ok(refund7.ok && refund7.data.refunded === true, '回退完成后退款成功（路径 A 闭环）')
+
+  /* ---- 场景三：整单明细全部失效 → 退回余额不得虚增 ---- */
+  const w8 = await call(userRouter, 'promote.withdraw', {
+    amount: 500, requestId: 'WQ_R8'
+  }, { openid: 'o_promo_r8' })
+  const w8id = w8.data.withdrawal.id
+  await call(adminRouter, 'promote.withdrawApprove', { id: w8id }, { token: financeToken })
+  await call(adminRouter, 'promote.reverseCommission', {
+    paymentId: 'PROMO_PAY_008A', reason: '买家退款'
+  }, { token: adminToken })
+  await call(adminRouter, 'promote.reverseCommission', {
+    paymentId: 'PROMO_PAY_008B', reason: '买家退款'
+  }, { token: adminToken })
+  const u8a = await repo.get('users', 'o_promo_r8')
+  ok(u8a.promoterAvailable === 0 && u8a.promoterWithdrawing === 500,
+    '两笔佣金冲正后：未占用部分扣净、占用保留待提现单处理')
+  await call(adminRouter, 'promote.payoutClaim', { id: w8id }, { token: adminToken })
+  const mark8 = await call(adminRouter, 'promote.payoutMark', {
+    id: w8id, payoutNo: 'PN-PROMO-R8', amount: 475, voucherUrl: 'https://img.example/r8.png'
+  }, { token: adminToken })
+  ok(!mark8.ok && mark8.code === 'CONFLICT', '明细全部失效时回填被拒，需退回余额')
+  const cancel8 = await call(adminRouter, 'promote.payoutCancel', {
+    id: w8id, reason: '佣金均已冲正'
+  }, { token: adminToken })
+  const u8b = await repo.get('users', 'o_promo_r8')
+  ok(cancel8.ok && cancel8.data.released === 0 && u8b.promoterAvailable === 0 &&
+    u8b.promoterWithdrawing === 0, '退回余额只释放未冲正毛额：不产生虚增余额')
+
+  /* ---- 场景四：路径 B（转账）已到账 → 补录回退凭证清欠款 → 退款 ---- */
+  const w10 = await call(userRouter, 'promote.withdraw', {
+    amount: 297, requestId: 'WQ_R10'
+  }, { openid: 'o_promo_r10' })
+  const w10id = w10.data.withdrawal.id
+  await call(adminRouter, 'promote.withdrawApprove', { id: w10id }, { token: financeToken })
+  await call(adminRouter, 'promote.payoutClaim', { id: w10id }, { token: adminToken })
+  const mark10 = await call(adminRouter, 'promote.payoutMark', {
+    id: w10id, payoutNo: 'PN-PROMO-R10', amount: 282.15, voucherUrl: 'https://img.example/r10.png'
+  }, { token: adminToken })
+  ok(mark10.ok && mark10.data.status === '已到账', '路径 B（不可分账）按商家转账口径出款成功')
+  const rev10 = await call(adminRouter, 'promote.reverseCommission', {
+    paymentId: 'PROMO_PAY_010', reason: '转账已到账，无法原路回退'
+  }, { token: adminToken })
+  const u10a = await repo.get('users', 'o_promo_r10')
+  ok(rev10.ok && rev10.data.reversed === true && u10a.promoterDebt === 282.15,
+    '路径 B 冲正即置已冲正并记欠款 282.15')
+  const pay10Row = (await repo.find('payments', { paymentId: 'PROMO_PAY_010' }, { limit: 1 }))[0]
+  const block10 = await call(adminRouter, 'payment.refund', {
+    id: pay10Row.id, reason: '买家退款'
+  }, { token: adminToken })
+  ok(!block10.ok && block10.code === 'CONFLICT', '未补录回退凭证前禁止退款（路径 B）')
+  const back10 = await call(adminRouter, 'promote.reverseCommission', {
+    paymentId: 'PROMO_PAY_010', reason: '线下追回完成', splitRefundNo: 'TRF-PROMO-010'
+  }, { token: adminToken })
+  const u10b = await repo.get('users', 'o_promo_r10')
+  ok(back10.ok && back10.data.reason === 'backfill-recorded' && u10b.promoterDebt === 0,
+    '已冲正后补录回退单号：清欠款且不重复改余额')
+  const refund10 = await call(adminRouter, 'payment.refund', {
+    id: pay10Row.id, reason: '已线下追回'
+  }, { token: adminToken })
+  ok(refund10.ok && refund10.data.refunded === true, '路径 B 补录后退款成功（闭环）')
+
+  /* ---- 场景五前置：Apple 渠道到账冻结（不看日历，等财务确认结算到账） ---- */
+  const p6 = await promoOpen(P6, '推广者六')
+  await promoLogin(B7, '买家七', p6.res.data.refCode)
+  await call(adminRouter, 'biz.grant', {
+    uid: B7.openid, plan: 'month', amount: 999, method: '微信支付',
+    paymentId: 'PROMO_PAY_007', channel: 'apple'
+  }, { token: adminToken })
+  const ca = await commissionOf('PROMO_PAY_007')
+  ok(!!ca && ca.channel === 'apple' && ca.status === '待结算' && ca.arrivalHold === true,
+    'Apple 渠道计佣后进入到账冻结（待结算，不按次月 15 日日历解冻）')
+  ok(ca.channelCost === 119.88 && ca.base === 879.12 && ca.amount === 131.87 && ca.netAmount === 125.28,
+    'Apple 渠道计佣口径：12% 通道成本 → 基数 879.12 / 佣金 131.87 / 净额 125.28')
+  ok(ca.eligibleAt === Date.parse('2026-06-14T16:00:00Z'),
+    'Apple 冻结佣金仍记录日历解冻日（6 月 15 日）作参考，到账前不生效')
+  const caList = await call(userRouter, 'promote.commissions', {}, P6)
+  ok(caList.ok && caList.data.items.length === 1 && caList.data.items[0].arrivalHold === true &&
+    caList.data.items[0].eligibleText === '待平台确认到账',
+    '推广者佣金列表对到账冻结佣金显示「待平台确认到账」')
+
+  /* ---- 场景五：微信 / Apple 渠道退款推送（钱已退，无法拦截） ---- */
+  const op11 = await promoOpen({ openid: 'o_promo_r11' }, '退款推广十一')
+  const b11 = { openid: 'o_buyer_r11' }
+  await promoLogin(b11, '退款买家十一', op11.res.data.refCode)
+  await promoGrant(b11.openid, 'PROMO_PAY_011', 2000)
+  CLOCK = Date.parse('2026-06-15T00:00:00Z')
+  adminToken = await loginAdmin('admin')
+  financeToken = await loginAdmin('finance')
+  await call(adminRouter, 'promote.runSettle', {}, { token: adminToken })
+  const w11 = await call(userRouter, 'promote.withdraw', {
+    amount: 297, requestId: 'WQ_R11'
+  }, { openid: 'o_promo_r11' })
+  const w11id = w11.data.withdrawal.id
+  await call(adminRouter, 'promote.withdrawApprove', { id: w11id }, { token: financeToken })
+  await call(adminRouter, 'promote.payoutClaim', { id: w11id }, { token: adminToken })
+  await call(adminRouter, 'promote.payoutMark', {
+    id: w11id, payoutNo: 'PN-PROMO-R11', amount: 282.15, voucherUrl: 'https://img.example/r11.png'
+  }, { token: adminToken })
+  const require2 = createRequire(import.meta.url)
+  const { createMarketAdminHandlers: createMarketAdmin2 } = require2(path.join(shared, 'market.js'))
+  const marketAdmin2 = createMarketAdmin2({ repo, keys, now })
+  const internalCtx2 = { accountId: '', session: { role: 'admin' } }
+  const sysRefund11 = await marketAdmin2['payment.systemRefund']({
+    outTradeNo: 'PROMO_PAY_011', success: true
+  }, internalCtx2)
+  const c11 = await commissionOf('PROMO_PAY_011')
+  const u11 = await repo.get('users', 'o_promo_r11')
+  ok(sysRefund11.found === true && sysRefund11.refunded === true,
+    '渠道退款推送：已出款未回填也不拦截，直接退款成功')
+  ok(u11.promoterDebt === 282.15 && c11.status === '已提现',
+    '渠道退款后佣金记欠款、待补录回退单号（不误置已冲正）')
+  const back11 = await call(adminRouter, 'promote.reverseCommission', {
+    paymentId: 'PROMO_PAY_011', reason: '分账回退成功', splitRefundDone: true, splitRefundNo: 'RF-PROMO-011'
+  }, { token: adminToken })
+  const u11b = await repo.get('users', 'o_promo_r11')
+  ok(back11.ok && back11.data.reversed === true && u11b.promoterDebt === 0,
+    '渠道退款后补录回退单号：冲正并清欠款')
+
+  /* ---- Apple 到账确认：6 月 15 日结算任务已跑过，冻结佣金仍保持待结算 ---- */
+  const caHeld = await repo.get('commissions', ca.id)
+  ok(caHeld.status === '待结算' && caHeld.arrivalHold === true,
+    '日历解冻日已过，到账冻结佣金不被结算任务解冻')
+  const badMonth = await call(adminRouter, 'promote.appleSettle', { month: '2026-5' }, { token: financeToken })
+  ok(!badMonth.ok && badMonth.code === 'VALIDATION', '到账月份必须为 YYYY-MM 格式')
+  /* 推广者六预置 50 元欠款：确认到账时自动抵扣 */
+  await repo.updateWhere('users', { id: P6.openid }, { promoterDebt: 50 })
+  const arr1 = await call(adminRouter, 'promote.appleSettle', { month: '2026-05' }, { token: financeToken })
+  ok(arr1.ok && arr1.data.count === 1 && arr1.data.amount === 131.87 && arr1.data.offset === 50,
+    '财务确认 5 月 Apple 到账：解冻 1 笔 131.87，其中 50 元自动抵扣欠款')
+  const caAfter = await repo.get('commissions', ca.id)
+  const u6a = await repo.get('users', P6.openid)
+  ok(caAfter.status === '可提现' && caAfter.arrivalHold === false && Number(caAfter.arrivedAt) === CLOCK &&
+    caAfter.offsetToDebt === 50,
+    '确认到账后佣金转可提现，回填 arrivedAt 与 offsetToDebt')
+  ok(u6a.promoterAvailable === 81.87 && u6a.promoterDebt === 0 && u6a.promoterPending === 0,
+    '确认到账后：可提现 81.87（131.87 − 50）、欠款清零、待结算清零')
+  const arr2 = await call(adminRouter, 'promote.appleSettle', { month: '2026-05' }, { token: financeToken })
+  ok(arr2.ok && arr2.data.count === 0, '同一月份重复确认到账保持幂等（0 笔）')
+  const arrAudit = await repo.find('audit', { action: 'promote.appleSettle' }, { limit: 5 })
+  ok(arrAudit.length >= 1, '确认到账动作写入审计日志')
+  /* 开关关闭后，新 Apple 佣金回到次月 15 日日历解冻 */
+  const setOff = await call(adminRouter, 'promote.saveSettings', { appleArrivalHold: false }, { token: adminToken })
+  ok(setOff.ok, '关闭 Apple 到账冻结开关成功', setOff.message)
+  /* 同一个买家第二次付款不再计佣（仅首次付款产生佣金） */
+  await call(adminRouter, 'biz.grant', {
+    uid: B7.openid, plan: 'month', amount: 999, method: '微信支付',
+    paymentId: 'PROMO_PAY_RENEW_007', channel: 'apple'
+  }, { token: adminToken })
+  ok(!(await commissionOf('PROMO_PAY_RENEW_007')),
+    '同一买家第二次付款不再计佣（推广佣金只认首次付款）')
+
+  /* 开关关闭后，新 Apple 佣金回到次月 15 日日历解冻：换一个尚未付过款的买家 */
+  const b12 = { openid: 'o_buyer_r12' }
+  await promoLogin(b12, '买家十二', p6.res.data.refCode)
+  await call(adminRouter, 'biz.grant', {
+    uid: b12.openid, plan: 'month', amount: 999, method: '微信支付',
+    paymentId: 'PROMO_PAY_008', channel: 'apple'
+  }, { token: adminToken })
+  const ca2 = await commissionOf('PROMO_PAY_008')
+  ok(!!ca2 && ca2.status === '待结算', '关闭开关后 Apple 支付仍正常计佣')
+  ok(!!ca2 && ca2.arrivalHold === false, '关闭开关后新 Apple 佣金不再到账冻结')
+  ok(!!ca2 && ca2.eligibleAt === Date.parse('2026-07-14T16:00:00Z'),
+    '关闭开关后 Apple 佣金按次月 15 日（7 月 15 日）日历解冻')
+  await call(adminRouter, 'promote.saveSettings', { appleArrivalHold: true }, { token: adminToken })
+  ok((await call(adminRouter, 'promote.settings', {}, { token: adminToken })).data.appleArrivalHold === true,
+    '到账冻结开关恢复开启')
+
+  /* ---- 退款闭环后对账仍然无资金类差异 ---- */
+  const rec2 = await call(adminRouter, 'promote.reconcile', {}, { token: adminToken })
+  const funding2 = rec2.ok
+    ? rec2.data.issues.filter((issue) => [
+      'user-ledger-drift', 'commission-overpaid', 'commission-over-withdrawn',
+      'duplicate-payout-no', 'duplicate-active-item', 'paid-items-mismatch'
+    ].indexOf(issue.type) > -1)
+    : [{ type: 'reconcile-failed' }]
+  ok(rec2.ok && funding2.length === 0, '退款闭环后对账无资金类差异', JSON.stringify(funding2.slice(0, 2)))
+
+  /* ---- 三项定时任务：计佣补偿 / 分账完结清单 / 待打款超时提醒 ---- */
+  const { createPromoteEngine } = require(path.join(shared, 'promote.js'))
+  const promoteEngine = createPromoteEngine({ repo, now })
+  const jobAt = CLOCK
+  /* 模拟「支付成功但计佣失败」：只有收款单，没有佣金（首次付款的买家） */
+  const b13 = { openid: 'o_buyer_r13' }
+  await promoLogin(b13, '买家十三', p2.res.data.refCode)
+  await repo.insert('payments', {
+    id: 'PY_PROMO_COMP_1',
+    uid: b13.openid,
+    nick: '买家十三',
+    bizType: '会员续费',
+    planKey: 'month',
+    planLabel: '月度会员',
+    days: 30,
+    amount: 999,
+    received: 999,
+    method: '微信支付',
+    channel: 'wxpay',
+    status: '已确认',
+    paidAt: jobAt,
+    confirmedAt: jobAt,
+    orderId: 'BO_PROMO_COMP_1',
+    paymentId: 'PROMO_PAY_COMP_1',
+    outTradeNo: 'PROMO_PAY_COMP_1',
+    createdAt: jobAt,
+    updatedAt: jobAt
+  })
+  const comp1 = await promoteEngine.compensateCommissions()
+  const compDoc = await commissionOf('PROMO_PAY_COMP_1')
+  ok(comp1.created === 1 && !!compDoc && compDoc.uid === P2.openid && compDoc.amount === 148.35 &&
+    compDoc.netAmount === 140.93 && compDoc.status === '待结算',
+    '计佣补偿：漏计佣的会员收款单补齐佣金（148.35 / 净额 140.93）', JSON.stringify(comp1.failed.slice(0, 2)))
+  const comp2 = await promoteEngine.compensateCommissions()
+  ok(comp2.created === 0 && comp2.scanned >= 1, '计佣补偿幂等：重复执行不重复计佣')
+  const compAudit = await repo.find('audit', { action: 'promote.commission.compensate' }, { limit: 5 })
+  ok(compAudit.length >= 1, '计佣补偿写入审计日志')
+
+  /* 分账完结清单：仅路径 A 出款完成、且该订单佣金全部结清的单 */
+  const splitList = await promoteEngine.buildSplitCompletionList()
+  ok(splitList.enabled === true && splitList.count >= 1 &&
+    splitList.items.some((it) => it.transactionId === 'TXPROMO_PAY_001'),
+    '分账完结清单：路径 A 已出款且佣金结清的单进入清单', JSON.stringify(splitList.items.slice(0, 2)))
+  await call(adminRouter, 'promote.saveSettings', { splitEnabled: false }, { token: adminToken })
+  const splitOff = await promoteEngine.buildSplitCompletionList()
+  ok(splitOff.enabled === false && splitOff.count === 0 && splitOff.items.length === 0,
+    '关闭分账后分账完结清单为空（不存在冻结资金）')
+  await call(adminRouter, 'promote.saveSettings', { splitEnabled: true }, { token: adminToken })
+
+  /* 待打款超时提醒：审核通过超过 24 小时仍未回填 */
+  const staleId = 'W_PROMO_STALE_1'
+  await repo.insert('promoterWithdrawals', {
+    id: staleId,
+    uid: P3.openid,
+    requestId: 'WQ_PROMO_STALE',
+    activeKey: 'W#' + staleId,
+    amount: 120,
+    fee: 6,
+    tax: 0,
+    deductToDebt: 0,
+    net: 114,
+    status: '待打款',
+    method: '',
+    payoutMode: 'manual',
+    applyAt: jobAt - 48 * 3600 * 1000,
+    appliedAt: jobAt - 48 * 3600 * 1000,
+    reviewedAt: jobAt - 48 * 3600 * 1000,
+    reviewedBy: 'finance',
+    payoutDeadlineAt: jobAt - 25 * 3600 * 1000,
+    createdAt: jobAt - 48 * 3600 * 1000,
+    updatedAt: jobAt - 48 * 3600 * 1000
+  })
+  const remind1 = await promoteEngine.remindPayoutTimeout()
+  const staleDoc = await repo.get('promoterWithdrawals', staleId)
+  const staleNote = remind1.items.filter((it) => it.id === staleId)[0]
+  ok(remind1.reminded >= 1 && !!staleNote && staleNote.overdueHours >= 24 &&
+    staleDoc.payoutTimeoutCount === 1 && Number(staleDoc.payoutTimeoutRemindedAt) === jobAt,
+    '待打款超时提醒：超过 24 小时未回填的单被标记', JSON.stringify(remind1.items.slice(0, 2)))
+  const remind2 = await promoteEngine.remindPayoutTimeout()
+  ok(remind2.reminded === 0 && remind2.skipped >= 1, '同一笔同一天只提醒一次，任务重跑不重复通知')
+  const timeoutAudit = await repo.find('audit', { action: 'promote.payout.timeout' }, { limit: 5 })
+  ok(timeoutAudit.length >= 1, '待打款超时写入审计日志')
+  const outbox = await repo.find('outbox', {}, { limit: 500 })
+  ok(outbox.some((m) => m.payload && m.payload.uid === P3.openid && m.payload.targetId === staleId &&
+    String(m.payload.title || '').indexOf('提现') > -1), '待打款超时给推广者发进度提醒')
+
+  const warnJob = await promoteEngine.warnExpiringCommissions()
+  ok(warnJob && typeof warnJob.settled === 'number' && typeof warnJob.splitExpired === 'number',
+    '超期预警任务可用：复用日终扫描（到期分账 / 日限额）')
+}
+
+/* ============================================================
+   38. 客服业务：绑定用户 / 下级会员提成 / 咨询领取与评价
+   ============================================================ */
+section('38. 客服业务：绑定、提成与咨询评价')
+{
+  const loginAdmin = async (key) => {
+    const acc = DEMO_ADMIN_ACCOUNTS.find((a) => a.key === key)
+    const r = await call(adminRouter, 'admin.login', {
+      username: acc.username, password: acc.password, otp: generateTotp(acc.totpSecret, now())
+    }, {})
+    return r.ok ? r.data.token : ''
+  }
+  const adminCtx = { token: adminToken }
+  const csToken = await loginAdmin('cs')
+  ok(!!csToken, '客服账号可登录')
+  const csCtx = { token: csToken }
+
+  const A = { openid: 'o_cs_bound' }
+  const B = { openid: 'o_cs_direct' }
+  const C = { openid: 'o_cs_deep' }
+  const D = { openid: 'o_cs_other' }
+  await call(userRouter, 'auth.login', { nick: '客服绑定用户' }, A)
+  await call(userRouter, 'auth.login', { nick: '直接下级' }, B)
+  await call(userRouter, 'auth.login', { nick: '两级下级' }, C)
+  await call(userRouter, 'auth.login', { nick: '无邀请人' }, D)
+
+  /* ---- 比例配置：全局默认 + 客服单独覆盖 ---- */
+  const rateDefault = await call(adminRouter, 'cs.settings', {}, adminCtx)
+  ok(rateDefault.ok && rateDefault.data.settings.rate === 0.05,
+    '提成比例默认 5%（管理端可调）', JSON.stringify(rateDefault.data && rateDefault.data.settings))
+  const badRate = await call(adminRouter, 'cs.saveSettings', { rate: 0.5 }, adminCtx)
+  ok(!badRate.ok && badRate.code === 'VALIDATION', '全局比例超出 0~30% 区间被拒绝')
+  const savedRate = await call(adminRouter, 'cs.saveSettings', { rate: 0.08 }, adminCtx)
+  ok(savedRate.ok && savedRate.data.rate === 0.08, '管理员可调整全局默认比例')
+  const ownRate = await call(adminRouter, 'cs.saveRate', { csId: 'cs', rate: 0.12 }, adminCtx)
+  ok(ownRate.ok && ownRate.data.rate === 0.12 && ownRate.data.source === 'staff',
+    '客服单独比例优先生效', JSON.stringify(ownRate.data))
+  const csForbidden = await call(adminRouter, 'cs.saveSettings', { rate: 0.1 }, csCtx)
+  ok(!csForbidden.ok && csForbidden.code === 'FORBIDDEN', '客服不能自行调整提成比例')
+
+  /* ---- 绑定：一个客服一个用户 / 一个用户一个客服 ---- */
+  const bindBad = await call(adminRouter, 'cs.bind', { csId: 'cs' }, adminCtx)
+  ok(!bindBad.ok && bindBad.code === 'VALIDATION', '绑定必须指定用户账号')
+  const binded = await call(adminRouter, 'cs.bind', { csId: 'cs', uid: A.openid }, adminCtx)
+  ok(binded.ok && binded.data.uid === A.openid && binded.data.csId === 'cs', '客服可绑定一个用户账号')
+  const bindAgain = await call(adminRouter, 'cs.bind', { csId: 'cs', uid: B.openid }, adminCtx)
+  ok(!bindAgain.ok && bindAgain.code === 'CONFLICT', '同一客服不能再绑定第二个用户')
+  const bindTaken = await call(adminRouter, 'cs.bind', { csId: 'admin', uid: A.openid }, adminCtx)
+  ok(!bindTaken.ok && bindTaken.code === 'CONFLICT', '同一用户不能同时归属两个客服')
+  const bindSelf = await call(adminRouter, 'cs.bind', { csId: 'cs', uid: B.openid }, csCtx)
+  ok(!bindSelf.ok && bindSelf.code === 'FORBIDDEN', '客服不能自行绑定用户（管理端控制）')
+
+  /* ---- 只算直接下级、只算会员支付 ---- */
+  await repo.insert('referralBindings', {
+    id: B.openid, refUid: A.openid, scene: 'share', createdAt: now() - 10 * 86400000
+  })
+  await repo.insert('referralBindings', {
+    id: C.openid, refUid: B.openid, scene: 'share', createdAt: now() - 9 * 86400000
+  })
+  const payMonth = (buyer, paymentId, amount) => call(adminRouter, 'biz.grant', {
+    uid: buyer,
+    plan: 'month',
+    amount,
+    method: '微信支付',
+    paymentId,
+    channel: 'wxpay',
+    transactionId: 'TX' + paymentId
+  }, adminCtx)
+
+  const payDirect = await payMonth(B.openid, 'CS_PAY_DIRECT', 1000)
+  ok(payDirect.ok, '直接下级会员支付成功')
+  const rowsDirect = await repo.find('csCommissions', { payerUid: B.openid }, { limit: 5 })
+  ok(rowsDirect.length === 1 && rowsDirect[0].csId === 'cs' &&
+    rowsDirect[0].amount === 1000 && rowsDirect[0].commission === 120 &&
+    rowsDirect[0].rate === 0.12 && rowsDirect[0].rateSource === 'staff',
+    '直接下级支付按客服单独比例计提成（1000 → 120）', JSON.stringify(rowsDirect[0]))
+  await payMonth(B.openid, 'CS_PAY_DIRECT', 1000)
+  const rowsAgain = await repo.find('csCommissions', { paymentId: 'CS_PAY_DIRECT' }, { limit: 5 })
+  ok(rowsAgain.length === 1, '同一支付单号重复回调只计提一次（幂等）')
+
+  await payMonth(C.openid, 'CS_PAY_DEEP', 800)
+  const rowsDeep = await repo.find('csCommissions', { payerUid: C.openid }, { limit: 5 })
+  ok(rowsDeep.length === 0, '两级下级（间接下级）不计入该客服业绩')
+  await payMonth(D.openid, 'CS_PAY_NONE', 500)
+  const rowsNone = await repo.find('csCommissions', { payerUid: D.openid }, { limit: 5 })
+  ok(rowsNone.length === 0, '无邀请关系的付款不计业绩')
+  await payMonth(A.openid, 'CS_PAY_SELF', 600)
+  const rowsSelf = await repo.find('csCommissions', { payerUid: A.openid }, { limit: 5 })
+  ok(rowsSelf.length === 0, '绑定账号本人支付不计入下级业绩')
+
+  const statsAdmin = await call(adminRouter, 'cs.settings', {}, adminCtx)
+  const csRow = statsAdmin.data.items.filter((it) => it.csId === 'cs')[0]
+  ok(!!csRow && csRow.stats.performanceTotal === 1000 && csRow.stats.commissionTotal === 120 &&
+    csRow.stats.monthPerformance === 1000 && csRow.stats.ratingCount === 0,
+    '客服档案业绩 / 提成 / 本月数据汇总正确', JSON.stringify(csRow && csRow.stats))
+  const statsMine = await call(adminRouter, 'cs.settings', {}, csCtx)
+  ok(statsMine.ok && statsMine.data.items.length === 1 && statsMine.data.items[0].csId === 'cs',
+    '客服只能看到自己的档案')
+  const commMine = await call(adminRouter, 'cs.commissions', { csId: 'admin' }, csCtx)
+  ok(commMine.ok && commMine.data.csId === 'cs' && commMine.data.total === 1,
+    '客服提成流水强制只看自己')
+  const commAdmin = await call(adminRouter, 'cs.commissions', { csId: 'cs' }, adminCtx)
+  ok(commAdmin.ok && commAdmin.data.total === 1, '管理员可查看指定客服提成流水')
+  ok(commMine.ok && commMine.data.items[0].paymentId === 'CS_PAY_DIRECT',
+    '提成流水关联支付单号，便于对账')
+
+  /* ---- 代采代售咨询：等待领取 → 客服接入 → 对话 → 结束 → 评价 ---- */
+  const LEAD_ID = 'ld_cs_verify_1'
+  await repo.insert('leads', {
+    id: LEAD_ID,
+    uid: B.openid,
+    targetType: 'agency',
+    targetId: 'agy_cs_verify',
+    agencyTitle: '代售 · 验证委托',
+    formSummary: '代售 · 验证委托',
+    status: LEAD_STATUS.PENDING,
+    csStatus: '待领取',
+    csClaimedAt: 0,
+    csId: '',
+    csName: '',
+    threadId: LEAD_ID,
+    assignedAccount: '',
+    createdAt: now(),
+    updatedAt: now()
+  })
+  await repo.insert('outbox', {
+    id: 'M_cs_wait',
+    type: 'kf.chat',
+    payload: {
+      uid: B.openid,
+      channel: 'kf',
+      from: 'system',
+      staffName: '平台客服',
+      threadId: LEAD_ID,
+      targetType: 'agency',
+      targetId: 'agy_cs_verify',
+      title: '代售 · 验证委托',
+      body: '需求已提交，工单已生成，正在等待平台客服处理',
+      csStatus: '待领取'
+    },
+    status: 'pending',
+    createdAt: now()
+  })
+
+  const waitThread = await call(userRouter, 'msg.thread', { threadId: LEAD_ID }, B)
+  ok(waitThread.ok && waitThread.data.kind === 'cs' &&
+    waitThread.data.cs.status === '待领取' && waitThread.data.cs.waiting === true &&
+    waitThread.data.cs.canSend === false,
+    '未领取时用户端显示「正在等待平台客服处理」且不能发言', JSON.stringify(waitThread.data && waitThread.data.cs))
+  ok(waitThread.data.items.some((it) => it.role === 'system' && it.text.indexOf('正在等待平台客服处理') > -1),
+    '未领取时会话内展示平台等待提示')
+  const waitSend = await call(userRouter, 'msg.send', { threadId: LEAD_ID, body: '在吗' }, B)
+  ok(!waitSend.ok && waitSend.code === 'CONFLICT', '客服未领取前用户不能发消息')
+
+  const unclaimedReply = await call(adminRouter, 'msg.reply', {
+    threadId: LEAD_ID, body: '未领取直接回复'
+  }, csCtx)
+  ok(!unclaimedReply.ok && unclaimedReply.code === 'FORBIDDEN', '客服未领取不能直接回复用户')
+
+  const claim = await call(adminRouter, 'lead.claim', { leadId: LEAD_ID }, csCtx)
+  ok(claim.ok && claim.data.csStatus === '服务中', '客服领取后咨询进入服务中', JSON.stringify(claim.data))
+  const servingThread = await call(userRouter, 'msg.thread', { threadId: LEAD_ID }, B)
+  ok(servingThread.ok && servingThread.data.cs.status === '服务中' &&
+    servingThread.data.cs.canSend === true && !!servingThread.data.cs.csName,
+    '领取后用户端显示哪个客服正在接入并可对话', JSON.stringify(servingThread.data && servingThread.data.cs))
+  ok(servingThread.data.cs.stage === 'communicating' && servingThread.data.cs.stageLabel === '沟通中',
+    '会话同步返回客服标准流程阶段，供用户端展示服务进度', JSON.stringify(servingThread.data && servingThread.data.cs))
+
+  const staffReply = await call(adminRouter, 'msg.reply', { threadId: LEAD_ID, body: '你好，我来对接' }, csCtx)
+  ok(staffReply.ok && staffReply.data.threadId === LEAD_ID, '客服可在咨询会话内回复用户')
+  const userSend = await call(userRouter, 'msg.send', { threadId: LEAD_ID, body: '麻烦帮我看下报价' }, B)
+  ok(userSend.ok, '服务中用户可正常发消息')
+  const servedThread = await call(userRouter, 'msg.thread', { threadId: LEAD_ID }, B)
+  const texts = servedThread.data.items.map((it) => it.text)
+  ok(texts.indexOf('你好，我来对接') > -1 && texts.indexOf('麻烦帮我看下报价') > -1,
+    '双方消息在同一咨询会话内可见', JSON.stringify(texts))
+
+  const end = await call(adminRouter, 'lead.endService', { leadId: LEAD_ID }, csCtx)
+  ok(end.ok && end.data.csStatus === '已结束', '客服结束服务后咨询状态变为已结束', JSON.stringify(end.data))
+  const endAgain = await call(adminRouter, 'lead.endService', { leadId: LEAD_ID }, csCtx)
+  ok(endAgain.ok && endAgain.data.already === true, '重复结束服务幂等')
+  const endSend = await call(userRouter, 'msg.send', { threadId: LEAD_ID, body: '还在吗' }, B)
+  ok(!endSend.ok && endSend.code === 'CONFLICT', '结束后用户不能再发消息')
+  const endReply = await call(adminRouter, 'msg.reply', { threadId: LEAD_ID, body: '已结束' }, csCtx)
+  ok(!endReply.ok && endReply.code === 'CONFLICT', '结束后客服也不能再回复')
+
+  const rated = await call(userRouter, 'consult.rate', {
+    leadId: LEAD_ID, score: 5, tags: ['专业', '响应快'], text: '对接很快'
+  }, B)
+  ok(rated.ok && rated.data.rating === 5, '结束后用户可对客服打分评价', JSON.stringify(rated.data))
+  const ratedRow = await repo.find('csRatings', { leadId: LEAD_ID }, { limit: 5 })
+  ok(ratedRow.length === 1 && ratedRow[0].csId === 'cs' && ratedRow[0].score === 5,
+    '评价落库并归属到对应客服', JSON.stringify(ratedRow[0]))
+  const ratedAgain = await call(userRouter, 'consult.rate', { leadId: LEAD_ID, score: 3 }, B)
+  ok(!ratedAgain.ok && ratedAgain.code === 'CONFLICT', '同一咨询不能重复评价')
+  const rateOther = await call(userRouter, 'consult.rate', { leadId: LEAD_ID, score: 5 }, D)
+  ok(!rateOther.ok && rateOther.code === 'NOT_FOUND', '非咨询本人不能评价')
+  const ratingBad = await call(userRouter, 'consult.rate', { leadId: LEAD_ID, score: 9 }, B)
+  ok(!ratingBad.ok && ratingBad.code === 'CONFLICT', '已评价后不接受再次提交（含非法分值）')
+
+  const ratingRows = await call(adminRouter, 'cs.ratings', { csId: 'cs' }, adminCtx)
+  ok(ratingRows.ok && ratingRows.data.total === 1 && ratingRows.data.items[0].leadId === LEAD_ID &&
+    ratingRows.data.items[0].tags.join(',') === '专业,响应快',
+    '评价自动记入客服档案', JSON.stringify(ratingRows.data.items[0]))
+  const statsAfter = await call(adminRouter, 'cs.settings', {}, csCtx)
+  const csAfter = statsAfter.data.items[0]
+  ok(statsAfter.ok && csAfter.stats.ratingCount === 1 && csAfter.stats.ratingAvg === 5 &&
+    csAfter.stats.servedCount === 1 && csAfter.stats.endedCount === 1,
+    '客服档案聚合评分与服务单数', JSON.stringify(csAfter && csAfter.stats))
+  const rateLog = await repo.find('audit', { action: 'consult.rate' }, { limit: 5 })
+  ok(rateLog.length === 1, '评价写入审计日志')
+
+  /* ---- 代采代售佣金与客服工资（引擎层 P1 底座） ---- */
+  const csEngine = createCsEngine({ repo, now })
+  const MK_NOW = monthKeyOf(CLOCK)
+  const clockCn = new Date(CLOCK + 8 * 3600 * 1000)
+  const prevMonthAt = Date.UTC(clockCn.getUTCFullYear(), clockCn.getUTCMonth() - 1, 15, 4) - 8 * 3600 * 1000
+  const MK_PREV = monthKeyOf(prevMonthAt)
+  const agencySettings = await call(adminRouter, 'cs.settings', {}, adminCtx)
+  ok(agencySettings.data.settings.agencyRate === 0.2 && agencySettings.data.settings.agencyRateMax === 0.5,
+    '代采代售佣金默认 20%，区间 0~50%', JSON.stringify(agencySettings.data.settings))
+  const badAgencyRate = await call(adminRouter, 'cs.saveSettings', { agencyRate: 0.6 }, adminCtx)
+  ok(!badAgencyRate.ok && badAgencyRate.code === 'VALIDATION', '代采佣金比例超过上限被拒绝')
+  const agencyOnly = await call(adminRouter, 'cs.saveSettings', { agencyRate: 0.25 }, adminCtx)
+  ok(agencyOnly.ok && agencyOnly.data.agencyRate === 0.25 && agencyOnly.data.rate === 0.08,
+    '只改代采佣金比例时不会覆盖会员提成比例', JSON.stringify(agencyOnly.data))
+  await call(adminRouter, 'cs.saveSettings', { agencyRate: 0.2 }, adminCtx)
+
+  const feeDefault = await csEngine.recordAgencyFeePaid({
+    paymentId: 'PAY_AG_P1', csId: 'cs', csName: '客服坐席', agencyId: 'agy_p1',
+    leadId: 'ld_p1', item: 'H100 整机', feeAmount: 5000, paidAt: CLOCK
+  })
+  ok(feeDefault && feeDefault.commission === 1000 && feeDefault.rate === 0.2 &&
+    feeDefault.rateSource === 'global' && feeDefault.monthKey === MK_NOW,
+    '服务费实收 5000 按全局 20% 计提 1000', JSON.stringify(feeDefault))
+  const feeRepeat = await csEngine.recordAgencyFeePaid({
+    paymentId: 'PAY_AG_P1', csId: 'cs', feeAmount: 5000, paidAt: CLOCK
+  })
+  ok(feeRepeat === null, '同一笔服务费账单只计提一次佣金')
+  await csEngine.saveAgencyRate('cs', 0.3, 'admin')
+  const feeStaff = await csEngine.recordAgencyFeePaid({
+    paymentId: 'PAY_AG_P1B', csId: 'cs', feeAmount: 1000, paidAt: CLOCK
+  })
+  ok(feeStaff && feeStaff.commission === 300 && feeStaff.rateSource === 'staff',
+    '客服单独佣金比例优先生效（1000 → 300）', JSON.stringify(feeStaff))
+  await csEngine.saveAgencyRate('cs', null, 'admin')
+
+  const salaryNow = await csEngine.salaryOf('cs', MK_NOW)
+  ok(salaryNow.memberCommission === 120 && salaryNow.agencyCommission === 1300 &&
+    salaryNow.monthSalary === 1420 && salaryNow.agencyOrderCount === 2,
+    '工资 = 分享开通提成 120 + 代采佣金 1300 = 1420', JSON.stringify(salaryNow))
+
+  const feePrev = await csEngine.recordAgencyFeePaid({
+    paymentId: 'PAY_AG_PREV', csId: 'cs', feeAmount: 1000, paidAt: prevMonthAt
+  })
+  ok(feePrev && feePrev.monthKey === MK_PREV, '佣金按到账月份归档（上月单不混入本月）')
+  const salaryPrevBefore = await csEngine.salaryOf('cs', MK_PREV)
+  ok(salaryPrevBefore.agencyCommission === 200 && salaryPrevBefore.monthSalary === 200,
+    '上月工资只含上月到账的佣金')
+  const reversed = await csEngine.reverseAgencyCommission({ paymentId: 'PAY_AG_PREV', reason: '服务费退款', at: CLOCK })
+  ok(reversed && reversed.reversedCommission === 200 && reversed.reversedAt === CLOCK, '退款冲正记录冲正金额与时间')
+  const reverseAgain = await csEngine.reverseAgencyCommission({ paymentId: 'PAY_AG_PREV', at: CLOCK + 86400000 })
+  ok(reverseAgain && reverseAgain.reversedAt === CLOCK, '重复冲正幂等，不重复扣回')
+  const salaryPrevAfter = await csEngine.salaryOf('cs', MK_PREV)
+  const salaryNowAfter = await csEngine.salaryOf('cs', MK_NOW)
+  ok(salaryPrevAfter.monthSalary === 200 && salaryNowAfter.monthSalary === 1220,
+    '冲正只扣当月工资，不改历史月份（本月 1420 → 1220）',
+    JSON.stringify({ prev: salaryPrevAfter.monthSalary, now: salaryNowAfter.monthSalary }))
+  ok(salaryNowAfter.totalSalary === 1420 && salaryNowAfter.totalMemberCommission === 120,
+    '累计工资 = 会员提成 120 + 代采佣金净额 1300', JSON.stringify(salaryNowAfter))
+  const statsP1 = await csEngine.statsOf('cs')
+  ok(statsP1.agencyRate === 0.2 && statsP1.monthSalary === 1220 && statsP1.monthAgencyCommission === 1100,
+    '客服档案同步展示工资与代采佣金口径', JSON.stringify({ rate: statsP1.agencyRate, salary: statsP1.monthSalary }))
+}
+
+/* ============================================================
+   39. 代采代售咨询标准流程：条件 → 居间合同 → 签约 → 服务费 → 佣金 → 完成
+   ============================================================ */
+section('39. 咨询标准流程：合同、服务费与佣金闭环')
+{
+  const loginAdmin = async (key) => {
+    const acc = DEMO_ADMIN_ACCOUNTS.find((a) => a.key === key)
+    const r = await call(adminRouter, 'admin.login', {
+      username: acc.username, password: acc.password, otp: generateTotp(acc.totpSecret, now())
+    }, {})
+    return r.ok ? r.data.token : ''
+  }
+  const csCtxP3 = { token: await loginAdmin('cs') }
+  const adminCtxP3 = { token: adminToken }
+  ok(!!csCtxP3.token && !!adminCtxP3.token, '客服与管理员账号可登录')
+
+  const OWNER = { openid: 'o_p3_owner' }
+  const BUYER = { openid: 'o_p3_buyer' }
+  await call(userRouter, 'auth.login', { nick: '流程委托方' }, OWNER)
+  await call(userRouter, 'auth.login', { nick: '流程对接方' }, BUYER)
+
+  const pub = await call(userRouter, 'agency.submit', {
+    side: 'sell', mode: TRADE_MODES.SELL, item: 'H200 141G', qty: 1, price: 300000, amount: 300000,
+    detail: '现货一台，支持验机', city: '杭州', subjectType: 'company', subject: '流程测试有限公司',
+    creditCode: '91330100MA2ABCDE1X', legal: '周委托', phone: '13500001111', authPhone: '13500001111',
+    media: [
+      { name: 'license.pdf', kind: 'license' },
+      { name: 'authorization.pdf', kind: 'authorization' },
+      { name: 'idcard.jpg', kind: 'idcard' }
+    ]
+  }, OWNER)
+  ok(pub.ok, '代售委托提交成功')
+  const approve = await call(adminRouter, 'agency.review', { id: pub.data.id, decision: '通过' }, adminCtxP3)
+  ok(approve.ok && approve.data.status === '已上架', '委托审核通过并上架')
+
+  /* 委托方发起的咨询工单：代采代售咨询按 agencyId 一对一关联 */
+  const P3_LEAD = 'ld_p3_flow'
+  await repo.insert('leads', {
+    id: P3_LEAD, uid: BUYER.openid, targetType: 'agency', targetId: pub.data.id, agencyId: pub.data.id,
+    agencyTitle: '代售 H200 141G', agencySide: 'sell', status: LEAD_STATUS.PENDING,
+    csStatus: '待领取', csClaimedAt: 0, assignedTo: '', assignedAccount: '', threadId: P3_LEAD,
+    createdAt: CLOCK, updatedAt: CLOCK
+  })
+
+  /* 合同审核通过前允许多家对接：同一商机的第二条领取 / 工单 */
+  const RIVAL3 = { openid: 'o_p3_rival' }
+  await call(userRouter, 'auth.login', { nick: '流程竞争方' }, RIVAL3)
+  const RIVAL_LEAD = 'ld_p3_rival'
+  const RIVAL_CLAIM = 'bc' + sha256Hex(`${RIVAL3.openid}:agency:${pub.data.id}`).slice(0, 24)
+  await repo.insert('leads', {
+    id: RIVAL_LEAD, uid: RIVAL3.openid, targetType: 'agency', targetId: pub.data.id, agencyId: pub.data.id,
+    agencyTitle: '代售 H200 141G', agencySide: 'sell', status: LEAD_STATUS.PENDING,
+    csStatus: '待领取', csClaimedAt: 0, assignedTo: '', assignedAccount: '', threadId: RIVAL_LEAD,
+    ticketState: TICKET_STATE.TICKETED, serviceStage: 'communicating', stageAt: CLOCK, stageVersion: 0,
+    createdAt: CLOCK, updatedAt: CLOCK
+  })
+  await repo.insert('bizClaims', {
+    id: RIVAL_CLAIM, uid: RIVAL3.openid, targetType: 'agency', targetId: pub.data.id, at: CLOCK
+  })
+
+  const earlyDetail = await call(adminRouter, 'consult.detail', { leadId: P3_LEAD }, csCtxP3)
+  ok(!earlyDetail.ok && earlyDetail.code === 'FORBIDDEN', '未领取的咨询不能查看标准流程详情')
+  const earlyTerms = await call(adminRouter, 'consult.terms', { leadId: P3_LEAD, amount: 300000 }, csCtxP3)
+  ok(!earlyTerms.ok, '未领取的咨询不能确认条件')
+
+  /* 用户咨询提交即生成工单：未领取的工单直接进入工单中心「待领取」分栏 */
+  const listUnclaimed = await call(adminRouter, 'consult.list', { tab: 'all' }, csCtxP3)
+  const unclaimedRow = (listUnclaimed.data.items || []).find((it) => it.leadId === P3_LEAD)
+  ok(listUnclaimed.ok && !!unclaimedRow && unclaimedRow.unclaimed === true && unclaimedRow.stageLabel === '待领取',
+    '待领取的咨询直接进入工单中心', JSON.stringify((listUnclaimed.data || {}).counts))
+
+  const unclaimedTab = await call(adminRouter, 'consult.list', { tab: 'unclaimed' }, csCtxP3)
+  ok(unclaimedTab.ok && (unclaimedTab.data.items || []).some((it) => it.leadId === P3_LEAD),
+    '工单中心提供「待领取」分栏，未领取工单可在此领取')
+
+  const claim = await call(adminRouter, 'lead.claim', { leadId: P3_LEAD }, csCtxP3)
+  ok(claim.ok, '客服领取咨询')
+  const listAfterClaim = await call(adminRouter, 'consult.list', { tab: 'communicating' }, csCtxP3)
+  ok(listAfterClaim.ok && (listAfterClaim.data.items || []).some((it) => it.leadId === P3_LEAD),
+    '领取后工单归入沟通中分栏')
+  const leadClaimed = await repo.get('leads', P3_LEAD)
+  ok(leadClaimed.serviceStage === 'communicating' && leadClaimed.assignedAccount === 'cs',
+    '领取后工单初始化为沟通中并归属领用人')
+  /* 同一委托统一归口：领取时把同委托下其他未分配的咨询工单一并接入，避免多个客服分别对接 */
+  const rivalAdopted = await repo.get('leads', RIVAL_LEAD)
+  ok(claim.data.adopted >= 1 && rivalAdopted.assignedAccount === 'cs' &&
+    rivalAdopted.csStatus === CS_STATUS.SERVING && rivalAdopted.csClaimedAt > 0,
+  '同一委托的其他工单自动归属同一客服', JSON.stringify({ adopted: claim.data.adopted, account: rivalAdopted.assignedAccount }))
+
+  /* 新工单先对话：领取后不直接出现「确认满足条件」，双方聊过之后才出现 */
+  const detailNoChat = await call(adminRouter, 'consult.detail', { leadId: P3_LEAD }, csCtxP3)
+  ok(detailNoChat.ok && detailNoChat.data.chatStarted === false && detailNoChat.data.actions.canTerms === false,
+    '新工单领取后先对话，不出现「确认满足条件」')
+  await repo.insert('outbox', {
+    id: 'M_p3_staff_chat',
+    type: 'kf.chat',
+    payload: {
+      uid: BUYER.openid, channel: 'kf', from: 'staff', threadId: P3_LEAD,
+      targetType: 'agency', targetId: pub.data.id, title: '咨询验机', body: '在的，可以安排验机'
+    },
+    status: 'read',
+    createdAt: CLOCK + 10
+  })
+  const detailStaffOnly = await call(adminRouter, 'consult.detail', { leadId: P3_LEAD }, csCtxP3)
+  ok(detailStaffOnly.ok && detailStaffOnly.data.chatStarted === false && detailStaffOnly.data.actions.canTerms === false,
+    '只有客服发言不算对话，继续等用户回复')
+  await repo.insert('outbox', {
+    id: 'M_p3_user_chat',
+    type: 'kf.chat',
+    payload: {
+      uid: BUYER.openid, channel: 'kf', from: 'user', threadId: P3_LEAD,
+      targetType: 'agency', targetId: pub.data.id, title: '咨询验机', body: '好的，什么价格'
+    },
+    status: 'read',
+    createdAt: CLOCK + 20
+  })
+  const detailChatted = await call(adminRouter, 'consult.detail', { leadId: P3_LEAD }, csCtxP3)
+  ok(detailChatted.ok && detailChatted.data.chatStarted === true && detailChatted.data.actions.canTerms === true,
+    '双方对话之后才出现「确认满足条件」，随后进入居间合同')
+
+  /* 管理员在委托单列表就能看到咨询作业走到第几步，不必点进咨询工单 */
+  const agencyWithConsult = await call(adminRouter, 'agency.list', {}, csCtxP3)
+  const agencyRow = (agencyWithConsult.data.items || []).find((it) => it.id === pub.data.id)
+  ok(agencyWithConsult.ok && !!agencyRow && agencyRow.consultStage === 'communicating' &&
+    agencyRow.consultStageLabel === '沟通中' && !!agencyRow.consultCsName,
+    '委托单列表带出咨询作业进度与归属客服', JSON.stringify(agencyRow && { stage: agencyRow.consultStage, label: agencyRow.consultStageLabel }))
+
+  /* 消息中心会话带出委托上下文：客服在聊天里即可看到进度并一键进入委托工单 */
+  await repo.insert('outbox', {
+    id: 'M_p3_chat_ctx',
+    type: 'kf.chat',
+    payload: {
+      uid: BUYER.openid,
+      channel: 'kf',
+      from: 'user',
+      body: '这台 H200 还在吗',
+      threadId: P3_LEAD,
+      targetType: 'agency',
+      targetId: pub.data.id,
+      targetTitle: '代售 H200 141G'
+    },
+    status: 'pending',
+    readByUser: true,
+    createdAt: CLOCK
+  })
+  /* 同一委托被另一位用户也咨询过：消息中心必须按会话 uid 取自己的咨询单，不能串号 */
+  const ownLead = await repo.get('leads', P3_LEAD)
+  await repo.insert('leads', Object.assign({}, ownLead, {
+    id: 'LD_p3_decoy',
+    uid: 'o_p3_decoy',
+    status: LEAD_STATUS.CLOSED,
+    csStatus: CS_STATUS.ENDED,
+    updatedAt: CLOCK + 1,
+    createdAt: CLOCK
+  }))
+  const threads = await call(adminRouter, 'msg.threads', {}, csCtxP3)
+  const threadRow = (threads.data.items || []).find((t) => t.uid === BUYER.openid)
+  ok(threads.ok && !!threadRow && threadRow.leadId === P3_LEAD && threadRow.consultStage === 'communicating' &&
+    threadRow.consultStageLabel === '沟通中',
+    '消息中心会话带出委托工单与当前步骤',
+    JSON.stringify(threadRow && { leadId: threadRow.leadId, stage: threadRow.consultStage }))
+
+  const detail = await call(adminRouter, 'consult.detail', { leadId: P3_LEAD }, csCtxP3)
+  ok(detail.ok && detail.data.stage === 'communicating' && !!detail.data.agency && !!detail.data.parties,
+    '详情返回左对话右委托与双方联系方式结构')
+  ok(detail.data.parties.consult.masked === true && detail.data.parties.owner.masked === true,
+    '双方联系方式默认脱敏，需单独调阅', JSON.stringify(detail.data.parties))
+
+  const terms = await call(adminRouter, 'consult.terms', {
+    leadId: P3_LEAD, amount: 300000, delivery: '杭州面交', payment: '对公转账', condition: '验机合格后付款'
+  }, csCtxP3)
+  ok(terms.ok && terms.data.stage === 'terms' && terms.data.terms.amount === 300000,
+    '确认条件后进入条件已确认阶段')
+
+  const skipContract = await call(adminRouter, 'consult.proposeDeal', { leadId: P3_LEAD, amount: 300000 }, csCtxP3)
+  ok(!skipContract.ok && skipContract.code === 'CONFLICT', '未上传居间合同不能登记成交')
+
+  const noSignDate = await call(adminRouter, 'consult.contractSubmit', {
+    leadId: P3_LEAD, fileId: 'https://cdn.example.com/ct-v1.pdf', fileName: '居间合同.pdf'
+  }, csCtxP3)
+  ok(!noSignDate.ok && noSignDate.code === 'VALIDATION', '上传合同必须填写签约日期')
+
+  const contract = await call(adminRouter, 'consult.contractSubmit', {
+    leadId: P3_LEAD, fileId: 'https://cdn.example.com/ct-v1.pdf', fileName: '居间合同.pdf', signDate: '2026-02-26'
+  }, csCtxP3)
+  ok(contract.ok && contract.data.stage === 'contract' && contract.data.version === 1,
+    '客服上传合同扫描件后进入合同待审核')
+
+  const selfReview = await call(adminRouter, 'contract.review', { leadId: P3_LEAD, decision: 'approve' }, csCtxP3)
+  ok(!selfReview.ok && selfReview.code === 'FORBIDDEN', '客服不能自己审核居间合同')
+
+  /* 唯一对接方在「居间合同已上传、待审核」时由管理员手动确定，不再由审核通过自动锁定 */
+  const earlyReview = await call(adminRouter, 'contract.review', { leadId: P3_LEAD, decision: 'approve' }, adminCtxP3)
+  ok(!earlyReview.ok && earlyReview.code === 'CONFLICT', '未确定唯一对接方时不能审核通过居间合同',
+    JSON.stringify(earlyReview))
+
+  /* 跟进客服可一键结束同委托的其他对接；管理员审批时也能确定，重复提交保持幂等 */
+  const lock = await call(adminRouter, 'contract.lock', { leadId: P3_LEAD }, csCtxP3)
+  ok(lock.ok && lock.data.locked === true && lock.data.closedOthers === 1 &&
+    lock.data.agencyStatus === '已锁定' && lock.data.stage === 'contract',
+  '合同待审核时客服一键确定唯一对接方，结束其他 1 家对接', JSON.stringify(lock.data))
+  const lockAgain = await call(adminRouter, 'contract.lock', { leadId: P3_LEAD }, adminCtxP3)
+  ok(lockAgain.ok && lockAgain.data.already === true && lockAgain.data.closedOthers === 0,
+    '管理员重复确定唯一对接方保持幂等', JSON.stringify(lockAgain.data))
+
+  /* 合同归档即退出商机池：唯一对接方锁定，其余对接方工单关闭并清理领取记录 */
+  const lockedAgency = await repo.get('agencies', pub.data.id)
+  ok(lockedAgency.status === '已锁定' && lockedAgency.claimUid === BUYER.openid &&
+    lockedAgency.lockedLeadId === P3_LEAD && lockedAgency.lockedAt > 0,
+  '确定唯一对接方后委托改为已锁定并记录对接工单', JSON.stringify(lockedAgency && {
+    status: lockedAgency.status, claimUid: lockedAgency.claimUid, lockedLeadId: lockedAgency.lockedLeadId
+  }))
+  const rivalLeadAfter = await repo.get('leads', RIVAL_LEAD)
+  ok(rivalLeadAfter.status === LEAD_STATUS.CLOSED && rivalLeadAfter.ticketState === TICKET_STATE.INVALID &&
+    rivalLeadAfter.csStatus === CS_STATUS.ENDED,
+  '其余对接方工单自动关闭并置为无效', JSON.stringify(rivalLeadAfter && {
+    status: rivalLeadAfter.status, ticketState: rivalLeadAfter.ticketState, csStatus: rivalLeadAfter.csStatus
+  }))
+  const rivalClaimAfter = await repo.get('bizClaims', RIVAL_CLAIM)
+  ok(!rivalClaimAfter, '其余对接方的领取记录随工单关闭一并清理')
+  const soldMsgs = await repo.find('outbox', {})
+  ok(soldMsgs.some((m) => m.type === 'kf.chat' && m.payload && m.payload.uid === RIVAL3.openid &&
+    String(m.payload.body || '').indexOf('已售出') > -1),
+  '被结束的对接方收到「商品已售出」系统消息')
+  const rivalConsultLocked = await call(userRouter, 'biz.consult', { agencyId: pub.data.id }, RIVAL3)
+  ok(!rivalConsultLocked.ok && rivalConsultLocked.code === 'CONFLICT' &&
+    String(rivalConsultLocked.message || '').includes('锁定'),
+  '锁定后其他会员不能再申请对接', JSON.stringify(rivalConsultLocked))
+
+  /* 同一委托咨询 / 对接人数：工单列表卡片与详情都能直接看到 */
+  const listStats = await call(adminRouter, 'consult.list', { tab: 'all' }, adminCtxP3)
+  const statRow = (listStats.data.items || []).find((it) => it.leadId === P3_LEAD)
+  ok(listStats.ok && !!statRow && statRow.consultTotal >= 3 && statRow.consultActive === 1,
+    '工单列表带出同一委托的咨询 / 对接人数', JSON.stringify(statRow && {
+      total: statRow.consultTotal, active: statRow.consultActive
+    }))
+  const detailLocked = await call(adminRouter, 'consult.detail', { leadId: P3_LEAD }, adminCtxP3)
+  ok(detailLocked.ok && detailLocked.data.agencyThreads.total >= 3 &&
+    detailLocked.data.agencyThreads.active === 1 && detailLocked.data.agencyThreads.isLockedLead === true &&
+    (detailLocked.data.peers || []).some((p) => p.current && p.locked) &&
+    (detailLocked.data.peers || []).some((p) => p.stage === 'closed'),
+  '工单详情显示同委托各单的客服、阶段与唯一对接方', JSON.stringify(detailLocked.data && detailLocked.data.agencyThreads))
+
+  const contractOk = await call(adminRouter, 'contract.review', { leadId: P3_LEAD, decision: 'approve' }, adminCtxP3)
+  ok(contractOk.ok && contractOk.data.status === '已归档' && contractOk.data.stage === 'signed' &&
+    contractOk.data.agencyLocked === true,
+    '确定唯一对接方后审核通过：合同归档、工单进入已签约')
+  const listSigned = await call(adminRouter, 'consult.list', { tab: 'contract' }, csCtxP3)
+  ok(listSigned.ok && (listSigned.data.items || []).some((it) => it.leadId === P3_LEAD),
+    '已签约工单仍归入合同进度分栏')
+
+  /* 平台直接确认成交：客服登记后委托立即成交、账单生成，委托方只收通知 */
+  const deal = await call(adminRouter, 'consult.proposeDeal', { leadId: P3_LEAD, amount: 300000 }, csCtxP3)
+  ok(deal.ok && deal.data.stage === 'fee', '客服登记成交后工单直接进入服务费待支付')
+  const agencyDealt = await repo.get('agencies', pub.data.id)
+  ok(agencyDealt.status === '已成交' && agencyDealt.dealCsId === 'cs' &&
+    agencyDealt.dealConfirmedAt > 0 && agencyDealt.dealConfirmedBy !== '',
+  '委托单由平台直接确认成交，并记录确认客服')
+  const dealNotice = await repo.find('outbox', {})
+  ok(dealNotice.some((m) => m.payload && m.payload.uid === OWNER.openid &&
+    String(m.payload.title || '').indexOf('已成交') > -1), '委托方收到成交通知（无需确认）')
+
+  const progress = await call(userRouter, 'consult.progress', { id: pub.data.id }, OWNER)
+  ok(progress.ok && progress.data.stage === 'fee' &&
+    progress.data.actions.indexOf('dealConfirm') < 0 &&
+    progress.data.actions.indexOf('payProof') > -1 &&
+    progress.data.contract.status === '已归档',
+    '委托方在小程序看到进度与付款入口，不再有成交确认入口', JSON.stringify(progress.data))
+  const billId = `PY_AG_${pub.data.id}`
+  const bill = await repo.get('payments', billId)
+  ok(!!bill && bill.amount === 3000 && bill.status === '待确认',
+    '服务费账单按 1% 生成（30 万 → 3000）', JSON.stringify(bill && { amount: bill.amount, status: bill.status }))
+
+  const noProof = await call(userRouter, 'agency.payProof', { id: pub.data.id, files: [] }, OWNER)
+  ok(!noProof.ok && noProof.code === 'VALIDATION', '未上传凭证不能提交打款')
+  const proof = await call(userRouter, 'agency.payProof', {
+    id: pub.data.id, files: ['https://cdn.example.com/pay.jpg'], note: '已对公转账'
+  }, OWNER)
+  ok(proof.ok && proof.data.files.length === 1, '委托方上传服务费打款凭证')
+  const billProof = await repo.get('payments', billId)
+  ok(billProof.proofFiles.length === 1 && billProof.proofBy === OWNER.openid,
+    '打款凭证写入账单并记录上传人')
+
+  const adminProof = await call(adminRouter, 'consult.uploadProof', {
+    leadId: P3_LEAD, files: ['https://cdn.example.com/bank.jpg'], fileName: '银行回单.jpg'
+  }, csCtxP3)
+  ok(adminProof.ok, '客服可追加银行回单')
+  const fileUrls = await call(adminRouter, 'consult.fileUrls', { leadId: P3_LEAD }, csCtxP3)
+  ok(fileUrls.ok && fileUrls.data.urls['https://cdn.example.com/bank.jpg'] === 'https://cdn.example.com/bank.jpg',
+    '合同与凭证可换取临时链接', JSON.stringify(fileUrls.data))
+
+  /* 服务费到账由财务角色确认（需求文档：财务确认到账） */
+  const finDemo = DEMO_ADMIN_ACCOUNTS.find((a) => a.key === 'finance')
+  const finLogin = await call(adminRouter, 'admin.login', {
+    username: 'finance', password: finDemo.password, otp: generateTotp(finDemo.totpSecret, now())
+  }, {})
+  const feeConfirm = await call(adminRouter, 'payment.feeConfirm', { id: billId, received: 3000 },
+    { token: finLogin.data.token })
+  ok(feeConfirm.ok, '财务确认服务费到账')
+  const leadPaid = await repo.get('leads', P3_LEAD)
+  ok(leadPaid.serviceStage === 'paid', '到账后工单进入服务费已到账')
+  const comms = await repo.find('csAgencyCommissions', { paymentId: billId }, { limit: 5 })
+  ok(comms.length === 1 && comms[0].csId === 'cs' && comms[0].commission === 600,
+    '按服务费实收 20% 计提客服佣金 600', JSON.stringify(comms))
+  const salaryP3 = await call(adminRouter, 'cs.salary', {}, csCtxP3)
+  ok(salaryP3.ok && salaryP3.data.agencyCommission === 1700,
+    '工作台工资包含本单佣金（1100 + 600）', JSON.stringify(salaryP3.data))
+
+  const complete = await call(adminRouter, 'consult.complete', { leadId: P3_LEAD, note: '服务完成' }, csCtxP3)
+  ok(complete.ok && complete.data.stage === 'done', '客服确认完成（服务费到账后唯一的收尾动作）')
+  const agencyArchived = await repo.get('agencies', pub.data.id)
+  ok(agencyArchived.status === '已完成' && agencyArchived.completedAt > 0 &&
+    agencyArchived.completedBy !== '', '确认完成时委托同步归档（已完成 + 完成时间/人）')
+
+  /* 已完成 / 已终止的工单不再占用工作台，统一回到「代采代售」按工单状态筛选 */
+  const benchDone = await call(adminRouter, 'consult.list', { tab: 'all', page: 1, limit: 100 }, adminCtxP3)
+  ok(benchDone.ok && !(benchDone.data.items || []).some((row) => row.leadId === P3_LEAD),
+    '工作台只显示进行中的工单（已完成的工单不再出现）')
+  const agencyDone = await call(adminRouter, 'agency.list', { consult: 'done', page: 1, limit: 50 }, adminCtxP3)
+  ok(agencyDone.ok && (agencyDone.data.items || []).some((row) => row.id === pub.data.id && row.consultState === 'done'),
+    '代采代售可按「工单已完成」筛选')
+  const agencyActive = await call(adminRouter, 'agency.list', { consult: 'active', page: 1, limit: 50 }, adminCtxP3)
+  ok(agencyActive.ok && !(agencyActive.data.items || []).some((row) => row.id === pub.data.id),
+    '按「工单进行中」筛选时不包含已完成工单')
+  const agencySorted = await call(adminRouter, 'agency.list', { sort: 'created_asc', page: 1, limit: 50 }, adminCtxP3)
+  const sortedTimes = (agencySorted.data.items || []).map((row) => Number(row.createdAt) || 0)
+  ok(agencySorted.ok && sortedTimes.every((ms, i) => i === 0 || ms >= sortedTimes[i - 1]),
+    '代采代售支持按提交时间排序')
+
+  const contractFile = await call(userRouter, 'consult.contractFile', { id: pub.data.id }, OWNER)
+  ok(contractFile.ok && contractFile.data.files.length === 1 &&
+    contractFile.data.urls['https://cdn.example.com/ct-v1.pdf'] === 'https://cdn.example.com/ct-v1.pdf',
+    '委托方签约后可查看合同扫描件')
+  const otherFile = await call(userRouter, 'consult.contractFile', { id: pub.data.id }, { openid: 'o_not_mine' })
+  ok(!otherFile.ok, '非委托方不能查看合同')
+
+  /* 退款：佣金自动冲正、工资按当月扣回、委托单回到待支付 */
+  const refund = await call(adminRouter, 'payment.refund', { id: billId, reason: '客户申请退回服务费' }, adminCtxP3)
+  ok(refund.ok && refund.data.refunded, '服务费退款成功')
+  const commsAfter = await repo.find('csAgencyCommissions', { paymentId: billId }, { limit: 5 })
+  ok(commsAfter.length === 1 && commsAfter[0].status === '已冲正' && commsAfter[0].reversedCommission === 600,
+    '退款自动冲正客服佣金 600', JSON.stringify(commsAfter))
+  const salaryAfter = await call(adminRouter, 'cs.salary', {}, csCtxP3)
+  ok(salaryAfter.ok && salaryAfter.data.agencyCommission === 1100, '冲正当月工资扣回该单佣金')
+  ok((await repo.get('agencies', pub.data.id)).feeStatus === 'pending', '委托单服务费回到待支付')
+  const refundedAgency = await repo.get('agencies', pub.data.id)
+  const refundedLead = await repo.get('leads', P3_LEAD)
+  ok(refundedAgency.status === '已成交' && !refundedAgency.completedAt && refundedAgency.completedBy === '',
+    '已完成后退款：委托退回已成交并清空完成信息', JSON.stringify({ status: refundedAgency.status, completedAt: refundedAgency.completedAt }))
+  ok(refundedLead.serviceStage === 'fee', '已完成后退款：工单退回服务费待支付')
+  const reBills = await repo.find('payments', { agencyId: pub.data.id }, { limit: 5 })
+  const reBill = reBills.filter((p) => p.status === '待确认')[0]
+  const reAgency = await repo.get('agencies', pub.data.id)
+  ok(!!reBill && reBill.id === `PY_AG_${pub.data.id}_2` && reAgency.feeBillId === reBill.id &&
+    reBill.amount === 3000, '退款后按同号顺延重开待确认账单，可再次收款', JSON.stringify(reBills))
+}
+
+/* ============================================================
+   40. 缓存一致性：举报处置后立即失效
+   ============================================================ */
+section('40. 缓存一致性：举报处置后立即失效')
+{
+  const { createCache } = require(path.join(shared, 'cache.js'))
+  const cache = createCache({ env: {}, now })
+  const cacheUser = createRouter({ repo, keys, scope: 'user', now, env: {}, cache })
+  const cacheAdmin = createRouter({ repo, keys, scope: 'admin', now, env: {}, cache })
+
+  const C_OWNER = { openid: 'o_cache_owner', ip: '10.9.0.1' }
+  const C_VIEW = { openid: 'o_cache_viewer', ip: '10.9.0.2' }
+  await call(cacheUser, 'auth.login', { nick: '缓存货主' }, C_OWNER)
+  await call(cacheUser, 'auth.login', { nick: '缓存买家' }, C_VIEW)
+
+  const pubC = await call(cacheUser, 'product.publish', {
+    tradeMode: TRADE_MODES.SELL,
+    title: '缓存一致性验证 H100 整机',
+    cat: 'GPU 服务器',
+    brand: 'NVIDIA',
+    model: 'H100 80G SXM',
+    qty: 2,
+    priceMode: 'fixed',
+    price: 210000,
+    supply: '现货',
+    tax: ['含税'],
+    city: '杭州',
+    cond: '全新',
+    deliver: '3 天内',
+    must: ['接受同台互验']
+  }, C_OWNER)
+  ok(pubC.ok, '缓存用例商品发布成功', JSON.stringify(pubC))
+  const productIdC = pubC.data.id
+
+  const first = await call(cacheUser, 'product.detail', { id: productIdC }, C_VIEW)
+  const second = await call(cacheUser, 'product.detail', { id: productIdC }, C_VIEW)
+  ok(first.ok && second.ok && second.data.status === PRODUCT_STATUS.ON_SALE, '商品详情进入缓存')
+
+  const repC = await call(cacheUser, 'report.create', {
+    type: '举报',
+    content: '商品实际配置与描述不一致，请核实',
+    targetType: 'product',
+    targetId: productIdC,
+    targetTitle: '缓存一致性验证 H100 整机'
+  }, C_VIEW)
+  ok(repC.ok, '举报提交成功')
+
+  const demoAdmin = DEMO_ADMIN_ACCOUNTS.find((a) => a.key === 'admin')
+  const adminLoginC = await call(cacheAdmin, 'admin.login', {
+    username: demoAdmin.username,
+    password: demoAdmin.password,
+    otp: generateTotp(demoAdmin.totpSecret, now())
+  }, {})
+  const handledC = await call(cacheAdmin, 'report.handle', {
+    id: repC.data.id, status: '已处理', note: '缓存联动验证，执行下架', targetAction: 'offline'
+  }, { token: adminLoginC.data.token })
+  ok(handledC.ok, '管理员处置举报并联动下架')
+
+  const afterC = await call(cacheUser, 'product.detail', { id: productIdC }, C_VIEW)
+  ok(!afterC.ok && afterC.code === 'NOT_FOUND', '处置后详情缓存立即失效（不再返回已下架商品）', JSON.stringify(afterC))
+}
+
+/* ============================================================
+   41. 多级缓存：L2(Redis) 读写 / 版本隔离 / 故障降级 / 熔断
+   ============================================================ */
+section('41. 多级缓存：L2 读写 / 版本隔离 / 故障降级')
+{
+  const { createCache } = require(path.join(shared, 'cache.js'))
+
+  /* 最小可用的 Redis 桩：只实现缓存层用到的 GET/SET EX/DEL/INCR/SCAN */
+  const store = new Map()
+  let redisCalls = 0
+  const fakeRedis = {
+    driver: 'fake',
+    on() {},
+    async get(key) {
+      redisCalls += 1
+      const value = store.get(key)
+      return value === undefined ? null : value
+    },
+    async set(key, value, ...rest) {
+      redisCalls += 1
+      store.set(key, value)
+      return 'OK'
+    },
+    async del(...keys) {
+      redisCalls += 1
+      const list = Array.isArray(keys[0]) ? keys[0] : keys
+      list.forEach((k) => store.delete(k))
+      return list.length
+    },
+    async incr(key) {
+      redisCalls += 1
+      const next = Number(store.get(key) || 0) + 1
+      store.set(key, String(next))
+      return next
+    },
+    async scan() {
+      return ['0', []]
+    }
+  }
+
+  const cacheA = createCache({ env: {}, now, redis: fakeRedis })
+  const cacheB = createCache({ env: {}, now, redis: fakeRedis })
+
+  await cacheA.set('demo:product', { price: 210000 }, 45)
+  ok(store.has('demo:product'), '写入同时落 L2（Redis）')
+  /* B 实例的 L1 为空，只能从 Redis 回读，验证跨进程共享 */
+  const fromB = await cacheB.get('demo:product')
+  ok(fromB && fromB.price === 210000, '另一实例 L1 未命中时从 L2 回读成功', JSON.stringify(fromB))
+  ok(cacheB.stats().l2.hits >= 1, 'L2 命中计数递增', JSON.stringify(cacheB.stats().l2))
+  ok(store.get('demo:product').indexOf('210000') >= 0, 'L2 存的是 JSON 序列化结果')
+
+  const keyV0 = await cacheA.keyOf('user', 'products', 'hash')
+  const bumped = await cacheA.bump('products')
+  const keyV1 = await cacheB.keyOf('user', 'products', 'hash')
+  ok(keyV0 === 'suanli:user:products:v0:hash', '缓存 key 含分组版本号', keyV0)
+  ok(bumped === 1 && keyV1 === 'suanli:user:products:v1:hash', 'bump 后版本号写入 L2，另一实例立即读到新 key', keyV1)
+  ok(keyV0 !== keyV1, '版本变化后旧 key 不再被命中（无需逐个删除）')
+
+  await cacheA.del('demo:product')
+  ok(!store.has('demo:product'), '删除同时清理 L1 与 L2')
+
+  /* 故障降级：Redis 全部报错时业务仍然可用，连续失败后熔断 */
+  let failCalls = 0
+  const brokenRedis = {
+    driver: 'broken',
+    on() {},
+    async get() { failCalls += 1; throw new Error('redis down') },
+    async set() { failCalls += 1; throw new Error('redis down') },
+    async del() { failCalls += 1; throw new Error('redis down') },
+    async incr() { failCalls += 1; throw new Error('redis down') },
+    async scan() { failCalls += 1; throw new Error('redis down') }
+  }
+  const cacheF = createCache({ env: {}, now, redis: brokenRedis })
+  const degraded = await cacheF.wrap('biz:list', 30, async () => ({ rows: [1, 2, 3] }))
+  ok(degraded && degraded.rows.length === 3, 'Redis 故障时 wrap 仍返回业务数据（自动降级 L1）')
+  const degraded2 = await cacheF.wrap('biz:list', 30, async () => ({ rows: [] }))
+  ok(degraded2.rows.length === 3, '降级后 L1 仍然生效，不会重复回源')
+  for (let i = 0; i < 3; i += 1) await cacheF.get('miss:' + i)
+  const statsF = cacheF.stats()
+  ok(statsF.l2.breakerOpen === true, '连续失败达阈值后熔断，后续请求跳过 L2', JSON.stringify(statsF.l2))
+  const before = failCalls
+  await cacheF.get('miss:after-breaker')
+  ok(failCalls === before, '熔断期内不再发起 Redis 请求（避免每个请求卡超时）', String(failCalls))
+  ok(redisCalls > 0, '正常路径确实访问了 L2', String(redisCalls))
 }
 
 /* ============================================================

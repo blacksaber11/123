@@ -4,8 +4,8 @@
  * 交易服务域：代采 / 代售委托、现货盘、粘贴报价、资讯、商机权限。
  *
  * 口径（与小程序端 home / publish / biz 页面保持一致）：
- * 1. 代采 / 代售：用户提交委托（必填截止时间）→ 平台审核通过即上架 → 平台发起成交、委托方确认
- *    → 生成后付费服务费账单（打款后 3 个工作日内到账）；到截止时间仍未成交则自动关闭。
+ * 1. 代采 / 代售：用户提交委托（必填截止时间）→ 平台审核通过即上架 → 平台确认成交（委托方只收通知）
+ *    → 生成后付费服务费账单（打款后 3 个工作日内到账）→ 财务确认到账 → 客服确认完成；到截止时间仍未成交则自动关闭。
  *    发布、审核、上架均不前置收费。
  * 2. 现货盘：平台在售商品与用户粘贴的报价按「品类 + 型号 + 城市」聚合，
  *    买价取最高预算、卖价取最低报价；用户粘贴的报价视为卖方报价，24 小时有效。
@@ -33,6 +33,17 @@ const { randomId, sha256Hex, decryptField, userNoOf } = require('./crypto')
 const { encryptFields, decryptFieldOf } = require('./secrets')
 const { assertNoPlaintextContactAllowingPhone } = require('./projection')
 const { appendAudit } = require('./audit')
+const { createPromoteEngine } = require('./promote')
+const { CS_STATUS, createCsEngine } = require('./cs')
+/* 咨询工单阶段机：成交 / 收款主链路据此推进客服标准流程 */
+const {
+  TICKET_STATE,
+  CONTRACT_STATUS,
+  ticketStateOf,
+  stageOf: consultStageOf,
+  stageLabel: consultStageLabel,
+  advance: advanceConsultStage
+} = require('./consultflow')
 const {
   TRADE_MODES,
   RENT_TERMS,
@@ -45,14 +56,18 @@ const {
   DEFAULT_CURRENCY,
   LARGE_AMOUNT_THRESHOLD,
   LEAD_STATUS,
-  TIERS
+  CONSULT_STAGE,
+  TIERS,
+  DEMAND_STATUS,
+  /* 会员到期提醒：内容模板与提前天数 / 次数 / 间隔统一走设置 */
+  memberRemindOf
 } = require('./constants')
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
 /**
- * 领取口径：不设名额上限，商机会员都可以领取。
- * 仍保留「已领取人数」用于展示与去重，避免同一用户重复领取。
+ * 领取口径：不设名额上限，商机在架期间所有匹配到的会员都可以领取。
+ * 只保留已领取人数用于展示与去重。
  */
 function claimMetaOf(opts) {
   const used = Number(opts && opts.claimCount) || 0
@@ -60,21 +75,93 @@ function claimMetaOf(opts) {
     claimCount: used,
     claimLimit: 0,
     claimRemaining: 0,
+    claimFull: false,
     claimText: used > 0 ? `已有 ${used} 家领取` : ''
   }
 }
 
 /**
- * 代采 / 代购（buy）：待审核 → 已上架 → 待确认成交 → 已成交 → 已完成；审核不通过驳回。
- * 代售（sell）：待审核 → 已上架 → 待确认成交 → 已成交 → 已完成；资料不合格驳回。
- * 发布、审核、上架均不前置收费；成交由平台发起、委托方确认，确认后生成后付费服务费账单，
- * 「已完成」由委托方确认收货后结束。到截止时间仍未成交的委托自动关闭。
+ * 委托单对应的咨询工单：代采代售咨询按 agencyId 关联。
+ * 合同审核通过前可能有多家同时对接，此时优先返回已锁定的唯一对接方工单；
+ * 用户未走客服咨询（自助发布）时没有工单，返回 null。
+ */
+async function consultLeadOfAgency(repo, agencyId) {
+  const id = String(agencyId || '')
+  if (!id) return null
+  const agency = await repo.get('agencies', id)
+  const lockedLeadId = String((agency && agency.lockedLeadId) || '')
+  if (lockedLeadId) {
+    const locked = await repo.get('leads', lockedLeadId)
+    if (locked) return locked
+  }
+  const claimUid = String((agency && agency.claimUid) || '')
+  const rows = await repo.find('leads', { targetType: 'agency', agencyId: id }, { limit: 200 })
+  if (claimUid) {
+    const hit = rows.find((row) => row.uid === claimUid)
+    if (hit) return hit
+  }
+  const open = rows.find((row) => row.ticketState !== TICKET_STATE.INVALID && row.status !== LEAD_STATUS.CLOSED)
+  return open || rows[0] || null
+}
+
+/**
+ * 同一委托统一由一个客服跟进：新建 / 重新开启工单时，
+ * 沿用同委托下已在跟进中的客服，避免同一商品被多个客服分别对接。
+ * 没有客服在跟进时返回 null，工单仍进入「待领取」。
+ */
+async function inheritedAgencyCs(repo, agencyId, at) {
+  const id = String(agencyId || '')
+  if (!id) return null
+  const rows = await repo.find('leads', { targetType: 'agency', agencyId: id }, { limit: 200 })
+  const hit = rows.find((row) => row && row.assignedAccount &&
+    row.ticketState !== TICKET_STATE.INVALID && row.status !== LEAD_STATUS.CLOSED)
+  if (!hit) return null
+  return {
+    assignedTo: hit.assignedTo || hit.csName || '',
+    assignedAccount: hit.assignedAccount,
+    assignedAt: Number(hit.assignedAt) || at,
+    csId: hit.csId || hit.assignedAccount,
+    csName: hit.csName || hit.assignedTo || '',
+    csClaimedAt: Number(hit.csClaimedAt || hit.assignedAt) || at,
+    csStatus: CS_STATUS.SERVING
+  }
+}
+
+/**
+ * 主链路推进工单阶段：成交 / 收款 / 退款都会调用，工单缺失或阶段不在预期时只记日志，
+ * 不能让流程外数据（自助发布、升级前老单）把成交与财务确认阻断。
+ */
+async function advanceConsultStageQuiet(repo, agencyId, from, to, options) {
+  const lead = await consultLeadOfAgency(repo, agencyId)
+  if (!lead) return null
+  const current = consultStageOf(lead)
+  if (current === to) return lead
+  if (current !== from) {
+    console.warn(`[consult] 工单 ${lead.id} 阶段为 ${current}，跳过 ${from} -> ${to}`)
+    return null
+  }
+  try {
+    return await advanceConsultStage(repo, lead, to, options)
+  } catch (err) {
+    console.error('[consult] 阶段推进失败 ' + (err && err.message))
+    return null
+  }
+}
+
+/**
+ * 代采 / 代购（buy）：待审核 → 已上架 → 已成交 → 已完成；审核不通过驳回。
+ * 代售（sell）：待审核 → 已上架 → 已成交 → 已完成；资料不合格驳回。
+ * 发布、审核、上架均不前置收费；平台（客服 / 管理员）确认成交后按成交金额生成后付费服务费账单，
+ * 委托方只收通知、无需确认；财务确认到账后由客服（有工单）或管理员（自助发布）确认完成，委托归档。
+ * 到截止时间仍未成交的委托自动关闭。「待确认成交」仅用于兼容升级前的旧数据。
  */
 const AGENCY_STATUS = Object.freeze({
   REVIEW: '待审核',
   PENDING: '待确认',
   APPROVED: '已通过',
   ACTIVE: '已上架',
+  /* 居间合同审核通过：唯一对接方已锁定，委托立即退出商机池，不再接受新的领取 / 对接 */
+  LOCKED: '已锁定',
   DEAL_PENDING: '待确认成交',
   DEALT: '已成交',
   DONE: '已完成',
@@ -86,18 +173,20 @@ const AGENCY_STATUS_LIST = Object.freeze([
   AGENCY_STATUS.PENDING,
   AGENCY_STATUS.APPROVED,
   AGENCY_STATUS.ACTIVE,
+  AGENCY_STATUS.LOCKED,
   AGENCY_STATUS.DEAL_PENDING,
   AGENCY_STATUS.DEALT,
   AGENCY_STATUS.DONE,
   AGENCY_STATUS.CLOSED,
   AGENCY_STATUS.REJECTED
 ])
-/* 代采 / 代售同时进行的委托：待审核、待确认、已通过、已上架都占用名额 */
+/* 代采 / 代售同时进行的委托：待审核、待确认、已通过、已上架、已锁定都占用名额 */
 const AGENCY_OPEN_STATUSES = Object.freeze([
   AGENCY_STATUS.REVIEW,
   AGENCY_STATUS.PENDING,
   AGENCY_STATUS.APPROVED,
-  AGENCY_STATUS.ACTIVE
+  AGENCY_STATUS.ACTIVE,
+  AGENCY_STATUS.LOCKED
 ])
 /* 到期会自动关闭的状态：已成交 / 已完成不受截止时间影响 */
 const AGENCY_EXPIRABLE_STATUSES = Object.freeze([
@@ -377,6 +466,11 @@ const BIZ_PREF_ENUMS = Object.freeze({
   supply: ['any', 'same']
 })
 const BIZ_PREF_KEYS = Object.freeze(Object.keys(BIZ_PREF_ENUMS))
+/* 展示时间：只看最近几天发布的商机；手动设置支持 1-90 天 */
+const BIZ_PREF_DAYS = Object.freeze([3, 7, 30])
+const BIZ_PREF_DAYS_DEFAULT = 30
+/* 排序方式：最新发布 / 匹配度（我的库存可出数量多的在前）/ 商机数量（对方需求数量大的在前） */
+const BIZ_PREF_SORTS = Object.freeze(['latest', 'match', 'qty'])
 
 function bizPrefPick(value, options, fallback) {
   const v = String(value == null ? '' : value).trim()
@@ -390,17 +484,27 @@ function bizPrefSame(a, b) {
 /** 归一化提示力度：命中预设直接返回预设，否则按维度裁剪成自定义档（缺省回落到标准） */
 function normalizeBizPrefs(input) {
   const src = input && typeof input === 'object' ? input : null
-  if (!src) return Object.assign({}, BIZ_PREF_DEFAULT)
-  const level = String(src.level == null ? '' : src.level).trim()
-  if (level && BIZ_PREF_PRESETS[level]) return Object.assign({}, BIZ_PREF_PRESETS[level])
-  const out = { level: 'custom' }
-  BIZ_PREF_KEYS.forEach((key) => {
-    out[key] = bizPrefPick(src[key], BIZ_PREF_ENUMS[key], BIZ_PREF_DEFAULT[key])
-  })
-  for (const key of Object.keys(BIZ_PREF_PRESETS)) {
-    const preset = BIZ_PREF_PRESETS[key]
-    if (bizPrefSame(out, preset)) return Object.assign({}, preset)
+  const level = String((src && src.level) == null ? '' : src.level).trim()
+  let out
+  if (!src) out = Object.assign({}, BIZ_PREF_DEFAULT)
+  else if (level && BIZ_PREF_PRESETS[level]) out = Object.assign({}, BIZ_PREF_PRESETS[level])
+  else {
+    out = { level: 'custom' }
+    BIZ_PREF_KEYS.forEach((key) => {
+      out[key] = bizPrefPick(src[key], BIZ_PREF_ENUMS[key], BIZ_PREF_DEFAULT[key])
+    })
+    for (const key of Object.keys(BIZ_PREF_PRESETS)) {
+      const preset = BIZ_PREF_PRESETS[key]
+      if (bizPrefSame(out, preset)) {
+        out = Object.assign({}, preset)
+        break
+      }
+    }
   }
+  /* 时间范围与排序独立于提示档位：切档位不会把用户选的时间 / 排序重置 */
+  const days = Math.floor(Number(src && src.days))
+  out.days = BIZ_PREF_DAYS.indexOf(days) >= 0 ? days : (days >= 1 && days <= 90 ? days : BIZ_PREF_DAYS_DEFAULT)
+  out.sort = bizPrefPick(src && src.sort, BIZ_PREF_SORTS, 'latest')
   return out
 }
 
@@ -503,8 +607,8 @@ function stockMatch(stocks, cat, model, brand, opts) {
         /* 严格档：型号文本必须完全一致（忽略大小写与分隔符） */
         if (normModel(stock.model) !== normModel(model)) continue
       } else if (pref.model === 'series') {
-        /* 宽松档：同核心型号或同系列即可，容量交给容量档位判断 */
-        if (!modelMatch(stock.model, model) && !seriesHit) continue
+        /* 宽松档：同核心型号或同系列即可，但同系列也不能跨容量（96G ≠ 72G） */
+        if (!modelMatch(stock.model, model) && !(seriesHit && capOk)) continue
       } else if (!modelMatch(stock.model, model) && !(seriesHit && capOk && !coreComparable)) {
         continue
       }
@@ -534,14 +638,12 @@ function stockMatch(stocks, cat, model, brand, opts) {
     }
     /* 可用量低于起订量＝这单发不出去，不算有货 */
     if ((Number(stock.qty) || 0) < moqOf(stock)) continue
+    /* 对方需求量低于我的起订量＝这单我接不了，任何档位都不算匹配 */
+    if (needQty > 0 && moqOf(stock) > needQty) continue
     if (pref.qty === 'exceed') {
       /* 严格档：库存可用量必须覆盖对方需求量 */
       if (needQty > 0 && (Number(stock.qty) || 0) < needQty) continue
-    } else if (pref.qty === 'meet') {
-      /* 标准档：对方需求量不小于起订量即可 */
-      if (needQty > 0 && moqOf(stock) > needQty) continue
     }
-    /* 宽松档（any）不校验需求量，少量也提醒 */
     matched.push(stock)
   }
   const qty = matched.reduce((n, stock) => n + (Number(stock.qty) || 0), 0)
@@ -557,6 +659,7 @@ function stockMatch(stocks, cat, model, brand, opts) {
     ok: matched.length > 0,
     hits: matched.length,
     qty,
+    model: text,
     text: textOut
   }
 }
@@ -904,6 +1007,7 @@ function normalizeAgencyInput(data, profileExposure) {
     subjectType: subjectType === 'company' ? '企业' : '个人',
     subject,
     phone,
+    authPhone,
     authPhoneMatched,
     legal,
     creditCode,
@@ -921,7 +1025,7 @@ function intOf(value, field, min, max) {
 }
 
 /**
- * 委托进度时间线：提交 → 审核通过 → 已上架 → 已成交 → 已付款 → 已完成。
+ * 委托进度时间线：提交 → 审核通过 → 已上架 → 平台确认成交 → 服务费到账 → 客服结案。
  * 驳回 / 关闭 / 到期后不再点亮后续步骤，避免用户误以为仍在推进。
  */
 function agencyProgress(d) {
@@ -931,9 +1035,10 @@ function agencyProgress(d) {
     { key: 'submit', label: '已提交', at: Number(st.createdAt) || 0 },
     { key: 'review', label: '审核通过', at: Number(st.approvedAt) || 0 },
     { key: 'online', label: '已上架', at: Number(st.confirmedAt) || 0 },
-    { key: 'dealt', label: '已成交', at: Number(st.dealConfirmedAt) || 0 },
-    { key: 'paid', label: '已付款', at: Number(st.feePaidAt) || 0 },
-    { key: 'received', label: '已完成', at: Number(st.receiptConfirmedAt) || 0 }
+    { key: 'locked', label: '锁定对接方', at: Number(st.lockedAt) || 0 },
+    { key: 'dealt', label: '平台确认成交', at: Number(st.dealConfirmedAt) || 0 },
+    { key: 'paid', label: '服务费到账', at: Number(st.feePaidAt) || 0 },
+    { key: 'done', label: '已完成', at: Number(st.completedAt) || Number(st.receiptConfirmedAt) || 0 }
   ]
   let active = false
   return steps.map(function (s) {
@@ -949,8 +1054,9 @@ const AGENCY_STATUS_TEXT = Object.freeze({
   [AGENCY_STATUS.PENDING]: '待确认',
   [AGENCY_STATUS.APPROVED]: '已通过',
   [AGENCY_STATUS.ACTIVE]: '已上架',
+  [AGENCY_STATUS.LOCKED]: '已锁定',
   [AGENCY_STATUS.DEAL_PENDING]: '待确认成交',
-  [AGENCY_STATUS.DEALT]: '已成交 · 待确认收货',
+  [AGENCY_STATUS.DEALT]: '已成交',
   [AGENCY_STATUS.DONE]: '已完成',
   [AGENCY_STATUS.CLOSED]: '已关闭',
   [AGENCY_STATUS.REJECTED]: '已驳回'
@@ -968,10 +1074,12 @@ function agencyFlowNodes(d) {
   push('已提交', st.createdAt, st.staff)
   push('审核通过', st.approvedAt, st.staff)
   push('已上架', st.confirmedAt, st.staff)
-  push('待确认成交', st.dealProposedAt, st.dealProposedBy)
-  push('已成交', st.dealConfirmedAt, '')
-  push('已付款', st.feePaidAt, st.feePaidBy)
-  push('已完成', st.receiptConfirmedAt, '')
+  push('锁定唯一对接方', st.lockedAt, st.lockedBy || st.staff)
+  /* 旧数据可能停在「待确认成交」，保留节点仅用于展示历史 */
+  if (st.status === AGENCY_STATUS.DEAL_PENDING) push('待确认成交', st.dealProposedAt, st.dealProposedBy)
+  push('平台确认成交', st.dealConfirmedAt, st.dealConfirmedBy)
+  push('服务费到账', st.feePaidAt, st.feePaidBy)
+  push('已完成', st.completedAt || st.receiptConfirmedAt, st.completedBy)
   if (st.status === AGENCY_STATUS.REJECTED) push('已驳回', st.closedAt, st.staff)
   else if (st.status === AGENCY_STATUS.CLOSED) push('已关闭', st.closedAt, st.staff)
   return nodes
@@ -1105,10 +1213,17 @@ async function ensureAgencyFeeBill(repo, doc, at, paidAt) {
   }
   const payAt = Number(paidAt) || Number(d.paidClaimAt) || Number(d.dealConfirmedAt) || at
   const feeDueAt = addWorkdays(payAt, 3)
-  /* 账单号由委托单固定派生：并发确认成交 / 重复点击时，唯一索引保证只生成一张账单 */
-  const billId = `PY_AG_${d.id}`
+  /* 账单号由委托单固定派生：并发确认成交 / 重复点击时，唯一索引保证只生成一张账单；
+     退款后重新收款时原账单保留为退款记录，按 _2 / _3 顺延重开，避免沿用已退款账单 */
+  let billId = `PY_AG_${d.id}`
   const bizType = d.rental ? '租赁服务费' : (d.side === 'buy' ? '代采服务费' : '代售服务费')
   let bill = await repo.get('payments', billId)
+  let billSeq = 1
+  while (bill && bill.status === PAYMENT_STATUS.REFUNDED) {
+    billSeq += 1
+    billId = `PY_AG_${d.id}_${billSeq}`
+    bill = await repo.get('payments', billId)
+  }
   if (!bill) {
     try {
       await repo.insert('payments', {
@@ -1162,6 +1277,226 @@ async function ensureAgencyFeeBill(repo, doc, at, paidAt) {
   return Object.assign({}, d, patch)
 }
 
+/**
+ * 平台确认成交（代采 / 代售统一入口）。
+ *
+ * 由客服在工单「登记成交」或管理员在委托管理「确认成交」触发：平台直接确认，
+ * 委托方只接收成交通知，不再需要在小程序里二次确认。确认后按成交金额重算服务费、
+ * 生成后付费账单，并把工单推进到「服务费待支付」。
+ */
+async function confirmAgencyDeal(repo, options) {
+  const o = options || {}
+  const id = String(o.agencyId || '')
+  if (!id) throw new AppError(CODES.VALIDATION, '缺少委托标识')
+  const at = Number(o.at) || Date.now()
+  const operator = String(o.staff || '平台')
+  const doc = await repo.get('agencies', id)
+  if (!doc || doc.deleted === true) throw new AppError(CODES.NOT_FOUND, '委托不存在或已删除')
+  if (doc.status === AGENCY_STATUS.DONE) throw new AppError(CODES.CONFLICT, '委托已完成，不能重复确认成交')
+  if (doc.status === AGENCY_STATUS.CLOSED) throw new AppError(CODES.CONFLICT, '委托已关闭，不能确认成交')
+  const dealAmount = round2(Number(o.amount) || Number(doc.dealAmount) || 0)
+  if (!(dealAmount > 0)) throw new AppError(CODES.VALIDATION, '请先填写成交金额')
+  const allowed = [AGENCY_STATUS.APPROVED, AGENCY_STATUS.ACTIVE, AGENCY_STATUS.LOCKED, AGENCY_STATUS.DEAL_PENDING, AGENCY_STATUS.DEALT]
+  if (allowed.indexOf(doc.status) < 0) {
+    throw new AppError(CODES.CONFLICT, `委托当前为「${AGENCY_STATUS_TEXT[doc.status] || doc.status}」，不能确认成交`)
+  }
+  /* 已成交时只允许修正成交金额，不重复写确认时间 */
+  if (doc.status !== AGENCY_STATUS.DEALT) {
+    const res = await repo.updateWhere('agencies', { id, status: doc.status }, {
+      status: AGENCY_STATUS.DEALT,
+      dealt: true,
+      dealtAt: Number(doc.dealtAt) || at,
+      dealAmount,
+      dealProposedAt: at,
+      dealProposedBy: operator,
+      dealConfirmedAt: at,
+      dealConfirmedBy: operator,
+      dealCsId: String(o.staffId || doc.dealCsId || ''),
+      reason: '',
+      updatedAt: at
+    })
+    if (!res || !res.count) throw new AppError(CODES.CONFLICT, '委托状态已变化，请刷新后重试')
+  }
+  await appendAudit(repo, {
+    actorType: o.actorType || 'staff',
+    actorId: String(o.staffId || ''),
+    action: 'agency.dealConfirm',
+    target: id,
+    reason: `平台确认成交：¥${dealAmount}`,
+    result: 'allow',
+    at
+  })
+  let fresh = await repo.get('agencies', id)
+  /* 服务费按「成交金额」计提：议价成交后重算，避免一直沿用挂牌金额算出的费用 */
+  const feeInfo = agencyFee(dealAmount, !!fresh.rental, fresh.side)
+  const nextFee = round2(feeInfo.fee)
+  if (nextFee !== round2(Number(fresh.serviceFee) || 0) || Number(fresh.dealAmount) !== dealAmount) {
+    const patch = {
+      dealAmount,
+      serviceFee: nextFee,
+      feeRule: feeInfo.rule,
+      deferredFee: true,
+      freeLarge: false,
+      updatedAt: at
+    }
+    await repo.updateWhere('agencies', { id }, patch)
+    fresh = Object.assign({}, fresh, patch)
+  }
+  fresh = await ensureAgencyFeeBill(repo, fresh, at)
+  if (Number(fresh.feeDueAt) > 0) {
+    /* 模块级函数无法复用工厂内的 sendUserNotice，这里直接落站内信 */
+    await repo.insert('outbox', {
+      id: randomId('M'),
+      type: 'system.notice',
+      payload: {
+        uid: fresh.ownerId,
+        channel: 'system',
+        from: 'system',
+        reason: '',
+        targetType: 'agency',
+        targetId: fresh.id,
+        title: `${fresh.kind || '委托'}已成交`,
+        body: `平台已确认成交，成交金额 ¥${dealAmount}，服务费 ¥${Number(fresh.serviceFee || 0)} 应于 ${dateText(fresh.feeDueAt)} 前到账，可在「我的缴费」查看。`
+      },
+      status: 'pending',
+      createdAt: at
+    })
+  }
+  /* 工单同步进入「服务费待支付」；免收服务费时直接视为已到账，不产生佣金 */
+  const stepOpts = {
+    at,
+    by: operator,
+    actorType: o.actorType || 'staff',
+    note: `平台确认成交，成交金额 ¥${dealAmount}`,
+    extra: { dealAmount }
+  }
+  await advanceConsultStageQuiet(repo, id, CONSULT_STAGE.SIGNED, CONSULT_STAGE.FEE, stepOpts)
+  await advanceConsultStageQuiet(repo, id, CONSULT_STAGE.DEAL_PENDING, CONSULT_STAGE.FEE, stepOpts)
+  if (round2(Number(fresh.serviceFee) || 0) <= 0) {
+    await advanceConsultStageQuiet(repo, id, CONSULT_STAGE.FEE, CONSULT_STAGE.PAID, {
+      at,
+      by: operator,
+      actorType: o.actorType || 'staff',
+      note: '本单免收服务费，直接进入已到账',
+      extra: { feePaidAt: at }
+    })
+  }
+  return fresh
+}
+
+const AGENCY_LOCKED_CLOSE_NOTE = '委托已确定唯一对接方，本次对接结束'
+
+/**
+ * 通知其它对接方「商品已售出」：同一委托只保留一家后，其余用户的工单自动结束，
+ * 会话里补一条系统消息，避免用户继续等待。消息 id 由工单号派生，重复锁定只落一条。
+ */
+async function notifyAgencySold(repo, row, at) {
+  const leadId = String((row && row.id) || '')
+  if (!leadId) return
+  const title = String(row.agencyTitle || '该委托')
+  const doc = {
+    id: 'M' + sha256Hex(`cs-sold:${leadId}`).slice(0, 22),
+    type: 'kf.chat',
+    payload: {
+      uid: row.uid || '',
+      channel: 'kf',
+      from: 'system',
+      staffName: '',
+      threadId: row.threadId || leadId,
+      targetType: 'agency',
+      targetId: row.agencyId || row.targetId || '',
+      title,
+      body: `您对接的「${title}」已售出，平台已确定唯一对接方，本次对接结束。`
+    },
+    status: 'pending',
+    createdAt: at
+  }
+  try {
+    await repo.insert('outbox', doc)
+  } catch (err) {
+    /* 重复锁定只保留一条通知 */
+    if (!err || err.code !== CODES.CONFLICT) throw err
+  }
+}
+
+/**
+ * 手动确定唯一对接方（居间合同上传后、审核前执行）。
+ *
+ * 合同上传之前允许多家领取、多家对接；管理员确定唯一对接方后：
+ * 1) 委托状态「已上架 → 已锁定」，立即退出商机池（领取 / 咨询同时被拦下）；
+ * 2) 记录唯一对接方（claimUid / lockedLeadId），后续只有这一家工单能推进成交；
+ * 3) 其余对接方的工单关闭并置为无效、待审核合同作废、领取记录清理，并给用户发「已售出」消息。
+ * 已由其他工单锁定时抛 CONFLICT，避免同一委托出现两个唯一对接方。
+ */
+async function lockAgencyForContract(repo, options) {
+  const o = options || {}
+  const lead = o.lead || {}
+  const at = Number(o.at) || Date.now()
+  const agencyId = String(lead.agencyId || lead.targetId || '')
+  const uid = String(lead.uid || '')
+  if (!agencyId || !uid) return { locked: false, reason: 'missing' }
+  const agency = await repo.get('agencies', agencyId)
+  if (!agency || agency.deleted === true) return { locked: false, reason: 'missing' }
+
+  if (agency.status === AGENCY_STATUS.LOCKED) {
+    if (agency.lockedLeadId && agency.lockedLeadId !== String(lead.id || '')) {
+      throw new AppError(CODES.CONFLICT, '该委托已确定其他对接方，不能再次锁定')
+    }
+    return { locked: false, reason: 'already', claimUid: agency.claimUid || uid, closedOthers: 0 }
+  }
+  /* 已成交 / 已完成 / 已关闭等终态：合同照常归档，不再改写委托状态 */
+  if (agency.status !== AGENCY_STATUS.ACTIVE) return { locked: false, reason: 'inactive' }
+
+  const res = await repo.updateWhere('agencies', { id: agencyId, status: AGENCY_STATUS.ACTIVE }, {
+    status: AGENCY_STATUS.LOCKED,
+    claimUid: uid,
+    claimAt: at,
+    lockedAt: at,
+    lockedBy: String(o.by || ''),
+    lockedLeadId: String(lead.id || ''),
+    updatedAt: at
+  })
+  if (!res || !res.count) {
+    const fresh = await repo.get('agencies', agencyId)
+    if (fresh && fresh.status === AGENCY_STATUS.LOCKED && fresh.lockedLeadId === String(lead.id || '')) {
+      return { locked: false, reason: 'already', claimUid: fresh.claimUid || uid, closedOthers: 0 }
+    }
+    throw new AppError(CODES.CONFLICT, '委托状态已变化，请刷新后重试')
+  }
+
+  /* 其余对接方：工单关闭并置为无效，领取记录同步清理，并通知用户「商品已售出」 */
+  const others = await repo.find('leads', { targetType: 'agency', agencyId }, { limit: 500 })
+  let closedOthers = 0
+  for (const row of others) {
+    if (!row || row.id === lead.id || row.status === LEAD_STATUS.CLOSED) continue
+    const closed = await repo.updateWhere('leads', { id: row.id }, {
+      status: LEAD_STATUS.CLOSED,
+      csStatus: CS_STATUS.ENDED,
+      ticketState: TICKET_STATE.INVALID,
+      closeReason: AGENCY_LOCKED_CLOSE_NOTE,
+      stageNote: AGENCY_LOCKED_CLOSE_NOTE,
+      csEndedAt: at,
+      closedBy: String(o.by || ''),
+      updatedAt: at
+    })
+    if (!closed || !closed.count) continue
+    closedOthers += 1
+    /* 其余对接方尚未审核的居间合同一并作废，避免停在「待审核」的孤儿合同 */
+    await repo.updateWhere('agencyContracts', { leadId: row.id, status: CONTRACT_STATUS.PENDING }, {
+      status: CONTRACT_STATUS.VOID,
+      reviewedBy: 'system',
+      reviewedByName: '系统',
+      reviewNote: AGENCY_LOCKED_CLOSE_NOTE,
+      reviewedAt: at,
+      updatedAt: at
+    })
+    const claimId = 'bc' + sha256Hex(`${row.uid}:agency:${agencyId}`).slice(0, 24)
+    await repo.removeWhere('bizClaims', { id: claimId }, 1)
+    await notifyAgencySold(repo, row, at)
+  }
+  return { locked: true, claimUid: uid, closedOthers }
+}
+
 function agencyOwnerView(doc, now) {
   const d = doc || {}
   const feeView = agencyFeeView(d, now)
@@ -1200,6 +1535,8 @@ function agencyOwnerView(doc, now) {
     nego: Array.isArray(d.nego) ? d.nego.slice() : [],
     subjectType: d.subjectType || '',
     subjectMasked: d.subjectMasked || '',
+    /* 授权书联系人电话：委托方填写后回显脱敏值，管理端审核时可对照原件 */
+    authPhoneMasked: d.authPhoneMasked || '',
     media: Array.isArray(d.media) ? d.media.slice() : [],
     status: d.status,
     statusText: AGENCY_STATUS_TEXT[d.status] || d.status,
@@ -1223,7 +1560,7 @@ function agencyOwnerView(doc, now) {
     expireText: agencyDeadlineAt(d) ? `${dateText(agencyDeadlineAt(d))} 到期` : '',
     /* 收尾标识：只有本人撤销的委托才带 closedBy，平台关闭 / 驳回需联系客服 */
     selfClosed: !!d.closedBy,
-    /* 进度时间线：我的委托里直接展示到「确认收货」，无需再联系客服收尾 */
+    /* 进度时间线：我的委托里直接展示到「已完成」，无需再联系客服收尾 */
     progress: agencyProgress(d),
     /* 流程节点：详情页展示处理节点、时间和处理人；列表页只取商品字段 */
     flowNodes: agencyFlowNodes(d),
@@ -1231,17 +1568,14 @@ function agencyOwnerView(doc, now) {
     dealAmountText: d.dealAmount
       ? (d.currencySymbol || '¥') + Number(d.dealAmount).toLocaleString('zh-CN')
       : '',
-    /* 成交两步确认：平台发起成交 → 委托方确认后才算成交 */
+    /* 成交由平台确认，委托方只接收成交通知；以下字段用于回显确认时间与经办人 */
     dealProposedAt: Number(d.dealProposedAt) || 0,
     dealProposedAtText: d.dealProposedAt ? dateTimeText(d.dealProposedAt) : '',
     dealProposedBy: d.dealProposedBy || '',
     dealConfirmedAt: Number(d.dealConfirmedAt) || 0,
     dealConfirmedAtText: d.dealConfirmedAt ? dateTimeText(d.dealConfirmedAt) : '',
-    canConfirmDeal: d.status === AGENCY_STATUS.DEAL_PENDING,
+    dealConfirmedBy: d.dealConfirmedBy || '',
     completedText: d.completedAt ? dateText(d.completedAt) : '',
-    receiptText: d.receiptConfirmedAt ? dateText(d.receiptConfirmedAt) : '',
-    /* 委托成交确认后由委托方确认收货，确认后结束（已完成） */
-    canConfirmReceipt: d.status === AGENCY_STATUS.DEALT && !d.receiptConfirmedAt,
     canCancel: !d.editPending && (d.status === AGENCY_STATUS.PENDING || d.status === AGENCY_STATUS.REVIEW),
     /* 已上架委托的修改：提交后先下架，平台审核通过再自动更新并重新上架 */
     editPending: d.editPending === true,
@@ -1259,7 +1593,7 @@ function agencyOwnerView(doc, now) {
     feeOverdue: feeView.feeOverdue,
     feeStatusText: feeView.feeStatusText,
     feeDueAtText: feeView.feeDueAtText,
-    payHint: '提交后进入平台审核，审核通过即上架；成交确认后再支付服务费'
+    payHint: '提交后进入平台审核，审核通过即上架；平台确认成交后按成交金额支付服务费'
   }
 }
 
@@ -1288,8 +1622,10 @@ function agencyStaffView(doc, now) {
     updatedAt: Number(doc.updatedAt || doc.createdAt) || 0,
     confirmedAt: Number(doc.confirmedAt) || 0,
     approvedAt: Number(doc.approvedAt) || 0,
-    /* 成交与收货：平台发起成交 → 委托方确认成交 → 生成服务费账单 */
+    /* 成交与完成：平台确认成交 → 服务费到账 → 平台确认完成（工单 / 委托同时归档） */
     completedAt: Number(doc.completedAt) || 0,
+    completedBy: doc.completedBy || '',
+    /* 旧字段：升级前由委托方确认收货，仅用于展示历史数据 */
     receiptConfirmedAt: Number(doc.receiptConfirmedAt) || 0,
     receiptPending: doc.status === AGENCY_STATUS.DEALT && !doc.receiptConfirmedAt,
     dealPending: doc.status === AGENCY_STATUS.DEAL_PENDING,
@@ -1323,6 +1659,7 @@ const PRICE_SOURCE = Object.freeze({
   PRODUCT: 'product',
   AGENCY_BUY: 'agencyBuy',
   AGENCY_SELL: 'agencySell',
+  DEMAND_BUY: 'demandBuy',
   QUOTE: 'quote'
 })
 
@@ -1331,6 +1668,7 @@ const PRICE_WEIGHT = Object.freeze({
   product: 3,
   agencyBuy: 3.5,
   agencySell: 3,
+  demandBuy: 3,
   quote: 1
 })
 
@@ -1384,10 +1722,12 @@ function priceLevelOf(row, now) {
   const agencySamples = samples.filter(
     (s) => s.source === PRICE_SOURCE.AGENCY_BUY || s.source === PRICE_SOURCE.AGENCY_SELL
   )
+  /* 买方求购预算与代采预算同属真实预算，合并进「委托」一档 */
+  const demandSamples = samples.filter((s) => s.source === PRICE_SOURCE.DEMAND_BUY)
   const quotes = samples.filter((s) => s.source === PRICE_SOURCE.QUOTE)
 
   const anchor = weightedMedian(products)
-  const agency = weightedMean(agencySamples)
+  const agency = weightedMean(agencySamples.concat(demandSamples))
   const quote = weightedMean(quotes)
 
   let wa = anchor > 0 ? PRICE_BLEND.anchor : 0
@@ -1425,6 +1765,7 @@ function priceLevelOf(row, now) {
   const parts = []
   if (products.length) parts.push(`货盘 ${products.length}`)
   if (agencySamples.length) parts.push(`代采代售 ${agencySamples.length}`)
+  if (demandSamples.length) parts.push(`求购 ${demandSamples.length}`)
   if (quotes.length) parts.push(`报价 ${quotes.length}`)
 
   return {
@@ -1446,12 +1787,13 @@ function priceLevelOf(row, now) {
       quote: Math.round(quote),
       products: products.length,
       agencies: agencySamples.length,
+      demands: demandSamples.length,
       quotes: quotes.length
     }
   }
 }
 
-function boardItems({ products, agencies, quotes, now, limit }) {
+function boardItems({ products, agencies, demands, quotes, now, limit }) {
   const groups = new Map()
   const groupOf = (cat, model, city) => {
     const key = [cat || '其他', model || '', city || '不限'].join('|')
@@ -1530,6 +1872,31 @@ function boardItems({ products, agencies, quotes, now, limit }) {
       doc.confirmedAt || doc.createdAt,
       source,
       doc.side === 'buy' ? PRICE_WEIGHT.agencyBuy : PRICE_WEIGHT.agencySell
+    )
+  }
+
+  /* 买方求购需求：只做「品类 + 型号 + 城市」聚合，求购方身份、联系方式与需求明细一律不下发 */
+  for (const doc of listOf(demands)) {
+    if (doc.deleted) continue
+    if (doc.status !== DEMAND_STATUS.OPEN) continue
+    /* 租赁需求的预算是月租，与整机买卖价不同口径 */
+    if (doc.tradeMode === TRADE_MODES.LEASE || doc.tradeMode === TRADE_MODES.RENT) continue
+    /* 仅商机池的需求不进入公开现货盘 */
+    if (doc.channel === PUBLISH_CHANNELS.POOL) continue
+    /* 区间预算按上限计入买方预算；面议需求只累加求购数量 */
+    const budget = doc.budgetMode === 'range' && Number(doc.budgetMax) > Number(doc.budget)
+      ? Number(doc.budgetMax)
+      : Number(doc.budget) || 0
+    put(
+      doc.cat || '',
+      doc.model || doc.title,
+      doc.city || '',
+      'buy',
+      budget,
+      doc.qty,
+      doc.createdAt,
+      PRICE_SOURCE.DEMAND_BUY,
+      PRICE_WEIGHT.demandBuy
     )
   }
   for (const quote of listOf(quotes)) {
@@ -1840,7 +2207,9 @@ const REFUND_STATUS = Object.freeze({
   CANCELLED: '已撤销'
 })
 const PAYMENT_BIZ_TYPES = Object.freeze(['会员续费', '代采服务费', '代售服务费', '租赁服务费', '其他'])
-const PAYMENT_METHODS = Object.freeze(['企业微信', '微信转账', '对公转账', '支付宝', '现金', '其他'])
+/* 需要财务人工确认到账的只有委托服务费账单；会员收款由微信支付自动入账 */
+const PAYMENT_FEE_TYPES = Object.freeze(['代采服务费', '代售服务费', '租赁服务费'])
+const PAYMENT_METHODS = Object.freeze(['微信支付', '企业微信', '微信转账', '对公转账', '支付宝', '现金', '其他'])
 
 function accessView(access, now) {
   const a = access || null
@@ -1892,6 +2261,8 @@ function quoteView(quote, now) {
 
 function createMarketUserHandlers(deps) {
   const { repo, keys } = deps
+  /* 云存储临时链接：合同扫描件按需换链，ECS 部署时由 fileId 直链兜底 */
+  const cloud = deps.cloud
   /* 微信订阅消息：新商机匹配时推送，用户可在设置里关闭商机提醒 */
   const subscribe = deps.subscribe
   const now = typeof deps.now === 'function' ? deps.now : () => Date.now()
@@ -2055,6 +2426,34 @@ function createMarketUserHandlers(deps) {
     }
   }
 
+  /** 多选项（租期 / 租赁限制 / 验收方式）统一用顿号拼接 */
+  function joinText(value) {
+    if (Array.isArray(value)) return value.filter(Boolean).join('、')
+    return String(value == null ? '' : value).trim()
+  }
+
+  /** 商机详情「发布者设定的全部信息」：发布时填写的字段整理为键值行，空值不展示 */
+  function infoRows(rows) {
+    const out = []
+    for (const row of rows || []) {
+      if (!row) continue
+      const k = String(row.k || '').trim()
+      const v = String(row.v == null ? '' : row.v).trim()
+      if (!k || !v) continue
+      out.push({ k, v })
+    }
+    return out
+  }
+
+  /** 可协商条件 / 交易流程：统一成字符串数组，兼容历史对象结构 */
+  function textList(value) {
+    if (!Array.isArray(value)) return []
+    return value.map((item) => {
+      if (item && typeof item === 'object') return String(item.n || item.t || item.name || '').trim()
+      return String(item || '').trim()
+    }).filter(Boolean).slice(0, 10)
+  }
+
   function demandViewOf(demand, opts) {
     const o = opts || {}
     const rental = demand.tradeMode === TRADE_MODES.LEASE
@@ -2068,6 +2467,8 @@ function createMarketUserHandlers(deps) {
       model: demand.model || '',
       title: demand.title || '',
       qty: Number(demand.qty) || 0,
+      /* 浏览数与普通商品卡同一口径 */
+      views: Number(demand.views) || 0,
       city: demand.city || '',
       price: budget,
       priceLabel: rental ? '租金预算' : '采购预算',
@@ -2075,6 +2476,10 @@ function createMarketUserHandlers(deps) {
       matched: o.matched === true,
       stockText: o.stockText || '',
       stockQty: Number(o.stockQty) || 0,
+      /* 匹配说明：命中的型号 + 匹配依据（基于我的库存 / 我发布的需求） */
+      matchModel: o.matchModel || '',
+      matchVia: o.matchVia || '',
+      matchText: o.matchText || '',
       claimed: o.claimed === true,
       /* 已领取但发布方已关闭 / 已下架：仍保留在「已领取」里供回看 */
       closed: o.closed === true,
@@ -2087,15 +2492,33 @@ function createMarketUserHandlers(deps) {
       claimCount: claim.claimCount,
       claimLimit: claim.claimLimit,
       claimRemaining: claim.claimRemaining,
+      claimFull: claim.claimFull,
       claimText: claim.claimText,
       /* 用户标记「不满足」：仍留在列表里，但不计入可领取与角标提醒 */
       unsatisfied: o.unsatisfied === true,
       /* 领取后可逐项确认必须条件，再在平台内发起对话 */
       must: Array.isArray(demand.must) ? demand.must : [],
+      /* 发布时上传的图片与视频：商机详情与普通发布详情一样正常展示 */
+      media: Array.isArray(demand.media) ? demand.media.slice() : [],
+      /* 发布者设定的全部信息：发布时填写的条件与要求逐项下发，详情页完整展示 */
+      info: infoRows([
+        { k: '品牌', v: demand.brand },
+        { k: '成色要求', v: demand.cond },
+        { k: '税费要求', v: joinText(demand.tax) },
+        { k: '供给类型', v: demand.supply },
+        { k: rental ? '期望租期' : '', v: rental ? joinText(demand.term) : '' },
+        { k: rental ? '价格方式' : '', v: rental ? demand.closed : '' },
+        { k: rental ? '押金接受度' : '', v: rental ? demand.deposit : '' },
+        { k: rental ? '付款方式' : '', v: rental ? demand.pay : '' },
+        { k: rental ? '租赁条款要求' : '', v: rental ? joinText(demand.rentLimits) : '' },
+        { k: '验收要求', v: joinText(demand.accept) },
+        { k: '其他说明', v: demand.note }
+      ]),
       published: relTime(demand.createdAt, o.now || now()),
       /* 列表统一按发布时间倒序：越晚发布越靠前 */
       at: Number(demand.createdAt) || 0,
-      expireText: '长期有效'
+      /* 长期有效的商机不再展示「长期有效」字样，列表与详情都留空 */
+      expireText: ''
     }
   }
 
@@ -2118,6 +2541,8 @@ function createMarketUserHandlers(deps) {
       title: product.title || '',
       brand: product.brand || '',
       qty: Number(product.qty) || 0,
+      /* 浏览数与普通商品卡同一口径 */
+      views: Number(product.views) || 0,
       city: product.city || '',
       price,
       priceLabel: rental ? '月租金' : '出售单价',
@@ -2126,6 +2551,10 @@ function createMarketUserHandlers(deps) {
       stockText: o.stockText || '',
       stockQty: Number(o.stockQty) || 0,
       demandText: o.demandText || '',
+      /* 匹配说明：命中的型号 + 匹配依据（我发布的哪条需求 / 我的库存） */
+      matchModel: o.matchModel || '',
+      matchVia: o.matchVia || '',
+      matchText: o.matchText || '',
       claimed: o.claimed === true,
       closed: o.closed === true,
       statusText: o.statusText || '',
@@ -2137,16 +2566,48 @@ function createMarketUserHandlers(deps) {
       claimCount: claim.claimCount,
       claimLimit: claim.claimLimit,
       claimRemaining: claim.claimRemaining,
+      claimFull: claim.claimFull,
       claimText: claim.claimText,
       /* 用户标记「不满足」：仍留在列表里，但不计入可领取与角标提醒 */
       unsatisfied: o.unsatisfied === true,
       must: Array.isArray(product.must) ? product.must : [],
+      /* 发布时上传的图片与视频：商机详情与普通发布详情一样正常展示 */
+      media: Array.isArray(product.media) ? product.media.slice() : [],
+      /* 可协商条件与交易流程：发布者选填，领取前即可看到 */
+      nego: textList(product.nego),
+      flow: textList(product.flow),
+      /* 发布者设定的全部信息：发布时填写的条件与要求逐项下发，详情页完整展示 */
+      info: infoRows([
+        { k: '品牌', v: product.brand },
+        { k: '成色', v: product.cond },
+        { k: '税费', v: joinText(product.tax) },
+        { k: '供给类型', v: product.supply },
+        { k: rental ? '可起租时间' : '可交付时间', v: product.deliver },
+        { k: '起订量', v: Number(product.minQty) > 0 ? `${Number(product.minQty)} 台` : '' },
+        { k: rental ? '租期' : '', v: rental ? joinText(product.term) : '' },
+        { k: rental ? '价格方式' : '', v: rental ? product.closed : '' },
+        { k: rental ? '押金' : '', v: rental ? product.deposit : '' },
+        { k: rental ? '租金支付' : '', v: rental ? product.pay : '' },
+        { k: rental ? '租赁限制' : '', v: rental ? joinText(product.rentLimits) : '' },
+        { k: '验收标准', v: joinText(product.accept) },
+        { k: '接单要求', v: product.requirements },
+        { k: '可承接数量', v: product.limit },
+        { k: '交易说明', v: product.note }
+      ]),
       published: relTime(product.createdAt, o.now || now()),
       /* 列表统一按发布时间倒序：越晚发布越靠前 */
       at: Number(product.createdAt) || 0,
-      expireText: '长期有效'
+      /* 长期有效的商机不再展示「长期有效」字样，列表与详情都留空 */
+      expireText: ''
     }
   }
+
+  /* 代采 / 代售的交易流程条件：发布者未单独设置时按默认三条逐项核对 */
+  const AGENCY_MUST_DEFAULT = Object.freeze([
+    '可按委托价格与数量成交',
+    '可在截止时间前完成交付',
+    '接受平台居中对接与订单核验'
+  ])
 
   function agencyViewOf(doc, opts) {
     const o = opts || {}
@@ -2156,6 +2617,10 @@ function createMarketUserHandlers(deps) {
       agencyId: doc.id,
       type: 'agency',
       kind: doc.kind,
+      /* 代采 / 代售与普通商品一致：型号、数量、金额直接展示，不做领取后可见 */
+      side: doc.side === 'sell' ? 'sell' : 'buy',
+      /* 浏览数与普通商品卡同一口径 */
+      views: Number(doc.views) || 0,
       visibility: doc.visibility || (doc.side === 'buy' ? VISIBILITIES.PRIVATE : VISIBILITIES.PUBLIC),
       visibilityLabel: VISIBILITY_LABELS[doc.visibility || (doc.side === 'buy' ? VISIBILITIES.PRIVATE : VISIBILITIES.PUBLIC)],
       cat: doc.itemCat || '其他',
@@ -2172,19 +2637,45 @@ function createMarketUserHandlers(deps) {
       matched: o.matched === true,
       stockText: o.stockText || '',
       stockQty: Number(o.stockQty) || 0,
+      /* 匹配说明：命中的型号 + 匹配依据（基于我的库存） */
+      matchModel: o.matchModel || '',
+      matchVia: o.matchVia || '',
+      matchText: o.matchText || '',
       claimed: o.claimed === true,
+      /* 用户标记「不满足」：仍留在列表里，但不计入可领取与角标提醒 */
+      unsatisfied: o.unsatisfied === true,
+      /* 交易流程条件：先逐项确认满足 / 不满足，再领取，领取后才可对接平台。
+         条件本身属于通用流程约定（不含设备型号与金额），领取前保留，保证可以先确认再领取 */
+      must: Array.isArray(doc.must) && doc.must.length ? doc.must : AGENCY_MUST_DEFAULT.slice(),
+      /* 可协商条件与交易流程：发布者选填，领取前即可看到 */
+      nego: textList(doc.nego),
+      flow: textList(doc.flow),
+      /* 发布者设定的全部信息：与普通商品详情一致，直接展示型号、数量与说明 */
+      info: infoRows([
+        { k: '设备品类', v: doc.itemCat },
+        { k: '委托数量', v: Number(doc.qty) > 0 ? `${Number(doc.qty)} 台` : '' },
+        { k: '租期', v: doc.rental ? joinText(doc.term) : '' },
+        { k: '所在城市', v: doc.city },
+        { k: '截止时间', v: doc.deadline },
+        { k: '补充说明', v: doc.detail }
+      ]),
+      /* 营业执照 / 委托授权书 / 身份证等材料只供平台审核，商机池不下发，
+         避免匹配会员通过材料反推出委托方企业信息 */
+      media: [],
       contactVisible: o.contactVisible === true,
       canClaim: o.canClaim === true,
       /* 代采 / 代售统一由平台对接：用户提交对接申请后生成客服工单 */
       canConsult: o.canConsult === true,
       consulted: o.consulted === true,
       consultText: o.consulted ? '已提交 · 待平台核实' : '联系平台',
-      org: o.org || doc.subjectMasked || '',
+      /* 代采 / 代售一律以平台身份对外，任何入口都不回传委托方主体信息 */
+      org: o.org || '平台',
       contact: o.contact || '',
       phone: o.phone || '',
       claimCount: claim.claimCount,
       claimLimit: claim.claimLimit,
       claimRemaining: claim.claimRemaining,
+      claimFull: claim.claimFull,
       claimText: claim.claimText,
       published: relTime(doc.confirmedAt || doc.createdAt, o.now || now()),
       /* 列表统一按发布时间倒序：越晚发布越靠前，代采代售以上架时间为发布口径 */
@@ -2235,6 +2726,8 @@ function createMarketUserHandlers(deps) {
         fields: {
           subject: input.subject,
           phone: input.phone,
+          /* 授权书联系人电话也是联系方式，同样加密落库 */
+          authPhone: input.authPhone,
           legal: input.legal,
           creditCode: input.creditCode,
           idCard: input.idCard
@@ -2253,6 +2746,10 @@ function createMarketUserHandlers(deps) {
         qty: input.qty,
         price: input.price,
         amount: input.amount,
+        /* 币种随委托落库：展示与账单按委托币种渲染，缺省时才回退人民币 */
+        currency: input.currency,
+        currencySymbol: input.currencySymbol,
+        currencyLabel: input.currencyLabel,
         serviceFee: input.serviceFee,
         /* 后付费：发布 / 审核 / 上架均不收费，成交确认后生成服务费账单 */
         upfront: 0,
@@ -2293,6 +2790,7 @@ function createMarketUserHandlers(deps) {
         creditMasked: maskCredit(input.creditCode),
         idCardMasked: maskIdCard(input.idCard),
         phoneMasked: maskPhone(input.phone),
+        authPhoneMasked: maskPhone(input.authPhone),
         media: input.media,
         /* 代采 / 代售统一先过平台审核：审核通过即上架，不再要求缴费确认 */
         status: AGENCY_STATUS.REVIEW,
@@ -2474,8 +2972,8 @@ function createMarketUserHandlers(deps) {
         legal: plain('legal', doc.legalCipher),
         creditCode: plain('creditCode', doc.creditCodeCipher),
         idCard: plain('idCard', doc.idCardCipher),
-        /* 授权书联系人电话不落库，只保存与预留手机号是否一致：一致时回填预留号 */
-        authPhone: doc.authPhoneMatched === true ? phone : ''
+        /* 授权书联系人电话：新数据加密落库后直接解密回填；历史数据仍按一致标记回填预留号 */
+        authPhone: plain('authPhone', doc.authPhoneCipher) || (doc.authPhoneMatched === true ? phone : '')
       })
     },
 
@@ -2671,7 +3169,7 @@ function createMarketUserHandlers(deps) {
         throw new AppError(CODES.CONFLICT, doc.status === AGENCY_STATUS.ACTIVE
           ? '委托已上架，如需停止请联系客服关闭'
           : (doc.status === AGENCY_STATUS.APPROVED
-            ? '委托审核已通过，平台正在联系你，如需停止请联系客服'
+            ? '委托审核已通过并进入平台发布，如需停止请联系客服'
             : '该委托已结束，无需重复撤销'))
       }
       appendAudit(repo, {
@@ -2722,92 +3220,173 @@ function createMarketUserHandlers(deps) {
     },
 
     /**
-     * 委托方确认成交：平台发起成交后由委托方确认，确认后才算成交并生成后付费服务费账单。
-     * 重复调用保持幂等，已成交时直接返回当前详情。
+     * 委托方上传服务费打款凭证：线下打款后自行上传，财务在收款单里核对确认。
+     * 只登记凭证，不改变工单阶段（到账以财务确认为准）。
      */
-    'agency.dealConfirm': async (data, ctx) => {
+    'agency.payProof': async (data, ctx) => {
       const uid = ctx.openid
       await mustUser(ctx)
       const id = str(data.id, { field: '委托标识', required: true, max: 64 })
       const at = now()
       const doc = await repo.get('agencies', id)
       if (!doc || doc.deleted === true) throw new AppError(CODES.NOT_FOUND, '委托不存在或已删除')
-      if (doc.ownerId !== uid) throw new AppError(CODES.FORBIDDEN, '只能确认自己的委托')
-      if (doc.status === AGENCY_STATUS.DEALT || doc.status === AGENCY_STATUS.DONE) {
-        return agencyOwnerView(doc, at)
-      }
-      if (doc.status !== AGENCY_STATUS.DEAL_PENDING) {
-        throw new AppError(CODES.CONFLICT, '该委托不在待确认成交状态，请刷新后查看')
-      }
-      const res = await repo.updateWhere('agencies', {
-        id,
-        ownerId: uid,
-        status: AGENCY_STATUS.DEAL_PENDING
-      }, {
-        status: AGENCY_STATUS.DEALT,
-        dealt: true,
-        dealtAt: at,
-        dealConfirmedAt: at,
+      if (doc.ownerId !== uid) throw new AppError(CODES.FORBIDDEN, '只能操作自己的委托')
+      const billId = doc.feeBillId || `PY_AG_${doc.id}`
+      const bill = await repo.get('payments', billId)
+      if (!bill) throw new AppError(CODES.CONFLICT, '服务费账单尚未生成，请先确认成交')
+      if (bill.status === PAYMENT_STATUS.REFUNDED) throw new AppError(CODES.CONFLICT, '该账单已退款，无需上传凭证')
+      const incoming = (Array.isArray(data.files) ? data.files : []).map((item) => fileRef(item)).filter(Boolean)
+      if (!incoming.length) throw new AppError(CODES.VALIDATION, '请上传打款凭证')
+      const existing = Array.isArray(bill.proofFiles) ? bill.proofFiles.slice() : []
+      const files = existing.concat(incoming.filter((item) => existing.indexOf(item) < 0))
+      if (files.length > 5) throw new AppError(CODES.VALIDATION, '打款凭证最多上传 5 个')
+      const res = await repo.updateWhere('payments', { id: billId, status: bill.status }, {
+        proofFiles: files,
+        proofNote: str(data.note, { field: '备注', max: 200 }),
+        proofAt: at,
+        proofBy: uid,
         updatedAt: at
       })
-      if (!res || !res.count) throw new AppError(CODES.CONFLICT, '委托状态已变化，请刷新后重试')
+      if (!res || !res.count) throw new AppError(CODES.CONFLICT, '账单状态已变化，请刷新后重试')
       await appendAudit(repo, {
         actorType: 'user',
         actorId: uid,
-        action: 'agency.dealConfirm',
-        target: id,
-        reason: '委托方确认成交',
+        action: 'agency.payProof',
+        target: billId,
+        reason: `上传打款凭证 ${incoming.length} 个`,
         result: 'allow',
         at
       })
-      /* 成交确认后生成服务费账单：优先按委托方已上报的打款时间 + 3 个工作日 */
-      let fresh = await repo.get('agencies', id)
-      if (fresh) fresh = await ensureAgencyFeeBill(repo, fresh, at)
-      if (fresh && Number(fresh.feeDueAt) > 0) {
-        await sendUserNotice(fresh.ownerId, {
-          title: `${fresh.kind || '委托'}服务费待支付`,
-          body: `服务费 ¥${Number(fresh.serviceFee || 0)} 应于 ${dateText(fresh.feeDueAt)} 前到账，可在「我的缴费」查看。`,
-          targetId: fresh.id
-        }, at)
-      }
-      return agencyOwnerView(fresh || doc, at)
+      return { id, billId, files, proofAt: at }
     },
 
-    /** 用户确认收货：成交后由委托方确认，委托状态归档为「已完成」 */
-    'agency.receipt': async (data, ctx) => {
+    /**
+     * 咨询进度：委托方在小程序「我的委托」查看客服标准流程走到哪一步。
+     * 只返回阶段、时间线与可执行动作，不暴露客服内部备注与双方联系方式。
+     */
+    'consult.progress': async (data, ctx) => {
       const uid = ctx.openid
       await mustUser(ctx)
-      const id = str(data.id, { field: '委托标识', required: true, max: 64 })
-      const at = now()
-      const doc = await repo.get('agencies', id)
-      if (!doc || doc.deleted === true) throw new AppError(CODES.NOT_FOUND, '委托不存在或已删除')
-      if (doc.ownerId !== uid) throw new AppError(CODES.FORBIDDEN, '只能确认自己的委托')
-      if (doc.status === AGENCY_STATUS.DONE) throw new AppError(CODES.CONFLICT, '该委托已确认收货，无需重复操作')
-      if (doc.status !== AGENCY_STATUS.DEALT) throw new AppError(CODES.CONFLICT, '委托成交后才能确认收货')
-      const res = await repo.updateWhere('agencies', {
-        id,
-        ownerId: uid,
-        status: AGENCY_STATUS.DEALT
-      }, {
-        status: AGENCY_STATUS.DONE,
-        receiptConfirmedAt: at,
-        updatedAt: at
-      })
-      if (!res || !res.count) throw new AppError(CODES.CONFLICT, '委托状态已变化，请刷新后重试')
+      const id = str(data.id || data.agencyId, { field: '委托标识', required: true, max: 64 })
+      const agency = await repo.get('agencies', id)
+      if (!agency || agency.deleted === true) throw new AppError(CODES.NOT_FOUND, '委托不存在或已删除')
+      if (agency.ownerId !== uid) throw new AppError(CODES.FORBIDDEN, '只能查看自己的委托')
+      const lead = await consultLeadOfAgency(repo, id)
+      if (!lead) {
+        return { agencyId: id, started: false, stage: '', stageLabel: '', timeline: [], actions: [] }
+      }
+      const ticketState = ticketStateOf(lead)
+      /* 工单还没被客服领取：委托方只知道「客服即将接入」，不暴露尚未开始的流程 */
+      if (!lead.assignedAccount || ticketState !== TICKET_STATE.TICKETED) {
+        return {
+          agencyId: id,
+          leadId: lead.id,
+          started: false,
+          ticketState,
+          pending: ticketState === TICKET_STATE.INTAKE || ticketState === TICKET_STATE.CONSULTING,
+          pendingLabel: ticketState === TICKET_STATE.CONSULTING ? '客服正在与你确认委托条件' : '客服即将接入',
+          stage: '',
+          stageLabel: '',
+          timeline: [],
+          actions: []
+        }
+      }
+      const stage = consultStageOf(lead)
+      const rows = await repo.find('agencyContracts', { leadId: lead.id }, { limit: 1 })
+      const contract = rows[0] || null
+      const bill = await repo.get('payments', agency.feeBillId || `PY_AG_${agency.id}`)
+      const actions = []
+      /* 成交由平台确认，委托方只需要在服务费待支付时上传打款凭证 */
+      if (stage === CONSULT_STAGE.FEE) actions.push('payProof')
+      return {
+        agencyId: id,
+        leadId: lead.id,
+        started: true,
+        stage,
+        stageLabel: consultStageLabel(stage),
+        stageAt: Number(lead.stageAt) || 0,
+        csName: lead.csName || lead.assignedTo || '',
+        dealAmount: Number(lead.dealAmount) || 0,
+        timeline: (Array.isArray(lead.stageHistory) ? lead.stageHistory : []).map((item) => ({
+          stage: item.stage,
+          stageLabel: consultStageLabel(item.stage),
+          at: Number(item.at) || 0,
+          note: String(item.note || '')
+        })),
+        contract: contract ? {
+          id: contract.id,
+          contractNo: contract.contractNo || '',
+          status: contract.status,
+          signedAt: Number(contract.signedAt) || 0,
+          fileCount: Array.isArray(contract.files) && contract.files.length ? contract.files.length : (contract.fileId ? 1 : 0)
+        } : null,
+        fee: bill ? {
+          billId: bill.id,
+          amount: Number(bill.amount) || 0,
+          received: Number(bill.received) || 0,
+          status: bill.status,
+          dueAt: Number(bill.dueAt) || 0,
+          paidAt: Number(bill.confirmedAt) || 0,
+          proofCount: Array.isArray(bill.proofFiles) ? bill.proofFiles.length : (bill.proofFileId ? 1 : 0)
+        } : null,
+        actions
+      }
+    },
+
+    /**
+     * 居间合同文件：合同归档后委托方可查看扫描件（临时链接，5 分钟）。
+     * 只允许委托方本人，且每次取用留审计。
+     */
+    'consult.contractFile': async (data, ctx) => {
+      const uid = ctx.openid
+      await mustUser(ctx)
+      const id = str(data.id || data.agencyId, { field: '委托标识', required: true, max: 64 })
+      const agency = await repo.get('agencies', id)
+      if (!agency || agency.deleted === true) throw new AppError(CODES.NOT_FOUND, '委托不存在或已删除')
+      if (agency.ownerId !== uid) throw new AppError(CODES.FORBIDDEN, '只能查看自己的委托')
+      const lead = await consultLeadOfAgency(repo, id)
+      if (!lead) throw new AppError(CODES.NOT_FOUND, '该委托没有居间合同')
+      const rows = await repo.find('agencyContracts', { leadId: lead.id }, { limit: 1 })
+      const contract = rows[0]
+      const raw = (contract && Array.isArray(contract.files) && contract.files.length)
+        ? contract.files
+        : (contract && contract.fileId ? [{ fileId: contract.fileId, name: contract.fileName }] : [])
+      const files = raw
+        .map((item) => ({ fileId: fileRef(item && (item.fileId || item.id)), name: String((item && item.name) || '') }))
+        .filter((item) => item.fileId)
+      if (!files.length) throw new AppError(CODES.NOT_FOUND, '合同文件尚未上传')
+      if (contract.status !== '已归档') throw new AppError(CODES.CONFLICT, '合同尚未归档，暂不可查看')
       await appendAudit(repo, {
         actorType: 'user',
         actorId: uid,
-        action: 'agency.receipt',
-        target: id,
-        reason: '委托方确认收货',
+        action: 'consult.contractFile',
+        target: `${lead.id}:${contract.id}`,
+        reason: `查看居间合同 ${files.length} 个文件`,
         result: 'allow',
-        at
+        at: now()
       })
-      const fresh = await repo.get('agencies', id)
-      return agencyOwnerView(fresh || doc, at)
+      const urls = {}
+      for (const file of files) {
+        if (/^https:\/\//i.test(file.fileId)) { urls[file.fileId] = file.fileId; continue }
+        if (!cloud || typeof cloud.getTempFileURL !== 'function') continue
+        try {
+          const res = await cloud.getTempFileURL({ fileList: [file.fileId] })
+          const first = ((res && res.fileList) || [])[0]
+          if (first && first.tempFileURL) urls[file.fileId] = first.tempFileURL
+        } catch (err) { /* 换链失败：前端展示「稍后重试」占位 */ }
+      }
+      return {
+        agencyId: id,
+        contractId: contract.id,
+        contractNo: contract.contractNo || '',
+        signedAt: Number(contract.signedAt) || 0,
+        status: contract.status,
+        files,
+        urls
+      }
     },
 
-    /** 现货盘：平台在售商品 + 24h 内有效报价，脱敏聚合；代采 / 代售只在商机池展示 */
+    /** 现货盘：平台在售商品 + 有效求购需求 + 24h 内有效报价，脱敏聚合；代采 / 代售只在商机池展示 */
     'agency.board': async (data) => {
       const at = now()
       const limit = Math.min(50, Math.max(1, Number(data.limit) || 30))
@@ -2817,11 +3396,18 @@ function createMarketUserHandlers(deps) {
         channel: { $ne: PUBLISH_CHANNELS.POOL },
         deleted: { $ne: true }
       }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 300 })
+      /* 买方盘口只取「求购中」的整机需求，不返回需求明细与求购方身份 */
+      const demands = await repo.find('demands', {
+        status: DEMAND_STATUS.OPEN,
+        tradeMode: TRADE_MODES.BUY,
+        channel: { $ne: PUBLISH_CHANNELS.POOL },
+        deleted: { $ne: true }
+      }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 300 })
       const quotes = await repo.find('quotes', {
         expiresAt: { $gte: at },
         deleted: { $ne: true }
       }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 100 })
-      return { items: boardItems({ products, agencies: [], quotes, now: at, limit }) }
+      return { items: boardItems({ products, agencies: [], demands, quotes, now: at, limit }), updatedAt: at }
     },
 
     /** 粘贴报价：只落结构化条目，原始长文本不落库（避免夹带联系方式） */
@@ -2841,8 +3427,9 @@ function createMarketUserHandlers(deps) {
         const city = str(src.city, { field: '城市', max: 20 })
         assertNoContactInText(city, '城市')
         const price = Number(src.price)
-        if (!Number.isFinite(price) || price < 0 || price > 999999999) {
-          throw new AppError(CODES.VALIDATION, '报价需为 0 - 999999999 的数字')
+        /* 0 价会让货盘出现「0 元假盘口」，并直接影响买卖价差，必须要求明确报价 */
+        if (!Number.isFinite(price) || price <= 0 || price > 999999999) {
+          throw new AppError(CODES.VALIDATION, '未识别到报价，请补充价格（1 - 999999999 的数字）')
         }
         return {
           cat,
@@ -3029,6 +3616,11 @@ function createMarketUserHandlers(deps) {
     /** 评论列表：一级评论 + 每个一级评论下的回复（只展开一层，回复按时间正序） */
     'news.comment.list': async (data, ctx) => {
       const newsId = str(data.id || data.newsId, { field: '资讯', required: true, max: 64 })
+      /* 已下架 / 未发布的资讯不开放评论读取 */
+      const news = await repo.get('news', newsId)
+      if (!news || news.deleted === true || news.status !== NEWS_STATUS.PUBLISHED) {
+        throw new AppError(CODES.NOT_FOUND, '资讯不存在或已下架')
+      }
       const page = Math.max(1, Number(data.page) || 1)
       const limit = Math.min(50, Math.max(1, Number(data.limit) || 20))
       const at = now()
@@ -3059,7 +3651,7 @@ function createMarketUserHandlers(deps) {
         })),
         total,
         page,
-        hasMore: roots.length >= limit
+        hasMore: page * limit < total
       }
     },
 
@@ -3113,6 +3705,18 @@ function createMarketUserHandlers(deps) {
       if (row.uid !== uid) throw new AppError(CODES.FORBIDDEN, '只能删除自己的评论')
       const at = now()
       await repo.updateWhere('newsComments', { id, uid }, { deleted: true, updatedAt: at })
+      /* 级联软删其回复：根评论按 rootId 带走全部层级，回复按 parentId 带走直接下级，
+         避免「根已删除、回复仍展示」造成评论数虚高 */
+      await repo.updateWhere('newsComments', {
+        newsId: row.newsId,
+        rootId: id,
+        deleted: { $ne: true }
+      }, { deleted: true, updatedAt: at })
+      await repo.updateWhere('newsComments', {
+        newsId: row.newsId,
+        parentId: id,
+        deleted: { $ne: true }
+      }, { deleted: true, updatedAt: at })
       return { id, deleted: true }
     },
 
@@ -3225,38 +3829,6 @@ function createMarketUserHandlers(deps) {
       return accessView(access, now())
     },
 
-    'biz.apply': async (data, ctx) => {
-      const uid = ctx.openid
-      await mustUser(ctx)
-      const at = now()
-      const access = await ownAccess(uid)
-      const view = accessView(access, at)
-      if (view.unlocked) throw new AppError(CODES.CONFLICT, '商机权限已开通，无需重复申请')
-      if (view.status === BIZ_STATUS.PENDING) {
-        return Object.assign(view, { hint: '申请已提交，客服确认收款后开通' })
-      }
-      const doc = {
-        id: uid,
-        uid,
-        status: BIZ_STATUS.PENDING,
-        plan: BIZ_PLAN.price,
-        days: BIZ_PLAN.days,
-        appliedAt: at,
-        updatedAt: at,
-        expireAt: 0,
-        staff: '',
-        note: str(data.note, { field: '备注', max: 200 })
-      }
-      if (access) {
-        await repo.updateWhere('bizAccess', { id: uid }, doc)
-      } else {
-        await repo.insert('bizAccess', doc)
-      }
-      return Object.assign(accessView(Object.assign({}, access, doc), at), {
-        hint: '申请已提交，请添加企业微信客服支付 99 元 / 月后开通'
-      })
-    },
-
     /** 会员四档套餐：价格 / 天数取管理端设置，未配置用默认值 */
     'biz.plans': async (data, ctx) => {
       const uid = ctx.openid
@@ -3270,119 +3842,6 @@ function createMarketUserHandlers(deps) {
       })
     },
 
-    /**
-     * 用户端购买 / 续费：生成「待确认」收款单，客服确认到账后自动累加时长。
-     * 同一套餐存在待确认单时直接复用，避免重复支付。
-     */
-    'biz.purchase': async (data, ctx) => {
-      const uid = ctx.openid
-      await mustUser(ctx)
-      const at = now()
-      const plans = await resolvePlans(repo)
-      const key = enumOf(data.planKey || data.plan || 'month', plans.map((item) => item.key), '套餐')
-      const plan = plans.find((item) => item.key === key)
-      const user = await repo.get('users', uid)
-      const access = await ownAccess(uid)
-      const view = accessView(access, at)
-      const pending = await repo.find('payments', {
-        uid,
-        bizType: '会员续费',
-        status: PAYMENT_STATUS.PENDING
-      }, { limit: 10 })
-      const dup = pending.find((row) => row.planKey === key)
-      if (dup) {
-        return {
-          paymentId: dup.id,
-          amount: Number(dup.amount) || plan.price,
-          plan,
-          access: view,
-          hint: '该套餐已提交支付申请，客服确认到账后自动加时长'
-        }
-      }
-      const doc = {
-        /* 同一用户同一套餐当天用确定性单号：并发重复点击只有一个请求能建单，
-           其余请求命中唯一键后复用已建好的待确认单 */
-        id: 'PY' + sha256Hex(`bizPurchase:${uid}:${key}:${Math.floor(at / DAY_MS)}`).slice(0, 22),
-        uid,
-        nick: user.nick || '',
-        bizType: '会员续费',
-        planKey: plan.key,
-        planLabel: plan.label,
-        days: plan.days,
-        amount: plan.price,
-        discount: plan.saving,
-        /* 未支付前不记实收、不记收款时间：待确认单只代表「应收」，
-           否则财务对账会把「用户点了一下申请」当成真实到账 */
-        received: 0,
-        method: '企业微信',
-        status: PAYMENT_STATUS.PENDING,
-        paidAt: 0,
-        voucher: '',
-        operator: '用户端',
-        accountId: '',
-        note: `用户端购买 ${plan.label}（${plan.days} 天）`,
-        createdAt: at,
-        updatedAt: at
-      }
-      try {
-        await repo.insert('payments', doc)
-      } catch (err) {
-        if (!err || err.code !== CODES.CONFLICT) throw err
-        const again = await repo.find('payments', {
-          uid,
-          bizType: '会员续费',
-          status: PAYMENT_STATUS.PENDING
-        }, { limit: 10 })
-        const dupAgain = again.find((row) => row.planKey === key)
-        if (dupAgain) {
-          return {
-            paymentId: dupAgain.id,
-            amount: Number(dupAgain.amount) || plan.price,
-            plan,
-            access: view,
-            hint: '该套餐已提交支付申请，客服确认到账后自动加时长'
-          }
-        }
-        /* 当天已有确认过的同套餐单：换随机单号继续开新单 */
-        doc.id = randomId('PY')
-        await repo.insert('payments', doc)
-      }
-      /* 未开通 / 已到期的用户进入「待确认」，已开通的续费不打断当前权限；
-         这里重新读一次权限，避免用旧快照把刚确认到账的会员又覆盖回待确认 */
-      if (!accessView(await ownAccess(uid), at).unlocked) {
-        const patch = {
-          id: uid,
-          uid,
-          status: BIZ_STATUS.PENDING,
-          plan: plan.price,
-          planKey: plan.key,
-          planLabel: plan.label,
-          days: plan.days,
-          expireAt: 0,
-          appliedAt: (access && access.appliedAt) || at,
-          updatedAt: at,
-          staff: '',
-          note: ''
-        }
-        if (access) await repo.updateWhere('bizAccess', { id: uid }, patch)
-        else {
-          try {
-            await repo.insert('bizAccess', patch)
-          } catch (err) {
-            if (!err || err.code !== CODES.CONFLICT) throw err
-            /* 并发下单时另一请求已写入待开通记录，覆盖为同一份即可 */
-            await repo.updateWhere('bizAccess', { id: uid }, patch)
-          }
-        }
-      }
-      return {
-        paymentId: doc.id,
-        amount: doc.amount,
-        plan,
-        access: accessView(await ownAccess(uid), at),
-        hint: '已提交，客服确认到账后自动加时长'
-      }
-    },
 
     /**
      * 商机列表：只展示与「我」相关的两条线，其余一律不出现。
@@ -3410,12 +3869,10 @@ function createMarketUserHandlers(deps) {
       markRows.forEach((row) => {
         if (row && row.targetId) markSet.add(`${row.targetType}:${row.targetId}`)
       })
-      /* 我发布的求购需求：只有公开且明确进入商机池的需求才参与反向匹配 */
+      /* 我发布的求购需求：代售委托靠它匹配需求方，货源也用它做反向匹配 */
       const myDemands = await repo.find('demands', {
         ownerId: uid,
         status: '求购中',
-        visibility: { $ne: VISIBILITIES.PRIVATE },
-        bizPool: true,
         deleted: { $ne: true }
       }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 50 })
       /* 本人已提交的对接申请：同一委托只生成一张客服工单，重复点击直接返回原工单 */
@@ -3433,7 +3890,8 @@ function createMarketUserHandlers(deps) {
         deleted: { $ne: true }
       }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 50 }))
 
-      /* 代采委托一律保密，不进入商机池；保密代售同样不对外展示 */
+      /* 代采 / 代售委托：公开的进入商机池，所有匹配会员都能看到完整委托内容，
+         由平台统一对外（不透出委托方主体），不做「领取后才可见」 */
       const agencyRows = await sharedPool('open-agencies', 20, () => repo.find('agencies', {
         status: AGENCY_STATUS.ACTIVE,
         visibility: { $ne: VISIBILITIES.PRIVATE },
@@ -3525,11 +3983,18 @@ function createMarketUserHandlers(deps) {
         const publicOrg = pubProfile && pubProfile.exposure !== EXPOSURES.HIDDEN
           ? maskSubject(pubProfile.subject, pubProfile.subjectType)
           : ''
+        /* 已开通会员在列表里就下发完整主体（商机池只收公开主体），未开通只给脱敏主体；
+           联系方式仍然要领取后才给 */
+        const fullOrg = unlocked ? String((pubProfile && pubProfile.subject) || '').trim() : ''
         demandItems.push(demandViewOf(demand, {
           now: at,
           matched: true,
           stockText: match.text,
           stockQty: match.qty,
+          /* 匹配说明：什么型号对上了、依据是「我的库存」 */
+          matchModel: match.model,
+          matchVia: '我的库存',
+          matchText: `基于我的库存 · 现有 ${match.qty} 台可出`,
           claimed,
           claimCount,
           /* 领取即解锁联系人区块：对方没留电话时由前端提示改用站内对话，
@@ -3537,7 +4002,9 @@ function createMarketUserHandlers(deps) {
           contactVisible: !!contact,
           canClaim: unlocked && !claimed && !unsatisfied,
           unsatisfied,
-          org: contact ? contact.org : (publicOrg || maskName((owner && owner.nick) || '') || '匿名用户'),
+          org: contact
+            ? contact.org
+            : (fullOrg || publicOrg || maskName((owner && owner.nick) || '') || '匿名用户'),
           contact: contact
             ? contact.name
             : claimed
@@ -3549,31 +4016,81 @@ function createMarketUserHandlers(deps) {
 
       for (const agency of agencyRows) {
         if (agency.ownerId === uid) continue
-        /* 代采 / 代售由平台居中对接，不按个人主体曝光口径过滤 */
-        const match = stockMatch(stocks, agency.itemCat || '', agency.item, agency.brand, {
-          qty: agency.qty,
-          /* 委托价格口径与供需不同（可能含服务费 / 整单），价格档位只作用于求购与货源 */
-          city: agency.city,
-          series: agency.series,
-          pref: prefs
-        })
-        /* 商机池只展示库存能对上的委托，避免无关用户看到 */
-        if (!match.ok) continue
+        /* 代采（buy）＝平台代买，匹配货主方：用我的库存对上委托；
+           代售（sell）＝平台代卖，匹配需求方：用我发布的求购需求对上委托 */
+        let match = null
+        let matchVia = ''
+        let matchText = ''
+        if (agency.side === 'sell') {
+          const agencyStock = {
+            id: agency.id,
+            cat: agency.itemCat || '',
+            model: agency.item || '',
+            brand: '',
+            qty: Number(agency.qty) || 0,
+            price: Number(agency.price) || 0,
+            city: agency.city || '',
+            cond: '',
+            tax: '',
+            supply: ''
+          }
+          let hitDemand = null
+          for (const demand of myDemands) {
+            const hit = stockMatch([agencyStock], demand.cat, demand.model, demand.brand, {
+              qty: demand.qty,
+              price: demand.budget,
+              priceMax: demand.budgetMax,
+              city: demand.city,
+              cond: demand.cond,
+              tax: demand.tax,
+              supply: demand.supply,
+              series: demand.series,
+              pref: prefs
+            })
+            if (hit.ok) {
+              match = hit
+              hitDemand = demand
+              break
+            }
+          }
+          if (!match) continue
+          matchVia = '我的需求'
+          matchText = `基于我发布的需求《${hitDemand.title || hitDemand.model || '我的求购'}》`
+        } else {
+          match = stockMatch(stocks, agency.itemCat || '', agency.item, agency.brand, {
+            qty: agency.qty,
+            /* 委托价格口径与供需不同（可能含服务费 / 整单），价格档位只作用于求购与货源 */
+            city: agency.city,
+            series: agency.series,
+            pref: prefs
+          })
+          /* 商机池只展示库存能对上的委托，避免无关用户看到 */
+          if (!match.ok) continue
+          matchVia = '我的库存'
+          matchText = `基于我的库存 · 现有 ${match.qty} 台可出`
+        }
+        const claimed = claims.has(`agency:${agency.id}`)
+        const unsatisfied = markSet.has(`agency:${agency.id}`)
         const claimCount = claimCountMap[`agency:${agency.id}`] || 0
-        /* 代采 / 代售均由平台代为对接并联系缴费，不开放自助领取，也不下发联系方式 */
+        /* 代采 / 代售与普通商机同口径：委托信息对所有匹配会员可见，
+           不做「领取后才可见」；领取只用于标记意向并进入平台对接流程 */
         agencyItems.push(agencyViewOf(agency, {
           now: at,
           matched: true,
           stockText: match.text,
           stockQty: match.qty,
-          claimed: false,
+          matchModel: match.model,
+          matchVia,
+          matchText,
+          claimed,
           claimCount,
-          claimLimit: 0,
           contactVisible: false,
-          canClaim: false,
-          canConsult: unlocked,
+          canClaim: unlocked && !claimed && !unsatisfied,
+          canConsult: unlocked && claimed,
+          unsatisfied,
           consulted: !!consultMap[agency.id],
-          org: agency.subjectMasked,
+          /* 代采代售全程以平台身份对外，不暴露任何委托方企业信息 */
+          org: '平台',
           contact: '平台代为对接',
           phone: ''
         }))
@@ -3612,11 +4129,16 @@ function createMarketUserHandlers(deps) {
         const publicOrg = pubProfile && pubProfile.exposure !== EXPOSURES.HIDDEN
           ? maskSubject(pubProfile.subject, pubProfile.subjectType)
           : ''
+        /* 已开通会员看到完整货主主体，未开通只给脱敏主体 */
+        const fullOrg = unlocked ? String((pubProfile && pubProfile.subject) || '').trim() : ''
         const demandTitle = hit.demand.title || hit.demand.model || '我的求购'
         supplyItems.push(supplyViewOf(product, {
           now: at,
           stockText: hit.match.text,
           stockQty: hit.match.qty,
+          matchModel: `${product.brand || ''} ${product.model || ''}`.trim() || hit.match.model,
+          matchVia: '我发布的需求',
+          matchText: `基于我发布的需求《${demandTitle}》`,
           demandText: `匹配我的需求：${demandTitle}`,
           claimed,
           claimCount,
@@ -3625,7 +4147,9 @@ function createMarketUserHandlers(deps) {
           contactVisible: !!contact,
           canClaim: unlocked && !claimed && !unsatisfied,
           unsatisfied,
-          org: contact ? contact.org : (publicOrg || maskName((owner && owner.nick) || '') || '匿名用户'),
+          org: contact
+            ? contact.org
+            : (fullOrg || publicOrg || maskName((owner && owner.nick) || '') || '匿名用户'),
           contact: contact
             ? contact.name
             : claimed
@@ -3693,42 +4217,46 @@ function createMarketUserHandlers(deps) {
         }
       }
 
-      /* 排序：全部按发布时间倒序（越晚发布越靠前），代采代售以上架时间为准，
-         同类条目不再分组优先，避免新发的商机被旧委托压到后面 */
-      const matchedDemands = demandItems
+      /* 时间范围：只保留最近 N 天发布的商机；已领取但已结束的记录不受时间限制 */
+      const since = at - (Number(prefs.days) || BIZ_PREF_DAYS_DEFAULT) * DAY_MS
+      const inWindow = (item) => (Number(item.at) || 0) >= since
+      const freshItems = agencyItems.concat(demandItems, supplyItems).filter(inWindow)
       const newestFirst = (a, b) => (Number(b.at) || 0) - (Number(a.at) || 0)
-      const visibleItems = agencyItems.concat(matchedDemands, supplyItems, endedItems).sort(newestFirst)
+      const sorters = {
+        /* 匹配度：我的库存可出数量多的在前 */
+        match: (a, b) => (Number(b.stockQty) || 0) - (Number(a.stockQty) || 0) || newestFirst(a, b),
+        /* 商机数量：对方需求 / 委托数量大的在前 */
+        qty: (a, b) => (Number(b.qty) || 0) - (Number(a.qty) || 0) || newestFirst(a, b)
+      }
+      const visibleItems = freshItems
+        .sort(sorters[prefs.sort] || newestFirst)
+        .concat(endedItems)
+      /* 型号筛选只允许在「本次匹配上的型号」里选，前端据此渲染下拉 */
+      const matchModels = Array.from(new Set(
+        freshItems.map((item) => String(item.matchModel || '').trim()).filter(Boolean)
+      )).slice(0, 50)
       const plans = await resolvePlans(repo)
-      /* 未开通商机会员：看得到商机条数（角标与列表条数），但看不到型号 / 价格 / 主体 / 联系方式，
-         也不下发必须条件，避免绕过会员门槛拿到商机内容 */
+      /* 未开通商机会员：型号 / 数量 / 价格与脱敏主体可见，让用户判断是不是真实商机；
+         联系方式、必须条件与领取能力仍锁定（org 本身已是 maskSubject 脱敏结果） */
       const lockedItems = !unlocked
         ? visibleItems.map((item) => Object.assign({}, item, {
-          title: '',
-          model: '****',
-          brand: '',
-          city: '',
-          qty: 0,
-          unit: '',
-          priceText: '¥ ****',
-          org: '商机会员可见',
+          org: item.org || '匿名用户',
           contact: item.type === 'agency' ? '平台代为对接' : '开通商机后可见',
           phone: '',
-          stockText: '',
-          demandText: '',
           claimText: '',
           must: [],
           contactVisible: false,
           canClaim: false,
           canConsult: false,
           claimed: false,
-          claimCount: 0,
-          masked: true
+          claimCount: 0
         }))
         : null
       return Object.assign(view, {
         items: unlocked ? visibleItems : lockedItems,
         locked: !unlocked,
-        matchedCount: agencyItems.length + matchedDemands.length + supplyItems.length,
+        matchedCount: freshItems.length,
+        matchModels: unlocked ? matchModels : [],
         stockCount: stocks.length,
         demandCount: myDemands.length,
         plans,
@@ -3788,6 +4316,9 @@ function createMarketUserHandlers(deps) {
       const stocks = await ownStocks(uid)
       const prefRow = await repo.get('bizPrefs', uid)
       const prefs = normalizeBizPrefs(prefRow)
+      /* 与商机列表同一时间口径：只统计显示时间范围内的商机 */
+      const since = at - (Number(prefs.days) || BIZ_PREF_DAYS_DEFAULT) * DAY_MS
+      const inWindow = (item) => (Number(item.at) || 0) >= since
       const claims = await ownClaims(uid)
       /* 标记「不满足」的商机不再计入角标提醒，但仍在商机列表里可查看 */
       const markRows = await repo.find('bizMarks', { uid, marked: true }, { limit: 500 })
@@ -3812,6 +4343,8 @@ function createMarketUserHandlers(deps) {
         if (markSet.has(`demand:${demand.id}`)) return
         /* 发布者主体未公开：不计入商机角标 */
         if (!demandOwners.has(demand.ownerId)) return
+        /* 超出显示时间范围：不计入角标 */
+        if (!inWindow({ at: demand.createdAt })) return
         const match = stockMatch(stocks, demand.cat, demand.model, demand.brand, {
           qty: demand.qty,
           price: demand.budget,
@@ -3825,7 +4358,15 @@ function createMarketUserHandlers(deps) {
         })
         if (match.ok) count += 1
       })
-      if (stocks.length) {
+      /* 我发布的需求：代售（平台代卖）用它匹配需求方，也用于反向商机计数 */
+      const myDemandsAll = await repo.find('demands', {
+        ownerId: uid,
+        status: '求购中',
+        deleted: { $ne: true }
+      }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 50 })
+      const myDemands = myDemandsAll.filter((row) =>
+        row && row.visibility !== VISIBILITIES.PRIVATE && row.bizPool === true)
+      if (stocks.length || myDemandsAll.length) {
         const agencyRows = await sharedPool('open-agencies', 20, () => repo.find('agencies', {
           status: AGENCY_STATUS.ACTIVE,
           visibility: { $ne: VISIBILITIES.PRIVATE },
@@ -3835,25 +4376,53 @@ function createMarketUserHandlers(deps) {
         }, { limit: 50 }))
         agencyRows.forEach((agency) => {
           if (agency.ownerId === uid) return
-          const match = stockMatch(stocks, agency.itemCat || '', agency.item, agency.brand, {
-            qty: agency.qty,
-            /* 委托价格口径与供需不同（可能含服务费 / 整单），价格档位只作用于求购与货源 */
-            city: agency.city,
-            series: agency.series,
-            pref: prefs
-          })
-          if (match.ok) count += 1
+          if (claims.has(`agency:${agency.id}`)) return
+          if (markSet.has(`agency:${agency.id}`)) return
+          if (!inWindow({ at: agency.confirmedAt || agency.createdAt })) return
+          /* 与商机列表同一口径：代采（buy）＝平台代买，匹配我的库存；
+             代售（sell）＝平台代卖，匹配我发布的需求 */
+          let match = null
+          if (agency.side === 'sell') {
+            const agencyStock = {
+              id: agency.id,
+              cat: agency.itemCat || '',
+              model: agency.item || '',
+              brand: '',
+              qty: Number(agency.qty) || 0,
+              price: Number(agency.price) || 0,
+              city: agency.city || '',
+              cond: '',
+              tax: '',
+              supply: ''
+            }
+            for (const demand of myDemandsAll) {
+              const hit = stockMatch([agencyStock], demand.cat, demand.model, demand.brand, {
+                qty: demand.qty,
+                price: demand.budget,
+                priceMax: demand.budgetMax,
+                city: demand.city,
+                cond: demand.cond,
+                tax: demand.tax,
+                supply: demand.supply,
+                series: demand.series,
+                pref: prefs
+              })
+              if (hit.ok) { match = hit; break }
+            }
+          } else {
+            match = stockMatch(stocks, agency.itemCat || '', agency.item, agency.brand, {
+              qty: agency.qty,
+              /* 委托价格口径与供需不同（可能含服务费 / 整单），价格档位只作用于求购与货源 */
+              city: agency.city,
+              series: agency.series,
+              pref: prefs
+            })
+          }
+          if (match && match.ok) count += 1
         })
       }
 
       /* 反向商机：别人在售的货源是否满足我已发布的需求（需求须公开且进商机池） */
-      const myDemands = await repo.find('demands', {
-        ownerId: uid,
-        status: '求购中',
-        visibility: { $ne: VISIBILITIES.PRIVATE },
-        bizPool: true,
-        deleted: { $ne: true }
-      }, { limit: 50 })
       if (myDemands.length) {
         const productRows = await sharedPool('pool-products', 20, () => repo.find('products', {
           status: '在售',
@@ -3867,6 +4436,7 @@ function createMarketUserHandlers(deps) {
           if (claims.has(`supply:${product.id}`)) return
           if (markSet.has(`supply:${product.id}`)) return
           if (!productOwners.has(product.ownerId)) return
+          if (!inWindow({ at: product.createdAt })) return
           const hit = myDemands.some((demand) => stockMatch([product], demand.cat, demand.model, demand.brand, {
             qty: demand.qty,
             price: demand.budget,
@@ -3888,6 +4458,7 @@ function createMarketUserHandlers(deps) {
       if (claims.size) {
         const demandIds = []
         const supplyIds = []
+        const agencyIds = []
         claims.forEach((key) => {
           const text = String(key || '')
           const cut = text.indexOf(':')
@@ -3897,6 +4468,7 @@ function createMarketUserHandlers(deps) {
           if (!id) return
           if (kind === 'demand') demandIds.push(id)
           else if (kind === 'supply') supplyIds.push(id)
+          else if (kind === 'agency') agencyIds.push(id)
         })
         if (demandIds.length) {
           const rows = await repo.find('demands', { id: { $in: demandIds }, deleted: { $ne: true } }, { limit: demandIds.length })
@@ -3904,6 +4476,11 @@ function createMarketUserHandlers(deps) {
         }
         if (supplyIds.length) {
           const rows = await repo.find('products', { id: { $in: supplyIds }, deleted: { $ne: true } }, { limit: supplyIds.length })
+          claimedCount += rows.filter((row) => row && row.ownerId !== uid).length
+        }
+        /* 代采 / 代售领取记录同样计入「我的商机」，与列表保持一致 */
+        if (agencyIds.length) {
+          const rows = await repo.find('agencies', { id: { $in: agencyIds }, deleted: { $ne: true } }, { limit: agencyIds.length })
           claimedCount += rows.filter((row) => row && row.ownerId !== uid).length
         }
       }
@@ -3915,6 +4492,8 @@ function createMarketUserHandlers(deps) {
       const uid = ctx.openid
       const user = await mustUser(ctx)
       const at = now()
+      /* 领取商机属于「商机对接」：受限期间不允许新领取，避免绕过直聊限制拿到联系方式 */
+      assertAllowed(user, 'chat', at)
       const access = await ownAccess(uid)
       const view = accessView(access, at)
       if (!view.unlocked) throw new AppError(CODES.CONFLICT, '商机权限未开通或已到期，请先开通')
@@ -3931,6 +4510,13 @@ function createMarketUserHandlers(deps) {
         max: 64
       })
       const claimId = 'bc' + sha256Hex(`${uid}:${targetType}:${targetId}`).slice(0, 24)
+      /* 与直聊 / 咨询共用同一条确定性线索：命中「已拦截」说明该用户在这个标的上已被风控拦下，
+         即使商机已开通、库存也匹配，也不能把发布方联系方式放出去 */
+      const leadId = 'L' + sha256Hex(`chat:${uid}:${targetId}`).slice(0, 22)
+      const blockedLead = await repo.get('leads', leadId)
+      if (blockedLead && blockedLead.status === LEAD_STATUS.BLOCKED) {
+        throw new AppError(CODES.FORBIDDEN, '该商机暂不可领取，请通过在线客服咨询')
+      }
       const existing = await repo.get('bizClaims', claimId)
       const stocks = await ownStocks(uid)
       /* 提示力度：与商机列表保持同一口径，列表能看到的才能领取 */
@@ -3939,6 +4525,10 @@ function createMarketUserHandlers(deps) {
       let contact = null
       let ownerId = ''
       let title = ''
+      let agencySide = ''
+      /* 不设领取名额：发布方不下架，匹配到的会员都可以领取 */
+      /* 发布者设置的必须条件：领取时逐项确认，服务端复核 */
+      let must = []
       if (targetType === 'demand') {
         const demand = await repo.get('demands', targetId)
         if (!demand || demand.deleted) throw new AppError(CODES.NOT_FOUND, '需求不存在或已关闭')
@@ -3966,6 +4556,7 @@ function createMarketUserHandlers(deps) {
           pref: prefs
         })
         if (!match.ok) throw new AppError(CODES.FORBIDDEN, '我的库存中没有匹配的型号，无法领取')
+        must = Array.isArray(demand.must) ? demand.must : []
         contact = await contactOfUser(demand.ownerId)
         ownerId = demand.ownerId
         title = demand.title || demand.model
@@ -4002,14 +4593,79 @@ function createMarketUserHandlers(deps) {
           pref: prefs
         }).ok)
         if (!hit) throw new AppError(CODES.FORBIDDEN, '该货源与我的需求不匹配，无法领取')
+        must = Array.isArray(product.must) ? product.must : []
         contact = await contactOfUser(product.ownerId)
         ownerId = product.ownerId
         title = product.title || product.model
       } else {
-        /* 代采 / 代售委托均由平台代为对接并联系缴费，不开放自助领取 */
+        /* 代采 / 代售：先确认交易流程条件，再领取；领取后才由平台居中对接 */
         const agency = await repo.get('agencies', targetId)
         if (!agency || agency.deleted) throw new AppError(CODES.NOT_FOUND, '委托不存在或已关闭')
-        throw new AppError(CODES.NOT_FOUND, '该委托由平台代为对接，暂不开放自助领取')
+        if (agency.ownerId === uid) throw new AppError(CODES.VALIDATION, '不能领取自己发布的委托')
+        if (agency.status !== AGENCY_STATUS.ACTIVE) {
+          throw new AppError(
+            CODES.CONFLICT,
+            agency.status === AGENCY_STATUS.LOCKED ? '该委托已锁定唯一对接方，暂不可领取' : '该委托已结束，暂不可领取'
+          )
+        }
+        agencySide = agency.side || ''
+        /* 与商机列表同一口径：代采（buy）＝平台代买，匹配我的库存；
+           代售（sell）＝平台代卖，匹配我发布的需求 */
+        let match = null
+        if (agency.side === 'sell') {
+          const myDemands = await repo.find('demands', {
+            ownerId: uid,
+            status: '求购中',
+            deleted: { $ne: true }
+          }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 50 })
+          const agencyStock = {
+            id: agency.id,
+            cat: agency.itemCat || '',
+            model: agency.item || '',
+            brand: '',
+            qty: Number(agency.qty) || 0,
+            price: Number(agency.price) || 0,
+            city: agency.city || '',
+            cond: '',
+            tax: '',
+            supply: ''
+          }
+          for (const demand of myDemands) {
+            const hit = stockMatch([agencyStock], demand.cat, demand.model, demand.brand, {
+              qty: demand.qty,
+              price: demand.budget,
+              priceMax: demand.budgetMax,
+              city: demand.city,
+              cond: demand.cond,
+              tax: demand.tax,
+              supply: demand.supply,
+              series: demand.series,
+              pref: prefs
+            })
+            if (hit.ok) { match = hit; break }
+          }
+        } else {
+          match = stockMatch(stocks, agency.itemCat || '', agency.item, agency.brand, {
+            qty: agency.qty,
+            city: agency.city,
+            series: agency.series,
+            pref: prefs
+          })
+        }
+        if (!match || !match.ok) {
+          throw new AppError(CODES.FORBIDDEN, agency.side === 'sell'
+            ? '我发布的需求中没有匹配的型号，无法领取'
+            : '我的库存中没有匹配的型号，无法领取')
+        }
+        /* 截止时间已过：即使状态还没被懒过期任务刷新，也不允许领取 */
+        if (agency.expiresAt && Number(new Date(agency.expiresAt).getTime()) < Number(at)) {
+          throw new AppError(CODES.CONFLICT, '该委托已到截止时间，暂不可领取')
+        }
+        must = Array.isArray(agency.must) && agency.must.length ? agency.must : AGENCY_MUST_DEFAULT.slice()
+        /* 委托方主体信息不对外下发：领取后也统一显示为平台 */
+        contact = { org: '平台', name: '平台代为对接', phone: '' }
+        ownerId = agency.ownerId
+        title = `${agency.kind} ${agency.item}`
       }
 
       /* 领取即对接：领取方也必须是公开主体，保证商机里对接双方都公开（委托分支已在上方拦截） */
@@ -4017,9 +4673,20 @@ function createMarketUserHandlers(deps) {
         throw new AppError(CODES.FORBIDDEN, '请先在「我的-资料」中公开主体信息，再领取商机')
       }
 
+      /* 发布者的必须条件：领取时逐项确认，服务端复核，避免绕过前端直接领到不满足条件的商机。
+         放在写领取记录之前，确认失败不会留下脏数据 */
+      if (!existing && must.length) {
+        const conds = (Array.isArray(data.conds) ? data.conds : []).map((c) => String(c || '').trim())
+        const missing = must.filter((t) => conds.indexOf(String(t).trim()) < 0)
+        if (missing.length) {
+          throw new AppError(CODES.CONFLICT, `还有 ${missing.length} 项必须条件未确认：${missing[0]}`)
+        }
+      }
+
+      /* 合同审核通过前不做独家锁：多家都可以领取并各自生成工单；
+         任一家居间合同归档后由 lockAgencyForContract 收敛为唯一对接方 */
+
       if (!existing) {
-        /* 不设领取名额：只要是商机会员且库存匹配都可以领取。
-           同一用户重复领取按幂等处理，并发下以唯一 claimId 兜底。 */
         try {
           await repo.insert('bizClaims', {
             id: claimId,
@@ -4045,13 +4712,62 @@ function createMarketUserHandlers(deps) {
       }
 
       /* 领取即建线索：管理端线索工作台要能看到并推进「已对接 / 已成交」，
-         与直聊共用同一个确定性线索号（同一用户 + 同一标的只留一条），并发下以唯一 id 兜底 */
-      const leadId = 'L' + sha256Hex(`chat:${uid}:${targetId}`).slice(0, 22)
+         与直聊共用同一个确定性线索号（同一用户 + 同一标的只留一条），并发下以唯一 id 兜底。
+         代采 / 代售领取与「申请平台对接」共用同一个工单号，保证商机与工单一一绑定 */
+      const agencyLead = targetType === 'agency'
+      const leadIdOfClaim = agencyLead
+        ? 'ld' + sha256Hex(`agency:${uid}:${targetId}`).slice(0, 24)
+        : leadId
+      /* 同一委托由同一客服统一对接：同委托已有客服在跟进时，新工单直接落到该客服名下 */
+      const agencyCs = agencyLead ? await inheritedAgencyCs(repo, targetId, at) : null
       try {
-        const hasLead = await repo.get('leads', leadId)
+        const hasLead = await repo.get('leads', leadIdOfClaim)
         if (!hasLead) {
-          await repo.insert('leads', {
-            id: leadId,
+          await repo.insert('leads', agencyLead ? {
+            id: leadIdOfClaim,
+            source: '商机领取',
+            targetType: 'agency',
+            targetId,
+            agencyId: targetId,
+            agencySide,
+            agencyTitle: title,
+            productId: '',
+            demandId: '',
+            uid,
+            buyerBidx: '',
+            formSummary: `在商机池领取「${title}」，申请平台代为对接`,
+            compare: [],
+            matchPct: 100,
+            media: [],
+            status: LEAD_STATUS.PENDING,
+            assignedTo: agencyCs ? agencyCs.assignedTo : '',
+            assignedAccount: agencyCs ? agencyCs.assignedAccount : '',
+            assignedAt: agencyCs ? agencyCs.assignedAt : 0,
+            tier: TIERS.DEFAULT,
+            tierName: '',
+            ruleVersion: '',
+            hits: [],
+            csStatus: agencyCs ? agencyCs.csStatus : CS_STATUS.WAITING,
+            csId: agencyCs ? agencyCs.csId : '',
+            csName: agencyCs ? agencyCs.csName : '',
+            csClaimedAt: agencyCs ? agencyCs.csClaimedAt : 0,
+            ticketState: TICKET_STATE.TICKETED,
+            serviceStage: CONSULT_STAGE.COMMUNICATING,
+            stageAt: at,
+            stageBy: '',
+            stageVersion: 0,
+            stageHistory: [{
+              stage: CONSULT_STAGE.COMMUNICATING,
+              at,
+              by: '',
+              note: agencyCs ? '商机领取自动建单，沿用同委托客服' : '商机领取自动建单'
+            }],
+            createdAt: at,
+            updatedAt: at,
+            threadId: leadIdOfClaim,
+            contactReleased: false
+          } : {
+            id: leadIdOfClaim,
             source: '商机领取',
             productId: targetType === 'supply' ? targetId : '',
             demandId: targetType === 'demand' ? targetId : '',
@@ -4071,6 +4787,37 @@ function createMarketUserHandlers(deps) {
             threadId: '',
             contactReleased: true
           })
+        } else if (agencyLead) {
+          /* 领取前已通过客服发起过咨询：只补缺失的绑定字段，不重置工单阶段 */
+          const patch = {}
+          if (!hasLead.targetType) patch.targetType = 'agency'
+          if (!hasLead.targetId) patch.targetId = targetId
+          if (!hasLead.agencyId) patch.agencyId = targetId
+          if (!hasLead.agencySide) patch.agencySide = agencySide
+          if (!hasLead.agencyTitle) patch.agencyTitle = title
+          if (!hasLead.ticketState) patch.ticketState = TICKET_STATE.TICKETED
+          if (!hasLead.csStatus) patch.csStatus = CS_STATUS.WAITING
+          if (!hasLead.serviceStage) {
+            patch.serviceStage = CONSULT_STAGE.COMMUNICATING
+            patch.stageAt = at
+            patch.stageVersion = 0
+            patch.stageHistory = [{ stage: CONSULT_STAGE.COMMUNICATING, at, by: '', note: '商机领取补建工单' }]
+          }
+          if (!hasLead.threadId) patch.threadId = hasLead.id
+          /* 老工单还没客服认领，而同一委托已有客服在跟进：直接归到该客服名下 */
+          if (!hasLead.assignedAccount && agencyCs) {
+            patch.assignedTo = agencyCs.assignedTo
+            patch.assignedAccount = agencyCs.assignedAccount
+            patch.assignedAt = agencyCs.assignedAt
+            patch.csId = agencyCs.csId
+            patch.csName = agencyCs.csName
+            patch.csClaimedAt = agencyCs.csClaimedAt
+            patch.csStatus = agencyCs.csStatus
+          }
+          if (Object.keys(patch).length) {
+            patch.updatedAt = at
+            await repo.updateWhere('leads', { id: hasLead.id }, patch)
+          }
         }
       } catch (err) {
         /* 并发领取 / 同时直聊：另一路已建好同一条线索，忽略冲突 */
@@ -4117,13 +4864,16 @@ function createMarketUserHandlers(deps) {
     'biz.mark': async (data, ctx) => {
       const uid = ctx.openid
       await mustUser(ctx)
-      const targetType = enumOf(data.targetType, ['demand', 'supply'], '商机类型')
+      const targetType = enumOf(data.targetType, ['demand', 'supply', 'agency'], '商机类型')
       const targetId = str(data.targetId, { field: '商机标识', required: true, max: 64 })
       const marked = data.marked !== false
       const at = now()
 
       /* 只接受仍存在的商机：发布者删除后不再允许写入标记 */
-      const source = await repo.get(targetType === 'demand' ? 'demands' : 'products', targetId)
+      const sourceCollection = targetType === 'demand'
+        ? 'demands'
+        : (targetType === 'supply' ? 'products' : 'agencies')
+      const source = await repo.get(sourceCollection, targetId)
       if (!source || source.deleted) {
         throw new AppError(CODES.NOT_FOUND, '商机不存在或已被发布者删除')
       }
@@ -4148,6 +4898,61 @@ function createMarketUserHandlers(deps) {
     },
 
     /**
+     * 删除我领取的商机：只移除本人的领取记录，商机回到池里可继续领取。
+     */
+    'biz.delete': async (data, ctx) => {
+      const uid = ctx.openid
+      await mustUser(ctx)
+      const targetType = enumOf(data.targetType, ['demand', 'supply', 'agency'], '商机类型')
+      const targetId = str(data.targetId, { field: '商机标识', required: true, max: 64 })
+      const at = now()
+      const claimId = 'bc' + sha256Hex(`${uid}:${targetType}:${targetId}`).slice(0, 24)
+      const claim = await repo.get('bizClaims', claimId)
+      if (claim) await repo.removeWhere('bizClaims', { id: claimId }, 1)
+
+      if (targetType === 'agency') {
+        const lockId = 'AC' + sha256Hex(`agency-claim:${targetId}`).slice(0, 22)
+        const lock = await repo.get('agencyClaims', lockId)
+        if (lock && lock.uid === uid) {
+          await repo.removeWhere('agencyClaims', { id: lockId }, 1)
+          await repo.updateWhere('agencies', { id: targetId }, { claimUid: '', claimAt: 0, updatedAt: at })
+        }
+      }
+
+      if (claim) {
+        appendAudit(repo, {
+          actorType: 'user',
+          actorId: uid,
+          action: 'biz.delete',
+          target: `${targetType}:${targetId}`,
+          reason: '删除我领取的商机',
+          result: 'allow',
+          at
+        })
+      }
+      return { deleted: !!claim, targetType, targetId }
+    },
+
+    /** 收藏等场景按 id 批量取委托卡：内容本身已公开，不再额外收会员限制 */
+    'biz.cards': async (data) => {
+      const ids = arrayOfStrings(data && data.ids, { field: '委托标识', max: 50, itemMax: 64 })
+      if (!ids.length) return { items: [] }
+      const at = now()
+      const rows = await repo.find('agencies', {
+        id: { $in: ids },
+        visibility: { $ne: VISIBILITIES.PRIVATE },
+        deleted: { $ne: true }
+      }, { limit: ids.length })
+      return {
+        items: rows.map((doc) => agencyViewOf(doc, {
+          now: at,
+          contact: '平台代为对接',
+          phone: ''
+        }))
+      }
+    },
+
+    /**
      * 代采 / 代售：用户不能直接联系委托方，由平台代为对接。
      * 提交后生成客服工单，客服联系核实库存与交付条件后，再把采购方信息推给对方。
      */
@@ -4160,12 +4965,27 @@ function createMarketUserHandlers(deps) {
 
       /* 兼容前端传 agencyId / id，避免两端口径不一致 */
       const agencyId = str(data.agencyId || data.id, { field: '委托标识', required: true, max: 64 })
+      /* 用户从「填写完整需求」带过来的内容：坐席跟进前先看，未填写时用库存匹配摘要 */
+      const summary = str(data.summary, { field: '需求说明', max: 500 })
+      /* 咨询表单里上传的图片 / 视频：随需求一起作为会话消息发送，客服领取后即可看到 */
+      const consultMedia = []
+      const rawMedia = Array.isArray(data.media) ? data.media.slice(0, 12) : []
+      for (const item of rawMedia) {
+        const m = item || {}
+        const kind = m.kind === 'video' ? 'video' : (m.kind === 'image' ? 'image' : '')
+        const url = kind ? String(m.url || '') : ''
+        if (!kind || !/^(https:\/\/|cloud:\/\/)/i.test(url)) continue
+        consultMedia.push({ kind, url })
+      }
       const agency = await expireAgencyIfNeeded(repo, await repo.get('agencies', agencyId), at)
       if (!agency || agency.deleted || agency.status === AGENCY_STATUS.CLOSED) {
         throw new AppError(CODES.NOT_FOUND, '委托不存在或已关闭')
       }
       if (agency.status !== AGENCY_STATUS.ACTIVE) {
-        throw new AppError(CODES.CONFLICT, '委托尚未上架或已下架，暂不能对接')
+        throw new AppError(
+          CODES.CONFLICT,
+          agency.status === AGENCY_STATUS.LOCKED ? '该委托已锁定唯一对接方，暂不能对接' : '委托尚未上架或已下架，暂不能对接'
+        )
       }
       if (agencyDeadlineAt(agency) && agencyDeadlineAt(agency) < at) {
         throw new AppError(CODES.CONFLICT, '委托已过期，暂不能对接')
@@ -4189,30 +5009,227 @@ function createMarketUserHandlers(deps) {
 
       const stocks = await ownStocks(uid)
       const prefs = normalizeBizPrefs(await repo.get('bizPrefs', uid))
-      const match = stockMatch(stocks, agency.itemCat || '', agency.item, agency.brand, {
-        qty: agency.qty,
-        /* 委托价格口径与供需不同（可能含服务费 / 整单），价格档位只作用于求购与货源 */
-        city: agency.city,
-        series: agency.series,
-        pref: prefs
-      })
-      if (!match.ok) {
-        throw new AppError(CODES.FORBIDDEN, '我的库存中没有匹配的型号，无法申请平台对接')
+      /* 代采（平台代买）对应货主方：用我的库存匹配；代售（平台代卖）对应需求方：用我的求购需求匹配 */
+      const isSell = agency.side === 'sell'
+      let match = null
+      if (isSell) {
+        const myDemands = await repo.find('demands', {
+          ownerId: uid,
+          status: '求购中',
+          deleted: { $ne: true }
+        }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 50 })
+        const agencyStock = {
+          id: agency.id,
+          cat: agency.itemCat || '',
+          model: agency.item || '',
+          brand: '',
+          qty: Number(agency.qty) || 0,
+          price: Number(agency.price) || 0,
+          city: agency.city || '',
+          cond: '',
+          tax: '',
+          supply: ''
+        }
+        for (const demand of myDemands) {
+          const hit = stockMatch([agencyStock], demand.cat, demand.model, demand.brand, {
+            qty: demand.qty,
+            price: demand.budget,
+            priceMax: demand.budgetMax,
+            city: demand.city,
+            cond: demand.cond,
+            tax: demand.tax,
+            supply: demand.supply,
+            series: demand.series,
+            pref: prefs
+          })
+          if (hit.ok) {
+            match = hit
+            break
+          }
+        }
+      } else {
+        match = stockMatch(stocks, agency.itemCat || '', agency.item, agency.brand, {
+          qty: agency.qty,
+          /* 委托价格口径与供需不同（可能含服务费 / 整单），价格档位只作用于求购与货源 */
+          city: agency.city,
+          series: agency.series,
+          pref: prefs
+        })
+      }
+      if (!match || !match.ok) {
+        throw new AppError(
+          CODES.FORBIDDEN,
+          isSell
+            ? '我发布的需求中没有匹配的型号，无法申请平台对接'
+            : '我的库存中没有匹配的型号，无法申请平台对接'
+        )
       }
 
+      /* 先领取再对接：未领取委托时不允许直接申请平台对接 */
+      const claimId = 'bc' + sha256Hex(`${uid}:agency:${agency.id}`).slice(0, 24)
+      const claimed = await repo.get('bizClaims', claimId)
+      if (!claimed) {
+        throw new AppError(CODES.CONFLICT, '请先在商机里确认交易条件并领取该委托，再申请平台对接')
+      }
+
+      /* 不做独家锁：多个匹配会员都可以领取并申请平台对接，由平台择优推进 */
+      const isBuy = agency.side === 'buy'
+      const agencyTitle = `${agency.kind || (isBuy ? '代采' : '代售')} ${agency.item || ''}`.trim()
+      /* 咨询内容直接写进客服会话：先打招呼，再带上表单里填写的完整需求 */
+      const consultBody = summary
+        ? `你好，我想咨询平台「${agencyTitle}」业务。我的完整需求：${summary}`
+        : `你好，我想与你咨询一下「${agency.item || ''}」设备，看到后请及时回复。`
+      const writeConsultMessage = async (body, createdAt) => {
+        const msgId = 'M' + sha256Hex(`cs-consult:${leadId}:${body}`).slice(0, 22)
+        /* 同一内容重复提交只保留一条：用户刷新 / 再次补充时不重复刷屏，也不撞唯一键 */
+        if (await repo.get('outbox', msgId)) return
+        await repo.insert('outbox', {
+          id: msgId,
+          type: 'kf.chat',
+          payload: {
+            uid,
+            channel: 'kf',
+            from: 'user',
+            staffName: '',
+            threadId: leadId,
+            targetType: 'agency',
+            targetId: agency.id,
+            title: agencyTitle,
+            body,
+            csStatus: CS_STATUS.WAITING
+          },
+          status: 'pending',
+          createdAt
+        })
+      }
       const leadId = 'ld' + sha256Hex(`agency:${uid}:${agency.id}`).slice(0, 24)
-      const existing = await repo.get('leads', leadId)
-      if (existing) {
-        return {
-          leadId,
-          already: true,
-          status: existing.status,
-          consulted: true,
-          hint: '对接申请已提交，客服核实后会联系你'
+      /* 图片 / 视频逐条写成会话消息，排在需求说明之后、等待提示之前 */
+      const writeMediaMessages = async (baseAt) => {
+        for (let i = 0; i < consultMedia.length; i++) {
+          const m = consultMedia[i]
+          const mediaId = 'M' + sha256Hex(`cs-media:${leadId}:${m.url}`).slice(0, 22)
+          if (await repo.get('outbox', mediaId)) continue
+          await repo.insert('outbox', {
+            id: mediaId,
+            type: 'kf.chat',
+            payload: {
+              uid,
+              channel: 'kf',
+              from: 'user',
+              staffName: '',
+              threadId: leadId,
+              targetType: 'agency',
+              targetId: agency.id,
+              title: agencyTitle,
+              body: m.kind === 'image' ? '[图片]' : '[视频]',
+              kind: m.kind,
+              image: m.kind === 'image' ? m.url : '',
+              video: m.kind === 'video' ? m.url : '',
+              poster: '',
+              csStatus: CS_STATUS.WAITING
+            },
+            status: 'pending',
+            readByUser: true,
+            readByStaff: false,
+            createdAt: baseAt + i
+          })
         }
       }
-
-      const isBuy = agency.side === 'buy'
+      const existing = await repo.get('leads', leadId)
+      /* 同一委托统一由一个客服跟进：新单 / 重新咨询都沿用同委托下正在跟进的客服 */
+      const agencyCs = await inheritedAgencyCs(repo, agency.id, at)
+      if (existing) {
+        /* 风控拦截是终态：不允许通过重复提交继续咨询 */
+        if (existing.status === LEAD_STATUS.BLOCKED) {
+          throw new AppError(CODES.FORBIDDEN, '该商机咨询已被风控拦截，请联系在线客服')
+        }
+        /* 已关闭 / 服务已结束：同一委托只保留一条工单，重新开启回到待领取，客服可再次接入 */
+        let current = existing
+        const ended = (existing.csStatus || CS_STATUS.WAITING) === CS_STATUS.ENDED
+        if (existing.status === LEAD_STATUS.CLOSED || ended) {
+          const reopen = {
+            status: LEAD_STATUS.PENDING,
+            csStatus: agencyCs ? agencyCs.csStatus : CS_STATUS.WAITING,
+            /* 用户咨询直接生成工单：重新咨询即回到「待领取」工单（同一委托已有客服时直接归属该客服） */
+            ticketState: TICKET_STATE.TICKETED,
+            assignedAccount: agencyCs ? agencyCs.assignedAccount : '',
+            assignedTo: agencyCs ? agencyCs.assignedTo : '',
+            assignedAt: agencyCs ? agencyCs.assignedAt : 0,
+            csClaimedAt: agencyCs ? agencyCs.csClaimedAt : 0,
+            csId: agencyCs ? agencyCs.csId : '',
+            csName: agencyCs ? agencyCs.csName : '',
+            /* 上一轮可能停在「已完成 / 已终止」，重新咨询从沟通中重新开始 */
+            serviceStage: CONSULT_STAGE.COMMUNICATING,
+            stageAt: at,
+            stageBy: '',
+            stageNote: '用户重新咨询',
+            stageVersion: (Number(existing.stageVersion) || 0) + 1,
+            stageHistory: [{ stage: CONSULT_STAGE.COMMUNICATING, at, by: '', note: '用户重新咨询' }],
+            intakeBody: consultBody,
+            intakeMedia: consultMedia,
+            intakeAt: at,
+            updatedAt: at
+          }
+          await repo.updateWhere('leads', { id: leadId }, reopen)
+          current = Object.assign({}, existing, reopen)
+          /* 重新开启要留痕：客服与审计可追溯「已关闭工单被用户再次咨询」 */
+          appendAudit(repo, {
+            actorType: 'user',
+            actorId: uid,
+            action: 'biz.consult',
+            target: `agency:${agency.id}`,
+            reason: `已关闭工单 ${leadId} 重新咨询，自动回到待领取`,
+            result: 'allow',
+            at
+          })
+        }
+        const stateNow = ticketStateOf(current)
+        /* 还没被领取的工单：只更新需求内容，不往会话里写消息（客服领取时统一接入）；
+           已领取的工单：补充内容直接同步一条消息 */
+        if (stateNow === TICKET_STATE.INTAKE || stateNow === TICKET_STATE.CONSULTING || !current.assignedAccount) {
+          await repo.updateWhere('leads', { id: leadId }, {
+            formSummary: summary || current.formSummary,
+            intakeBody: consultBody,
+            intakeMedia: consultMedia,
+            intakeAt: at,
+            updatedAt: at
+          })
+          if (stateNow === TICKET_STATE.CONSULTING && current.assignedAccount) {
+            await writeConsultMessage(consultBody, at)
+            await writeMediaMessages(at + 1)
+          }
+          return {
+            leadId,
+            threadId: leadId,
+            already: true,
+            status: current.status,
+            csStatus: current.csStatus || CS_STATUS.WAITING,
+            ticketState: stateNow,
+            consulted: true,
+            hint: current.assignedAccount
+              ? '需求已补充，客服会在会话中查看'
+              : '需求已提交，平台客服领取工单后会与你联系'
+          }
+        }
+        /* 存量咨询 / 已生成工单：客服已在消息中心跟进，补充内容直接进会话 */
+        if (summary && summary !== current.formSummary) {
+          await repo.updateWhere('leads', { id: leadId }, { formSummary: summary, updatedAt: at })
+          await writeConsultMessage(consultBody, at)
+          await writeMediaMessages(at + 1)
+        } else {
+          await writeMediaMessages(at)
+        }
+        return {
+          leadId,
+          threadId: leadId,
+          already: true,
+          status: current.status,
+          csStatus: current.csStatus || CS_STATUS.WAITING,
+          ticketState: stateNow,
+          consulted: true,
+          hint: '需求已提交，正在等待平台客服处理'
+        }
+      }
       await repo.insert('leads', {
         id: leadId,
         uid,
@@ -4224,14 +5241,30 @@ function createMarketUserHandlers(deps) {
         agencyTitle: `${agency.kind || (isBuy ? '代采' : '代售')} ${agency.item || ''}`.trim(),
         productId: '',
         demandId: '',
-        formSummary: `库存可匹配「${agency.item || ''}」${match.qty ? `，可供 ${match.qty} 台` : ''}，申请平台代为对接`,
+        formSummary: summary || (isSell
+          ? `我发布的需求可匹配「${agency.item || ''}」，申请平台代为对接`
+          : `库存可匹配「${agency.item || ''}」${match.qty ? `，可供 ${match.qty} 台` : ''}，申请平台代为对接`),
         compare: [],
         matchPct: 100,
         status: LEAD_STATUS.PENDING,
         tier: TIERS.DEFAULT,
         tierName: '',
-        assignedTo: '',
+        assignedTo: agencyCs ? agencyCs.assignedTo : '',
+        assignedAccount: agencyCs ? agencyCs.assignedAccount : '',
+        assignedAt: agencyCs ? agencyCs.assignedAt : 0,
         contactReleased: false,
+        /* 客服服务状态：同一委托已有客服在跟进时直接归属该客服，否则进入待领取 */
+        csStatus: agencyCs ? agencyCs.csStatus : CS_STATUS.WAITING,
+        csClaimedAt: agencyCs ? agencyCs.csClaimedAt : 0,
+        csId: agencyCs ? agencyCs.csId : '',
+        csName: agencyCs ? agencyCs.csName : '',
+        /* 用户咨询直接生成工单：先进入「待领取」，客服领取后即可对话；
+           领取前不写会话消息，避免客服未接单时用户与空会话对话 */
+        ticketState: TICKET_STATE.TICKETED,
+        intakeBody: consultBody,
+        intakeMedia: consultMedia,
+        intakeAt: at,
+        threadId: leadId,
         createdAt: at,
         updatedAt: at
       })
@@ -4246,10 +5279,15 @@ function createMarketUserHandlers(deps) {
       })
       return {
         leadId,
+        threadId: leadId,
         already: false,
         status: LEAD_STATUS.PENDING,
+        csStatus: agencyCs ? agencyCs.csStatus : CS_STATUS.WAITING,
+        ticketState: TICKET_STATE.TICKETED,
         consulted: true,
-        hint: '已提交对接申请，客服核实后推送采购方'
+        hint: agencyCs
+          ? `本委托由客服 ${agencyCs.csName} 统一对接，可直接在会话中沟通`
+          : '需求已提交，平台客服领取工单后会与你联系'
       }
     }
   }
@@ -4264,6 +5302,10 @@ function createMarketAdminHandlers(deps) {
   /* 微信订阅消息：站内信同步推送 */
   const subscribe = deps.subscribe
   const now = typeof deps.now === 'function' ? deps.now : () => Date.now()
+  /* 推广分佣：支付成功实时计佣，退款自动冲正 */
+  const promoteEngine = createPromoteEngine({ repo, keys, now })
+  /* 客服业务：会员支付自动计提成、绑定关系、比例与档案 */
+  const csEngine = createCsEngine({ repo, now })
 
   async function staffLabel(ctx) {
     const username = String((ctx && ctx.accountId) || '')
@@ -4312,6 +5354,223 @@ function createMarketAdminHandlers(deps) {
       const push = targetType === 'biz' ? subscribe.biz : subscribe.system
       await push(uid, { title, body, at: now() }).catch(() => {})
     }
+  }
+
+  /* 退款风控窗口：90 天内累计 2 次退款即视为高风险，禁止再自助开通 */
+  const REFUND_RISK_WINDOW_MS = 90 * DAY_MS
+  /* iOS 退款问询的免争议窗口：7 天内且未领取商机才建议退款 */
+  const REFUND_FREE_WINDOW_MS = 7 * DAY_MS
+
+  /** 退款风控计数：同一用户 90 天内第 2 次退款起标记风险，推广资格与自助开通都看这个标记 */
+  async function markRefundRisk(uid, at) {
+    if (!uid) return null
+    const user = await repo.get('users', uid)
+    if (!user) return null
+    const lastAt = Number(user.lastRefundAt) || 0
+    const count = lastAt > 0 && at - lastAt <= REFUND_RISK_WINDOW_MS
+      ? (Number(user.refundCount) || 0) + 1
+      : 1
+    const patch = { refundCount: count, lastRefundAt: at, updatedAt: at }
+    if (count >= 2 && !user.riskFlag) {
+      patch.riskFlag = true
+      patch.riskSince = at
+      patch.riskReason = '90 天内累计退款 ' + count + ' 次'
+    }
+    await repo.updateWhere('users', { id: uid }, patch)
+    return { count, risky: !!(patch.riskFlag || user.riskFlag) }
+  }
+
+  /**
+   * 服务费到账后统一收口：回写委托单 → 计提客服佣金 → 工单进入「服务费已到账」。
+   * 三条成功路径（首次确认 / 并发幂等 / 已确认回放）都要走这里，
+   * 佣金按 paymentId 幂等，重复确认不会重复计提。
+   */
+  async function settleAgencyFee(row, at, staff) {
+    const agencyId = String((row && row.agencyId) || '')
+    if (!agencyId) return
+    const agency = await repo.get('agencies', agencyId)
+    const lead = await consultLeadOfAgency(repo, agencyId)
+    const contract = lead
+      ? (await repo.find('agencyContracts', { leadId: lead.id }, { limit: 1 }))[0]
+      : null
+    /* 成交坐席快照优先：工单转派后仍按成交时的坐席计提佣金 */
+    const csId = String((agency && agency.dealCsId) || (lead && lead.assignedAccount) || '')
+    const csName = String((agency && agency.dealCsName) || (lead && lead.assignedTo) || '')
+    const feeAmount = Number(row.received) || Number(row.amount) || 0
+    if (csId && feeAmount > 0) {
+      try {
+        await csEngine.recordAgencyFeePaid({
+          paymentId: row.paymentId || row.outTradeNo || row.id,
+          csId,
+          csName,
+          agencyId,
+          leadId: lead ? lead.id : '',
+          contractId: contract ? contract.id : '',
+          contractNo: contract ? (contract.contractNo || '') : '',
+          side: (agency && agency.side) || (lead && lead.side) || 'buy',
+          item: (agency && (agency.item || agency.itemCat)) || (lead && lead.agencyTitle) || '',
+          feeAmount,
+          paidAt: Number(row.confirmedAt) || at
+        })
+      } catch (err) {
+        /* 计提失败不阻断到账确认：记审计后由财务在客服工资里手工补录 */
+        console.error('[cs] 代采代售佣金计提失败 ' + (err && err.message))
+        appendAudit(repo, {
+          actorType: 'system',
+          actorId: 'system',
+          action: 'cs.agencyCommission',
+          target: String(row.id || ''),
+          reason: `佣金计提失败：${(err && err.message) || ''}`,
+          result: 'deny',
+          at
+        })
+      }
+    }
+    if (lead) {
+      await advanceConsultStageQuiet(repo, agencyId, CONSULT_STAGE.FEE, CONSULT_STAGE.PAID, {
+        at,
+        by: staff || 'system',
+        actorType: 'admin',
+        note: `服务费已到账 ¥${feeAmount}`,
+        extra: { feePaidAt: at, feeAmount }
+      })
+    }
+  }
+
+  /**
+   * 会员退款回滚：管理端退款、用户退款审核、微信 / Apple 退款推送共用同一套口径。
+   * 退款即停：收款单置已退款，会员权限同步停用且剩余天数不补；风控计数只对会员单生效。
+   */
+  async function rollbackPayment(row, opts) {
+    const options = opts || {}
+    const at = Number(options.at) || now()
+    const reason = String(options.reason || '退款').slice(0, 100)
+    const staff = String(options.staff || '')
+    const source = String(options.source || '')
+    if (!row) return { refunded: false }
+    if (row.status === PAYMENT_STATUS.REFUNDED) {
+      return { id: row.id, status: row.status, refunded: true, skipped: true }
+    }
+    /* 已出款佣金必须先由财务在商户平台完成「分账回退」并回填，才允许把退款置成功；
+       未回填直接拒绝，避免退款成功但佣金无法追回。
+       微信 / Apple 退款推送属于「退款已在支付渠道发生」，无法拦截，
+       只能照常退款并把未回退的佣金记为欠款（见 3.9），因此传 force 跳过前置校验 */
+    const paymentKey = row.paymentId || row.outTradeNo || row.id
+    if (options.force !== true) {
+      const commissions = await repo.find('commissions', { paymentId: paymentKey })
+      const paidOut = commissions.filter((item) => Number(item.withdrawnAmount) > 0 || item.status === '已提现')
+      for (const item of paidOut) {
+        const backfilled = await repo.find('promotePayoutItems', {
+          commissionId: item.id,
+          type: 'splitRefund',
+          status: 'done'
+        }, { limit: 1 })
+        /* v5.1 人工分账：财务在中台「佣金冲正」时回填了回退单号，佣金自身留有 refundNo / refundAt */
+        const manualBackfill = !!String(item.refundNo || '') && Number(item.refundAt) > 0
+        if (!backfilled.length && !manualBackfill) {
+          throw new AppError(CODES.CONFLICT, '该笔支付对应的佣金已出款，请先在微信支付商户平台完成分账回退，并在中台「推广管理 · 佣金明细」冲正时回填回退单号后再处理退款')
+        }
+      }
+    }
+    await repo.updateWhere('payments', { id: row.id }, {
+      status: PAYMENT_STATUS.REFUNDED,
+      refundedAt: at,
+      refundedBy: staff || source,
+      refundSource: source,
+      refundReason: reason,
+      updatedAt: at
+    })
+    /* 推广佣金同步冲正：待结算直接冲、可提现扣回、已提现转欠款 */
+    try {
+      await promoteEngine.reverseCommission({
+        paymentId: row.paymentId || row.outTradeNo || row.id,
+        reason: `退款冲正：${reason}`,
+        at
+      })
+    } catch (promoteErr) {
+      /* 退款已生效：佣金冲正失败不回滚，由对账任务补偿 */
+      console.error('[promote] 佣金冲正失败 ' + (promoteErr && promoteErr.message))
+    }
+    /* 客服代采代售佣金同步冲正：只按 paymentId 标记已冲正，工资按冲正当月扣回 */
+    try {
+      await csEngine.reverseAgencyCommission({
+        paymentId: row.paymentId || row.outTradeNo || row.id,
+        reason: `退款冲正：${reason}`,
+        at
+      })
+    } catch (csErr) {
+      console.error('[cs] 佣金冲正失败 ' + (csErr && csErr.message))
+    }
+    if (row.agencyId) {
+      /* 委托单服务费回到待支付，工单从「已到账」退回「待支付」重新收款。
+         清空账单引用：原账单保留为退款记录，由 ensureAgencyFeeBill 重开顺延账单，
+         否则账单停在「已退款」状态，用户重新打款后财务永远无法确认 */
+      await repo.updateWhere('agencies', { id: row.agencyId }, {
+        feeStatus: 'pending',
+        feePaidAt: 0,
+        feeBillId: '',
+        feeBilledAt: 0,
+        updatedAt: at
+      })
+      /* 已完成后再退款：委托退回「已成交」、清空完成信息，等重新收款后再确认完成，
+         避免出现「已完成 + 服务费待支付」这种无法收尾的状态 */
+      const doneAgency = await repo.get('agencies', row.agencyId)
+      if (doneAgency && doneAgency.status === AGENCY_STATUS.DONE) {
+        await repo.updateWhere('agencies', { id: row.agencyId, status: AGENCY_STATUS.DONE }, {
+          status: AGENCY_STATUS.DEALT,
+          completedAt: 0,
+          completedBy: '',
+          updatedAt: at
+        })
+      }
+      const agencyDoc = await repo.get('agencies', row.agencyId)
+      if (agencyDoc) await ensureAgencyFeeBill(repo, agencyDoc, at)
+      await advanceConsultStageQuiet(repo, row.agencyId, CONSULT_STAGE.PAID, CONSULT_STAGE.FEE, {
+        at,
+        by: staff || source || 'system',
+        actorType: 'admin',
+        note: `服务费退款，退回待支付：${reason}`
+      })
+      await advanceConsultStageQuiet(repo, row.agencyId, CONSULT_STAGE.DONE, CONSULT_STAGE.FEE, {
+        at,
+        by: staff || source || 'system',
+        actorType: 'admin',
+        note: `已完成后退款，重新收款：${reason}`
+      })
+    }
+    let risk = null
+    if (row.orderId && options.revoke !== false) {
+      const access = await repo.get('bizAccess', row.uid)
+      if (access) {
+        await repo.updateWhere('bizAccess', { id: row.uid }, {
+          status: BIZ_STATUS.STOPPED,
+          expireAt: at,
+          updatedAt: at,
+          staff,
+          note: `退款停用：${reason}`
+        })
+      }
+      risk = await markRefundRisk(row.uid, at)
+    }
+    appendAudit(repo, {
+      actorType: options.actorType || 'admin',
+      actorId: staff || source || 'system',
+      action: 'payment.refund',
+      target: row.id,
+      reason: [reason, source].filter(Boolean).join(' · '),
+      result: 'allow',
+      at
+    })
+    try {
+      await notifyUser(row.uid, {
+        title: '收款已退款',
+        body: `你支付的 ${row.received} 元已退款：${reason}。如有疑问请联系平台客服。`,
+        reason,
+        targetType: 'payment',
+        targetId: row.id
+      })
+    } catch (notifyErr) { /* 退款已生效：回执失败不回滚 */ }
+    return { id: row.id, status: PAYMENT_STATUS.REFUNDED, refunded: true, risk }
   }
 
   /** 站内信回执：资讯审核 / 下架结果同步给投稿人（官方资讯没有投稿人，跳过） */
@@ -4414,6 +5673,72 @@ function createMarketAdminHandlers(deps) {
       createdAt: at
     }
     await repo.insert('bizOrders', order)
+    /* 真实微信支付单：同一 OutTradeNo 同步一条收款单，财务流水与用户退款申请都认 payments */
+    if (paymentId) {
+      const paid = await repo.find('payments', { paymentId }, { limit: 1 })
+      if (!paid.length) {
+        await repo.insert('payments', {
+          id: randomId('PY'),
+          uid,
+          nick: user.nick || '',
+          bizType: '会员续费',
+          planKey: patch.planKey,
+          planLabel: patch.planLabel,
+          days,
+          amount: original,
+          discount: Math.max(0, Math.round((original - amount) * 100) / 100),
+          received: amount,
+          method: str(data.method, { field: '收款方式', max: 30 }) || '微信支付',
+          /* 支付渠道：wxpay（微信支付）/ apple（iOS 虚拟支付），退款推送按渠道区分回执文案 */
+          channel: str(data.channel || '', { field: '支付渠道', max: 20 }) || '',
+          status: PAYMENT_STATUS.CONFIRMED,
+          paidAt: at,
+          confirmedAt: at,
+          confirmedBy: '系统自动',
+          orderId: order.id,
+          paymentId,
+          outTradeNo: paymentId,
+          operator: staff,
+          accountId: (ctx && ctx.accountId) || '',
+          note,
+          createdAt: at,
+          updatedAt: at
+        })
+      }
+      /* 推广佣金实时入账：支付成功即写「待结算」，推广者马上可见；
+         同一 paymentId 幂等，重复回调不会重复计佣 */
+      try {
+        /* 同一笔支付一次性结算两级佣金：一级给买家直接推广人，二级给其上家；
+           未绑定、已计佣、续费等情况由引擎内部判定并跳过 */
+        await promoteEngine.createPaymentCommissions({
+          buyerUid: uid,
+          paymentId,
+          /* 微信支付交易号：用于人工分账出款后按单检索 / 对账，虚拟支付与 iOS 为空 */
+          transactionId: str(data.transactionId || data.transaction_id || '', { field: '微信支付交易号', max: 64 }) || '',
+          amount,
+          channel: str(data.channel || '', { field: '支付渠道', max: 20 }) || '',
+          planLabel: patch.planLabel,
+          at
+        })
+      } catch (promoteErr) {
+        /* 会员已生效：计佣失败不阻断开通，由对账补偿 */
+        console.error('[promote] 计佣失败 ' + (promoteErr && promoteErr.message))
+      }
+      /* 客服提成：付款人是某客服绑定用户的直接下级时自动计提，幂等靠 paymentId */
+      try {
+        await csEngine.recordMemberPayment({
+          payerUid: uid,
+          paymentId,
+          amount,
+          planLabel: patch.planLabel,
+          orderId: order.id,
+          paidAt: at
+        })
+      } catch (csErr) {
+        /* 会员已生效：提成失败不阻断开通，由对账补偿 */
+        console.error('[cs] 计提成失败 ' + (csErr && csErr.message))
+      }
+    }
     await audit(ctx, 'biz.grant', uid, `开通 / 续费 ${patch.planLabel} · ${days} 天 · 实收 ${amount} 元 · ${staff}`)
     const view = accessView(Object.assign({}, existing, patch), at)
     view.orderId = order.id
@@ -4503,9 +5828,78 @@ function createMarketAdminHandlers(deps) {
           return hay.includes(keyword)
         })
         : rows
-      const total = filtered.length
+      /* 工单状态筛选：完成 / 终止的委托不在工作台展示，统一回到本页按状态查看 */
+      const consult = data.consult ? enumOf(data.consult, ['active', 'done', 'aborted', 'none'], '工单状态') : ''
+      const sortKey = data.sort
+        ? enumOf(data.sort, ['created_desc', 'created_asc', 'amount_desc', 'deadline_asc', 'updated_desc'], '排序')
+        : 'created_desc'
+      /* 一次取全量咨询单，工单状态筛选与排序都不受当前分页限制 */
+      const consultLeads = await repo.find('leads', { targetType: 'agency' }, { limit: 100000 })
+      /* 同一委托可能关联多条咨询单（历史重复提交 / 其他用户也咨询过）：
+         优先取已推进阶段的真实工单，其次取仍未结束的，最后才按更新时间兜底，
+         避免一条后建的「已关闭」干扰单把已完成的工单覆盖成终止 */
+      const consultRankOf = (lead) => {
+        if (!lead) return 0
+        let score = 0
+        if (lead.serviceStage) score += 2
+        else if (ticketStateOf(lead) === TICKET_STATE.TICKETED) score += 1
+        if (lead.status !== LEAD_STATUS.CLOSED) score += 2
+        return score
+      }
+      const consultMap = {}
+      for (const lead of consultLeads) {
+        const key = lead.targetId || lead.agencyId
+        if (!key) continue
+        const prev = consultMap[key]
+        if (!prev) {
+          consultMap[key] = lead
+          continue
+        }
+        const rank = consultRankOf(lead)
+        const prevRank = consultRankOf(prev)
+        if (rank > prevRank ||
+          (rank === prevRank && Number(lead.updatedAt || 0) > Number(prev.updatedAt || 0))) {
+          consultMap[key] = lead
+        }
+      }
+      /* 同一委托的咨询人数：委托列表直接展示「N 人咨询 / M 人对接中」 */
+      const consultStatsMap = {}
+      for (const lead of consultLeads) {
+        const key = lead.targetId || lead.agencyId
+        if (!key) continue
+        const stat = consultStatsMap[key] || { total: 0, active: 0 }
+        stat.total += 1
+        if (lead.status !== LEAD_STATUS.CLOSED && lead.status !== LEAD_STATUS.BLOCKED &&
+          ticketStateOf(lead) !== TICKET_STATE.INVALID &&
+          consultStageOf(lead) !== CONSULT_STAGE.DONE && consultStageOf(lead) !== CONSULT_STAGE.ABORTED) {
+          stat.active += 1
+        }
+        consultStatsMap[key] = stat
+      }
+      const consultStateOf = (lead) => {
+        if (!lead) return 'none'
+        /* 先按工单阶段判定：已完成的工单即使随后结束服务被关闭，也仍算「已完成」 */
+        if (lead.serviceStage) {
+          const stage = consultStageOf(lead)
+          if (stage === CONSULT_STAGE.DONE) return 'done'
+          if (stage === CONSULT_STAGE.ABORTED) return 'aborted'
+        }
+        if (lead.status === LEAD_STATUS.CLOSED) return 'aborted'
+        return 'active'
+      }
+      const visible = consult ? filtered.filter((row) => consultStateOf(consultMap[row.id]) === consult) : filtered
+      /* 排序口径：提交时间 / 金额 / 截止时间 / 最近更新，默认最新提交在前 */
+      const SORTS = {
+        created_desc: (a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0),
+        created_asc: (a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0),
+        amount_desc: (a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0),
+        deadline_asc: (a, b) => (agencyDeadlineAt(a) || Number.MAX_SAFE_INTEGER) - (agencyDeadlineAt(b) || Number.MAX_SAFE_INTEGER),
+        updated_desc: (a, b) => (Number(b.updatedAt || b.createdAt) || 0) - (Number(a.updatedAt || a.createdAt) || 0)
+      }
+      visible.sort(SORTS[sortKey])
+      const total = visible.length
       const start = (page.page - 1) * page.limit
-      const pageRows = filtered.slice(start, start + page.limit)
+      const pageRows = visible.slice(start, start + page.limit)
       /* 工单里直接展示用户昵称，避免客服拿着 openid 去用户管理里二次检索 */
       const uids = Array.from(new Set(pageRows.map((row) => row.ownerId).filter(Boolean)))
       const [users, profiles, accesses] = await Promise.all([
@@ -4521,6 +5915,17 @@ function createMarketAdminHandlers(deps) {
       for (const row of accesses) accessMap[row.id] = row
       const items = pageRows.map((row) => {
         const view = agencyStaffView(row, at)
+        const lead = consultMap[row.id]
+        if (lead) {
+          view.consultStage = consultStageOf(lead)
+          view.consultStageLabel = consultStageLabel(view.consultStage)
+          view.consultState = consultStateOf(lead)
+          view.consultCsName = lead.csName || lead.assignedTo || ''
+          view.consultAt = Number(lead.stageAt || lead.updatedAt) || 0
+        }
+        const stat = consultStatsMap[row.id] || { total: 0, active: 0 }
+        view.consultTotal = stat.total
+        view.consultActive = stat.active
         const profile = profileMap[row.ownerId] || {}
         const access = accessMap[row.ownerId] || null
         view.ownerNick = nickMap[row.ownerId] || ''
@@ -4540,9 +5945,20 @@ function createMarketAdminHandlers(deps) {
       })
       const counts = {}
       for (const name of AGENCY_STATUS_LIST) counts[name] = 0
-      const all = await repo.find('agencies', side ? { deleted: { $ne: true }, side } : { deleted: { $ne: true } }, { limit: 100000 })
-      for (const row of all) counts[row.status] = (counts[row.status] || 0) + 1
-      return { items, total, page: page.page, limit: page.limit, counts }
+      /* 工单状态角标：只随方向变化，不受委托状态 / 关键词影响，切分栏时数字保持稳定 */
+      const consultCounts = { active: 0, done: 0, aborted: 0, none: 0 }
+      /* 方向角标：全部 / 代采 / 代售三档总量不受当前方向筛选影响，切方向时数字保持稳定 */
+      const sideCounts = { all: 0, buy: 0, sell: 0 }
+      const all = await repo.find('agencies', { deleted: { $ne: true } }, { limit: 100000 })
+      for (const row of all) {
+        sideCounts.all += 1
+        if (row.side === 'buy') sideCounts.buy += 1
+        else if (row.side === 'sell') sideCounts.sell += 1
+        if (side && row.side !== side) continue
+        counts[row.status] = (counts[row.status] || 0) + 1
+        consultCounts[consultStateOf(consultMap[row.id])] += 1
+      }
+      return { items, total, page: page.page, limit: page.limit, counts, sideCounts, consultCounts }
     },
 
     'agency.confirm': async (data, ctx) => {
@@ -4718,6 +6134,8 @@ function createMarketAdminHandlers(deps) {
       const result = {
         id,
         phone: plain('phone'),
+        /* 授权书上的联系人电话：与预留手机号不一致时，审核需据此核对原件 */
+        authPhone: plain('authPhone'),
         subject: plain('subject'),
         legal: plain('legal'),
         reviewedAt: now()
@@ -4758,64 +6176,96 @@ function createMarketAdminHandlers(deps) {
     },
 
     /**
-     * 平台收尾：发起成交或关闭。
-     * 「标记成交」不再直接置为已成交，而是进入「待确认成交」并通知委托方确认；
-     * 委托方确认后（agency.dealConfirm）才真正成交并生成后付费服务费账单。
+     * 平台收尾：登记成交或关闭。
+     * 「确认成交」由平台（管理员 / 客服）直接完成：写入成交金额、生成后付费服务费账单并通知委托方；
+     * 委托方只需按账单支付服务费，服务费到账后由客服在工单点「确认完成」，委托与工单同时归档。
      */
     'agency.close': async (data, ctx) => {
       const role = await roleOf(ctx)
-      if (role !== 'admin') throw new AppError(CODES.FORBIDDEN, '仅管理员可关闭 / 标记成交')
+      if (role !== 'admin') throw new AppError(CODES.FORBIDDEN, '仅管理员可关闭 / 确认成交')
       const id = str(data.id, { field: '委托标识', required: true, max: 64 })
       const dealt = data.dealt === true
       const reason = str(data.reason, { field: '关闭原因', max: 100 })
-      const dealAmount = dealt ? Math.max(0, Math.round((Number(data.dealAmount) || 0) * 100) / 100) : 0
       const at = now()
       const staff = await staffLabel(ctx)
+      if (dealt) {
+        const dealAmount = Math.max(0, Math.round((Number(data.dealAmount) || 0) * 100) / 100)
+        if (!(dealAmount > 0)) throw new AppError(CODES.VALIDATION, '请先填写成交金额')
+        await confirmAgencyDeal(repo, {
+          agencyId: id,
+          amount: dealAmount,
+          at,
+          staff,
+          staffId: (ctx.session && ctx.session.accountId) || '',
+          actorType: 'admin'
+        })
+        await audit(ctx, 'agency.close', id, `确认成交 · ${dealAmount}`)
+        const doc = await repo.get('agencies', id)
+        return agencyStaffView(doc, at)
+      }
       const res = await repo.updateWhere('agencies', {
         id,
-        status: dealt
-          ? { $in: [AGENCY_STATUS.APPROVED, AGENCY_STATUS.ACTIVE] }
-          : { $in: [AGENCY_STATUS.APPROVED, AGENCY_STATUS.ACTIVE, AGENCY_STATUS.DEAL_PENDING, AGENCY_STATUS.DEALT] }
-      }, dealt
-        ? {
-          /* 平台发起成交：等委托方确认后才算成交 */
-          status: AGENCY_STATUS.DEAL_PENDING,
-          dealAmount,
-          dealProposedAt: at,
-          dealProposedBy: staff,
-          staff,
-          reason: '',
-          closeReason: '',
-          closedAt: 0,
-          updatedAt: at
-        }
-        : {
-          status: AGENCY_STATUS.CLOSED,
-          reason,
-          closeReason: reason,
-          staff,
-          closedAt: at,
-          updatedAt: at
-        })
-      if (!res || !res.count) {
-        throw new AppError(CODES.CONFLICT, dealt
-          ? '仅「已通过 / 已上架」的委托可发起成交'
-          : '仅未结束的委托可关闭')
-      }
-      await audit(ctx, 'agency.close', id, reason || (dealt ? `发起成交确认 · ${dealAmount}` : '关闭委托'))
+        status: { $in: [AGENCY_STATUS.APPROVED, AGENCY_STATUS.ACTIVE, AGENCY_STATUS.DEAL_PENDING, AGENCY_STATUS.DEALT] }
+      }, {
+        status: AGENCY_STATUS.CLOSED,
+        reason,
+        closeReason: reason,
+        staff,
+        closedAt: at,
+        updatedAt: at
+      })
+      if (!res || !res.count) throw new AppError(CODES.CONFLICT, '仅未结束的委托可关闭')
+      await audit(ctx, 'agency.close', id, reason || '关闭委托')
       const doc = await repo.get('agencies', id)
       try {
         await notifyUser(doc.ownerId, {
-          title: `${doc.kind || '代采代售'}委托${dealt ? '待确认成交' : '已关闭'}`,
-          body: dealt
-            ? `委托单有新进展，请确认成交（成交金额 ${doc.currencySymbol || '¥'}${Number(doc.dealAmount || 0).toLocaleString('zh-CN')}）。确认后按约定支付服务费。`
-            : '委托已从商机池下架，不再继续代寻。',
+          title: `${doc.kind || '代采代售'}委托已关闭`,
+          body: '委托已从商机池下架，不再继续代寻。',
           reason,
           targetType: 'agency',
           targetId: id
         })
       } catch (err) { /* 回执失败不影响主流程 */ }
       return agencyStaffView(doc, at)
+    },
+
+    /**
+     * 确认完成（自助委托收尾）：服务费已到账后由平台把委托置为「已完成」，交易结束。
+     * 走咨询工单的委托由客服在工单点「确认完成」并同步归档；用户自助发布、没有工单的委托
+     * 在这里由管理员收尾，两处写入同一组字段（completedAt / completedBy）。
+     */
+    'agency.complete': async (data, ctx) => {
+      const role = await roleOf(ctx)
+      if (role !== 'admin') throw new AppError(CODES.FORBIDDEN, '仅管理员可确认完成')
+      const id = str(data.id, { field: '委托标识', required: true, max: 64 })
+      const at = now()
+      const doc = await repo.get('agencies', id)
+      if (!doc || doc.deleted === true) throw new AppError(CODES.NOT_FOUND, '委托不存在或已删除')
+      if (doc.status === AGENCY_STATUS.DONE) throw new AppError(CODES.CONFLICT, '该委托已完成，无需重复操作')
+      if (doc.status !== AGENCY_STATUS.DEALT) throw new AppError(CODES.CONFLICT, '只有已成交的委托才能确认完成')
+      /* 服务费未到账不能归档：否则账单悬空、后续既不能收款也不会有新的推进 */
+      if (doc.feeStatus !== 'paid' && doc.feeStatus !== 'unbilled') {
+        throw new AppError(CODES.CONFLICT, '服务费到账后才能确认完成')
+      }
+      const staff = await staffLabel(ctx)
+      const res = await repo.updateWhere('agencies', { id, status: AGENCY_STATUS.DEALT }, {
+        status: AGENCY_STATUS.DONE,
+        completedAt: at,
+        completedBy: staff,
+        updatedAt: at
+      })
+      if (!res || !res.count) throw new AppError(CODES.CONFLICT, '委托状态已变化，请刷新后重试')
+      await audit(ctx, 'agency.complete', id, '服务费到账，确认完成')
+      const fresh = await repo.get('agencies', id)
+      try {
+        await notifyUser(fresh.ownerId, {
+          title: `${fresh.kind || '代采代售'}委托已完成`,
+          body: '服务费已到账，本次委托已结束，感谢使用平台服务。',
+          targetType: 'agency',
+          targetId: id
+        })
+      } catch (err) { /* 回执失败不影响主流程 */ }
+      return agencyStaffView(fresh, at)
     },
 
     /**
@@ -5370,16 +6820,36 @@ function createMarketAdminHandlers(deps) {
      * 也可以由管理员手动再提醒一次；重复调用不会刷屏。
      */
     'biz.remindExpiring': async (data) => {
-      const days = Math.min(30, Math.max(1, Math.floor(Number(data.days) || 7)))
+      const settings = (await repo.get('settings', 'site')) || {}
+      /* 文案模板、提前天数、每日提醒时间、次数与间隔都取媒体页「提醒设置」 */
+      const config = memberRemindOf(settings.memberRemind)
       const at = now()
+      const force = data.force === true || String(data.force || '') === 'true'
+      const hourNow = new Date(at + 8 * 60 * 60 * 1000).getUTCHours()
+      /* 自动触发（工作台加载）受开关与提醒时间约束；手动点击不受时间限制 */
+      if (!force && !config.enabled) return { days: config.days, reminded: 0, items: [], at, skipped: '已关闭自动提醒' }
+      if (!force && hourNow < config.hour) return { days: config.days, reminded: 0, items: [], at, skipped: '未到提醒时间' }
+      const days = config.days
       const dayKey = Math.floor(at / DAY_MS)
+      const fill = (text, row, view) => String(text || '')
+        .replace(/\{nick\}/g, (row && row.nick) || '你')
+        .replace(/\{days\}/g, String(view.daysLeft))
+        .replace(/\{expire\}/g, view.expireText)
       const rows = await repo.find('bizAccess', {}, { limit: 2000 })
       const reminded = []
       for (const row of rows) {
         const view = accessView(row, at)
         if (view.status !== '已开通' || Number(view.daysLeft) > days) continue
-        const id = 'M' + sha256Hex(`biz-remind:${row.uid}:${dayKey}`).slice(0, 24)
+        /* 同一到期周期内统计已提醒次数：续费后 expireAt 变化，提醒次数自动重新计算 */
+        const sent = await repo.find('outbox', { 'payload.remindKind': 'expiring', 'payload.uid': row.uid }, { limit: 200 })
+        const inCycle = sent.filter((msg) => Number(msg.payload && msg.payload.expireAt) === view.expireAt)
+        if (inCycle.length >= config.maxTimes) continue
+        const lastAt = inCycle.reduce((max, msg) => Math.max(max, Number(msg.createdAt) || 0), 0)
+        if (!force && lastAt && at - lastAt < config.intervalDays * DAY_MS) continue
+        const id = 'M' + sha256Hex(`biz-remind:${row.uid}:${view.expireAt}:${dayKey}`).slice(0, 24)
         if (await repo.get('outbox', id)) continue
+        const title = fill(config.title, row, view)
+        const body = fill(config.body, row, view)
         await repo.insert('outbox', {
           id,
           type: 'system.notice',
@@ -5387,25 +6857,27 @@ function createMarketAdminHandlers(deps) {
             uid: row.uid,
             channel: 'system',
             from: 'system',
-            title: '商机会员即将到期',
-            body: `你的商机会员还有 ${view.daysLeft} 天到期（${view.expireText}）。到期后将无法查看与对接商机，续费后可继续使用。`,
+            title,
+            body,
             reason: '',
             targetType: 'biz',
-            targetId: row.uid
+            targetId: row.uid,
+            remindKind: 'expiring',
+            expireAt: view.expireAt
           },
           status: 'pending',
           createdAt: at
         })
         if (subscribe) {
           await subscribe.biz(row.uid, {
-            title: '商机会员即将到期',
+            title,
             body: `还有 ${view.daysLeft} 天到期，续费后继续查看商机`,
             at
           }).catch(() => {})
         }
         reminded.push({ uid: row.uid, daysLeft: view.daysLeft, expireText: view.expireText })
       }
-      return { days, reminded: reminded.length, items: reminded, at }
+      return { days, reminded: reminded.length, items: reminded, at, config }
     },
 
     /** 收款流水：企微 / 微信 / 对公等线下收款登记与确认（财务中心数据源） */
@@ -5459,6 +6931,7 @@ function createMarketAdminHandlers(deps) {
         operator: row.operator || '',
         confirmedBy: row.confirmedBy || '',
         orderId: row.orderId || '',
+        agencyId: row.agencyId || '',
         note: row.note || '',
         voucher: row.voucher || '',
         createdAt: Number(row.createdAt) || 0
@@ -5482,107 +6955,29 @@ function createMarketAdminHandlers(deps) {
       }
     },
 
-    'payment.create': async (data, ctx) => {
-      const uid = str(data.uid, { field: '用户标识', required: true, max: 64 })
-      const user = await repo.get('users', uid)
-      if (!user) throw new AppError(CODES.NOT_FOUND, '用户不存在')
-      const bizType = enumOf(data.bizType || '其他', PAYMENT_BIZ_TYPES, '收款类型')
-      const method = enumOf(data.method || '企业微信', PAYMENT_METHODS, '收款方式')
-      const amount = Number(data.amount)
-      if (!Number.isFinite(amount) || amount <= 0) throw new AppError(CODES.VALIDATION, '收款金额需大于 0')
-      const plans = await resolvePlans(repo)
-      const plan = data.plan ? plans.find((item) => item.key === String(data.plan)) : null
-      if (data.plan && !plan) throw new AppError(CODES.VALIDATION, '套餐不存在')
-      const at = now()
-      const staff = await staffLabel(ctx)
-      const discount = Math.max(0, Number(data.discount) || (plan ? plan.saving : 0))
-      const doc = {
-        id: randomId('PY'),
-        uid,
-        nick: user.nick || '',
-        bizType,
-        planKey: plan ? plan.key : '',
-        planLabel: plan ? plan.label : '',
-        days: plan ? plan.days : (Number(data.days) || 0),
-        amount: Math.round(amount * 100) / 100,
-        discount: Math.round(discount * 100) / 100,
-        received: Math.round(Math.max(0, amount - discount) * 100) / 100,
-        method,
-        /* 财务登记即视为到账，不再走人工确认；会员续费当场自动加时长 */
-        status: PAYMENT_STATUS.CONFIRMED,
-        paidAt: Number(data.paidAt) || at,
-        confirmedAt: at,
-        confirmedBy: staff,
-        voucher: String(data.voucher || '').slice(0, 400000),
-        operator: staff,
-        accountId: (ctx && ctx.accountId) || '',
-        note: str(data.note, { field: '备注', max: 200 }) || '',
-        createdAt: at,
-        updatedAt: at
-      }
-      await repo.insert('payments', doc)
-      await audit(ctx, 'payment.create', doc.id, `${bizType} · ${doc.received} 元 · ${method} · 登记即入账`)
-      let grant = null
-      if (bizType === '会员续费' && (doc.planKey || Number(doc.days) > 0)) {
-        try {
-          grant = await grantMembership({
-            uid,
-            plan: doc.planKey || undefined,
-            days: Number(doc.days) > 0 ? doc.days : undefined,
-            amount: doc.received,
-            method,
-            note: doc.note,
-            paymentId: doc.id
-          }, ctx)
-          await repo.updateWhere('payments', { id: doc.id }, { orderId: grant.orderId, updatedAt: now() })
-          doc.orderId = grant.orderId
-        } catch (err) {
-          /* 开通失败退回待确认，可在收款流水补确认，避免「已入账但没加时长」 */
-          await repo.updateWhere('payments', { id: doc.id }, {
-            status: PAYMENT_STATUS.PENDING,
-            confirmedAt: 0,
-            confirmedBy: '',
-            updatedAt: now()
-          })
-          throw err
-        }
-      }
-      /* 会员类由 grantMembership 通知；其余收款单独回执，避免用户不知道钱已入账 */
-      if (!grant) {
-        try {
-          await notifyUser(uid, {
-            title: '收款已入账',
-            body: `${bizType} · ${doc.received} 元已入账（${method}），可在「我的缴费」查看。`,
-            targetType: 'payment',
-            targetId: doc.id
-          })
-        } catch (notifyErr) { /* 收款单已落库：回执失败不回滚 */ }
-      }
-      return doc
-    },
-
-    /** 财务确认到账：会员类收款自动开通 / 续费，并回填订单号 */
-    'payment.confirm': async (data, ctx) => {
+    /** 财务确认委托服务费到账：仅委托服务费账单可人工确认，会员收款由微信支付自动入账 */
+    'payment.feeConfirm': async (data, ctx) => {
       const id = str(data.id, { field: '收款单', required: true, max: 64 })
       const row = await repo.get('payments', id)
       if (!row) throw new AppError(CODES.NOT_FOUND, '收款单不存在')
+      if (!row.agencyId || PAYMENT_FEE_TYPES.indexOf(row.bizType) < 0) {
+        throw new AppError(CODES.VALIDATION, '仅委托服务费账单可确认到账')
+      }
       if (row.status === PAYMENT_STATUS.REFUNDED) throw new AppError(CODES.CONFLICT, '该收款单已退款')
       const at = now()
       const staff = await staffLabel(ctx)
       if (row.status === PAYMENT_STATUS.CONFIRMED) {
-        /* 幂等回写：已确认的委托服务费账单仍补齐委托单到账状态 */
-        if (row.agencyId) {
-          await repo.updateWhere('agencies', { id: row.agencyId }, {
-            feeStatus: 'paid',
-            feePaidAt: Number(row.confirmedAt) || now(),
-            feePaidBy: row.confirmedBy || '',
-            feeBillId: id,
-            updatedAt: now()
-          })
-        }
-        return { id, status: row.status, confirmed: true, orderId: row.orderId || '' }
+        /* 幂等回写：已确认的委托服务费账单仍补齐委托单到账状态与客服佣金 */
+        await repo.updateWhere('agencies', { id: row.agencyId }, {
+          feeStatus: 'paid',
+          feePaidAt: Number(row.confirmedAt) || at,
+          feePaidBy: row.confirmedBy || '',
+          feeBillId: id,
+          updatedAt: at
+        })
+        await settleAgencyFee(row, at, staff)
+        return { id, status: row.status, confirmed: true }
       }
-      /* 早期「提交申请」生成的待确认单没有记实收，确认时按应收金额补记 */
       const received = Number(row.received) || Number(row.amount) || 0
       /* CAS 抢占：并发确认只有一个请求能把「待确认」翻成「已确认」，其余走幂等返回 */
       const claimed = await repo.updateWhere('payments', { id, status: PAYMENT_STATUS.PENDING }, {
@@ -5595,57 +6990,31 @@ function createMarketAdminHandlers(deps) {
       if (!claimed || claimed.count === 0) {
         const fresh = await repo.get('payments', id)
         if (fresh && fresh.status === PAYMENT_STATUS.CONFIRMED) {
-          return { id, status: fresh.status, confirmed: true, orderId: fresh.orderId || '', grant: null }
+          await settleAgencyFee(fresh, at, staff)
+          return { id, status: fresh.status, confirmed: true }
         }
         throw new AppError(CODES.CONFLICT, '收款单状态已变化，请刷新后重试')
       }
-      let grant = null
-      try {
-        if (row.bizType === '会员续费' && (row.planKey || Number(row.days) > 0)) {
-          grant = await grantMembership({
-            uid: row.uid,
-            plan: row.planKey || undefined,
-            days: Number(row.days) > 0 ? row.days : undefined,
-            amount: received,
-            method: row.method,
-            note: row.note,
-            paymentId: id
-          }, ctx)
-          await repo.updateWhere('payments', { id }, { orderId: grant.orderId, updatedAt: now() })
-        }
-      } catch (err) {
-        /* 开通失败回滚为待确认，允许处理后重试，避免「已确认但没开通」 */
-        await repo.updateWhere('payments', { id }, {
-          status: PAYMENT_STATUS.PENDING,
-          confirmedAt: 0,
-          confirmedBy: '',
-          updatedAt: now()
-        })
-        throw err
-      }
-      await audit(ctx, 'payment.confirm', id, `${row.bizType} · ${received} 元 · ${staff}`)
       /* 委托服务费账单：确认到账后回写委托单，feeStatus=paid 并记录到账时间 */
-      if (row.agencyId) {
-        await repo.updateWhere('agencies', { id: row.agencyId }, {
-          feeStatus: 'paid',
-          feePaidAt: at,
-          feePaidBy: staff,
-          feeBillId: id,
-          updatedAt: at
+      await repo.updateWhere('agencies', { id: row.agencyId }, {
+        feeStatus: 'paid',
+        feePaidAt: at,
+        feePaidBy: staff,
+        feeBillId: id,
+        updatedAt: at
+      })
+      await audit(ctx, 'payment.feeConfirm', id, `${row.bizType} · ${received} 元 · ${staff}`)
+      /* 客服佣金计提 + 工单推进到「服务费已到账」，按 paymentId 幂等 */
+      await settleAgencyFee(Object.assign({}, row, { received }), at, staff)
+      try {
+        await notifyUser(row.uid, {
+          title: '服务费已确认到账',
+          body: `${row.bizType} · ${received} 元已确认到账，可在「我的缴费」查看。`,
+          targetType: 'payment',
+          targetId: id
         })
-      }
-      /* 会员类由 grantMembership 通知；其余收款单独回执，避免用户不知道钱已确认 */
-      if (!grant) {
-        try {
-          await notifyUser(row.uid, {
-            title: '收款已确认到账',
-            body: `${row.bizType} · ${received} 元已确认到账，可在「我的缴费」查看。`,
-            targetType: 'payment',
-            targetId: id
-          })
-        } catch (notifyErr) { /* 已确认到账：回执失败不回滚 */ }
-      }
-      return { id, status: PAYMENT_STATUS.CONFIRMED, confirmed: true, orderId: grant ? grant.orderId : '', grant }
+      } catch (notifyErr) { /* 服务费已确认到账：回执失败不回滚 */ }
+      return { id, status: PAYMENT_STATUS.CONFIRMED, confirmed: true }
     },
 
     'payment.refund': async (data, ctx) => {
@@ -5654,39 +7023,132 @@ function createMarketAdminHandlers(deps) {
       if (!row) throw new AppError(CODES.NOT_FOUND, '收款单不存在')
       if (row.status === PAYMENT_STATUS.REFUNDED) return { id, status: row.status, refunded: true }
       const reason = str(data.reason, { field: '退款原因', required: true, max: 100 })
-      const at = now()
       const staff = await staffLabel(ctx)
-      await repo.updateWhere('payments', { id }, {
-        status: PAYMENT_STATUS.REFUNDED,
-        refundedAt: at,
-        refundedBy: staff,
-        refundReason: reason,
-        updatedAt: at
+      const result = await rollbackPayment(row, {
+        at: now(),
+        reason,
+        staff,
+        source: '管理端退款',
+        revoke: data.revoke
       })
-      /* 会员类退款：同步停用权限，避免退款后仍可查看联系方式 */
-      if (row.orderId && data.revoke !== false) {
-        const access = await repo.get('bizAccess', row.uid)
-        if (access) {
-          await repo.updateWhere('bizAccess', { id: row.uid }, {
-            status: BIZ_STATUS.STOPPED,
-            expireAt: at,
-            updatedAt: at,
-            staff,
-            note: `退款停用：${reason}`
-          })
+      return { id, status: result.status, refunded: true, risk: result.risk || null }
+    },
+
+    /**
+     * 微信 / Apple 退款推送自动回滚（服务端调用，无人工介入）。
+     * 按 OutTradeNo（或微信商户单号）定位收款单，复用管理端同一套回滚口径；
+     * 找不到收款单说明未发货或非本平台订单，返回 found=false，避免微信无限重推。
+     */
+    'payment.systemRefund': async (data) => {
+      const candidates = [data.outTradeNo, data.payOrderId, data.mchOrderId, data.wxOrderId, data.mchRefundId]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+      let row = null
+      for (const no of candidates) {
+        const byPay = await repo.find('payments', { paymentId: no }, { limit: 1 })
+        if (byPay.length) { row = byPay[0]; break }
+        const byOut = await repo.find('payments', { outTradeNo: no }, { limit: 1 })
+        if (byOut.length) { row = byOut[0]; break }
+      }
+      if (!row) return { found: false, refunded: false }
+      /* 退款失败的通知只记状态，不回滚会员，等微信重试或转人工 */
+      if (data.success === false) {
+        return { found: true, refunded: false, id: row.id, status: row.status }
+      }
+      const source = String(data.source || '').slice(0, 20) ||
+        (row.channel === 'apple' ? 'Apple 退款' : '微信退款')
+      const reason = String(data.reason || '').slice(0, 100) || source + '（自动回滚）'
+      const result = await rollbackPayment(row, {
+        at: now(),
+        reason,
+        source,
+        staff: source,
+        actorType: 'system',
+        /* 渠道退款已经发生，无法拦截；佣金未回退的部分按 3.9 记欠款 */
+        force: true
+      })
+      return {
+        found: true,
+        id: result.id,
+        status: result.status,
+        refunded: !!result.refunded,
+        channel: row.channel || '',
+        risk: result.risk || null
+      }
+    },
+
+    /**
+     * iOS 退款问询（xpay_subscribe_ios_refund_query_notify）：微信要求 3 秒内应答。
+     * 未发货直接放过；已发货按「7 天内且未领取商机」放过，其余拒绝并附实际使用凭据。
+     * resultCode：0 放过（建议退款）/ 1 拦截（拒绝退款）。
+     */
+    'biz.iosRefundQuery': async (data) => {
+      const at = now()
+      const no = String(data.outTradeNo || data.payOrderId || '').trim()
+      let row = null
+      for (const key of [no, String(data.mchOrderId || '').trim()].filter(Boolean)) {
+        const byPay = await repo.find('payments', { paymentId: key }, { limit: 1 })
+        row = byPay[0] || null
+        if (!row) {
+          const byOut = await repo.find('payments', { outTradeNo: key }, { limit: 1 })
+          row = byOut[0] || null
+        }
+        if (row) break
+      }
+      const provideStatus = String(data.provideStatus == null ? '' : data.provideStatus)
+      const orderTime = Number(data.orderTime) > 0 ? Number(data.orderTime) * 1000 : 0
+      const paidAt = orderTime ||
+        (row ? (Number(row.paidAt) || Number(row.confirmedAt) || Number(row.createdAt) || at) : at)
+      const days = Math.max(0, Math.floor((at - paidAt) / DAY_MS))
+      let resultCode = 0
+      let resultInfo = '同意退款'
+      let evidence = ''
+      let claimed = 0
+      if (!row) {
+        evidence = '未查询到对应的开通记录，建议退款'
+      } else if (row.status === PAYMENT_STATUS.REFUNDED) {
+        evidence = '该订单已退款，无重复扣费风险，同意退款'
+      } else if (provideStatus === '0') {
+        evidence = '订单未发货，未产生实际服务，建议退款'
+      } else {
+        const claims = await repo.find('bizClaims', { uid: row.uid }, { limit: 500 })
+        claimed = claims.filter((item) => Number(item.at) >= paidAt).length
+        if (at - paidAt <= REFUND_FREE_WINDOW_MS && claimed === 0) {
+          evidence = `购买后 ${days} 天，未领取任何商机，建议退款`
+        } else {
+          resultCode = 1
+          resultInfo = '拒绝退款'
+          evidence = claimed > 0
+            ? `购买后 ${days} 天，已领取 ${claimed} 条商机，会员权益已实际使用，不同意退款`
+            : `购买已超过 7 天（${days} 天），会员权益已实际提供，不同意退款`
         }
       }
-      await audit(ctx, 'payment.refund', id, `${reason} · ${staff}`)
-      try {
-        await notifyUser(row.uid, {
-          title: '收款已退款',
-          body: `你支付的 ${row.received} 元已退款：${reason}。如有疑问请联系平台客服。`,
-          reason,
-          targetType: 'payment',
-          targetId: id
+      if (row) {
+        await repo.updateWhere('payments', { id: row.id }, {
+          iosRefundQueryAt: at,
+          iosRefundQueryResult: resultCode,
+          iosRefundQueryEvidence: evidence,
+          updatedAt: at
         })
-      } catch (notifyErr) { /* 退款已生效：回执失败不回滚 */ }
-      return { id, status: PAYMENT_STATUS.REFUNDED, refunded: true }
+      }
+      appendAudit(repo, {
+        actorType: 'system',
+        actorId: 'apple',
+        action: 'payment.iosRefundQuery',
+        target: row ? row.id : (no || ''),
+        reason: evidence,
+        result: resultCode === 0 ? 'allow' : 'deny',
+        at
+      })
+      return {
+        resultCode,
+        resultInfo,
+        evidence,
+        days,
+        claimed,
+        uid: row ? row.uid : String(data.uid || ''),
+        outTradeNo: no
+      }
     },
 
     /** 退款申请队列：财务核对后通过 / 驳回，通过即执行退款并停用会员权限 */
@@ -5757,27 +7219,7 @@ function createMarketAdminHandlers(deps) {
       if (decision === REFUND_STATUS.APPROVED) {
         if (payment.status !== PAYMENT_STATUS.REFUNDED) {
           const reason = note || doc.reason || '用户申请退款'
-          await repo.updateWhere('payments', { id: payment.id }, {
-            status: PAYMENT_STATUS.REFUNDED,
-            refundedAt: at,
-            refundedBy: staff,
-            refundReason: reason,
-            updatedAt: at
-          })
-          /* 会员类退款同步停用权限，避免退款后仍可查看联系方式 */
-          if (payment.orderId) {
-            const access = await repo.get('bizAccess', payment.uid)
-            if (access) {
-              await repo.updateWhere('bizAccess', { id: payment.uid }, {
-                status: BIZ_STATUS.STOPPED,
-                expireAt: at,
-                updatedAt: at,
-                staff,
-                note: `退款停用：${reason}`
-              })
-            }
-          }
-          await audit(ctx, 'payment.refund', payment.id, `${reason} · ${staff}`)
+          await rollbackPayment(payment, { at, reason, staff, source: '用户退款申请' })
         }
       }
       const updated = await repo.updateWhere('refundRequests', { id }, {
@@ -6061,6 +7503,8 @@ module.exports = {
   boardItems,
   agencyOwnerView,
   agencyStaffView,
+  confirmAgencyDeal,
+  lockAgencyForContract,
   accessView,
   createMarketUserHandlers,
   createMarketAdminHandlers

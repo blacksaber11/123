@@ -153,6 +153,9 @@ function fillProduct(doc) {
   }, doc, {
     type: rental ? 'rent' : 'sell',
     isRent: rental,
+    /* 租赁字段以数组落库：详情页用拼接文案展示，避免模板直接渲染出「长租,短租」 */
+    termText: (Array.isArray(doc.term) ? doc.term : (doc.term ? [doc.term] : [])).join(' / '),
+    rentLimitText: (Array.isArray(doc.rentLimits) ? doc.rentLimits : []).join('；'),
     priceMode: priceModeOf(doc.priceMode, doc.price, doc.priceMax),
     priceText: amountText(doc.price, doc.priceMax, doc.priceMode, currencySymbolOf(doc)),
     priceUnit: priceModeOf(doc.priceMode, doc.price, doc.priceMax) === 'nego' ? '' : (unitOnly(doc.priceUnit) || '/ 台'),
@@ -163,6 +166,7 @@ function fillProduct(doc) {
     /* 实拍图 / 视频：列表显示封面，详情页显示全部 */
     cover: coverOf(doc),
     mediaItems: mediaItemsOf(doc),
+    images: mediaItemsOf(doc).filter((m) => m.kind === 'image').length,
     subText: [doc.brand, doc.model, doc.city].filter(Boolean).join(' · '),
     /* 私密发布＝匿名公开：内容照常展示，发布者只显示「匿名发布」且不可进主页 */
     anon: doc.privateShare === true,
@@ -231,6 +235,7 @@ function fillDemand(doc) {
     budgetUnit: priceModeOf(doc.budgetMode, doc.budget, doc.budgetMax) === 'nego' ? '' : (unitOnly(doc.budgetUnit) || '/ 台'),
     currencyLabel: doc.currencyLabel || '人民币',
     termText: term.join(' / '),
+    rentLimitText: (Array.isArray(doc.rentLimits) ? doc.rentLimits : []).join('；'),
     published: fmtPublished(doc.createdAt),
     publishedAt: publishedAtOf(doc),
     cover: coverOf(doc),
@@ -243,7 +248,7 @@ function fillDemand(doc) {
     /* 平台代采 / 代售：只展示「平台」，不暴露委托方 */
     platformOnly: doc.platformOnly === true,
     agencyId: doc.agencyId || '',
-    ownerExposureLabel: doc.privateShare === true ? '匿名发布' : (doc.ownerExposureLabel || '平台核验 · 主体已隐藏'),
+    ownerExposureLabel: doc.privateShare === true ? '匿名发布' : (doc.ownerExposureLabel || '主体已隐藏'),
     ownerSubject: doc.ownerSubject || '',
     ownerContactName: doc.ownerContactName || '',
     ownerPhoneMasked: doc.ownerPhoneMasked || ''

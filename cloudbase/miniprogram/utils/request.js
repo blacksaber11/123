@@ -130,6 +130,8 @@ function loginHttp(conf, data, finish, resolve, reject) {
           code: login.code,
           nick: (data && data.nick) || '',
           avatar: (data && data.avatar) || '',
+          /* 推广码：分享进入时透传，服务端登录即绑定；为空时按无推广码处理 */
+          ref: (data && data.ref) || '',
           devOpenid: conf.devOpenid
         }, (fn, payload) => {
           if (fn === resolve && payload && payload.token) {

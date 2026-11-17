@@ -1,0 +1,256 @@
+<view class="page promote-page">
+  <view wx:if="{{loading}}" class="p-loading">
+    <text class="p-loading-t">正在加载推广中心…</text>
+  </view>
+
+  <view wx:elif="{{error}}" class="block p-error">
+    <text class="p-error-t">{{error}}</text>
+    <button class="btn primary" bindtap="retry">重新加载</button>
+  </view>
+
+  <!-- 未开通：协议摘要 + 实名 + 立即开通 -->
+  <block wx:elif="{{!active}}">
+    <view class="p-hero">
+      <text class="p-hero-kicker">PROMOTE</text>
+      <text class="p-hero-title">分享算力商机，赚取推广佣金</text>
+      <text class="p-hero-sub">分享任意页面均可绑定，好友首次开通会员（首次付款）即可按平台统一比例获得佣金。</text>
+      <view class="p-hero-tags">
+        <text class="p-tag">绑定后不可改绑</text>
+        <text class="p-tag">人工审核打款</text>
+        <text class="p-tag">佣金比例平台统一</text>
+      </view>
+    </view>
+
+    <view class="block">
+      <view class="block-hd">
+        <text class="bt">《{{agreementTitle}}》摘要</text>
+        <text class="bs">{{agreementVersion ? 'v' + agreementVersion : ''}}</text>
+      </view>
+      <view class="p-agree-list">
+        <view class="p-agree-li" wx:for="{{agreementPoints}}" wx:key="*this">
+          <text class="p-agree-dot"></text>
+          <text class="p-agree-t">{{item}}</text>
+        </view>
+      </view>
+
+      <!-- 协议全文：点这里或下方勾选文字里的协议名展开 / 收起 -->
+      <view class="p-agree-more" catchtap="toggleAgreement">
+        <text class="p-agree-more-t">{{agreementOpen ? '收起协议全文' : '查看协议全文'}}</text>
+        <text class="p-agree-more-i">{{agreementOpen ? '⌃' : '⌄'}}</text>
+      </view>
+      <view wx:if="{{agreementOpen}}" class="p-agree-full">
+        <text class="p-agree-full-t">《{{agreementTitle}}》{{agreementVersion ? '（' + agreementVersion + '）' : ''}}</text>
+        <text wx:for="{{agreementText}}" wx:key="index" class="p-agree-full-p">{{item}}</text>
+        <text wx:if="{{!agreementText.length}}" class="p-agree-full-p">协议正文加载失败，请检查网络后重试。</text>
+      </view>
+
+      <view class="p-check-row" bindtap="toggleAgreed">
+        <view class="p-check {{agreed ? 'on' : ''}}">
+          <text wx:if="{{agreed}}" class="p-check-tick">✓</text>
+        </view>
+        <text class="p-check-text">我已阅读并同意<text class="p-agree-link" catchtap="toggleAgreement">《{{agreementTitle}}》</text>，知悉佣金比例由平台统一设置、提现需人工审核。</text>
+      </view>
+
+      <view class="field">
+        <text class="f-label">真实姓名<text class="p-req">*</text></text>
+        <input
+          class="p-input"
+          value="{{realName}}"
+          maxlength="20"
+          placeholder="用于结算实名核验，请填写真实姓名"
+          bindinput="onRealName"
+        />
+      </view>
+
+      <button
+        class="btn primary block p-main-btn"
+        disabled="{{!agreed || applying}}"
+        bindtap="onApply"
+      >{{applying ? '开通中…' : '立即开通'}}</button>
+      <view class="p-hint">开通免费，不收取任何保证金；佣金比例由平台统一设置，开通后不可自行修改。</view>
+    </view>
+
+    <view class="p-note">
+      <text class="p-note-t">提现规则</text>
+      <text class="p-note-l">最低 {{minWithdraw}} 元起提，无阶梯费率，单笔上限 {{maxWithdraw}} 元。</text>
+      <text class="p-note-l">微信 / 虚拟支付佣金冻结至次月 {{freezeDay}} 日后可申请；Apple 内购佣金等平台确认到账后解冻。提交后由平台人工审核并打款。</text>
+    </view>
+  </block>
+
+  <!-- 已开通：推广码 / 三块金额 / 佣金比例 / 提现 / 记录 -->
+  <block wx:else>
+    <view class="p-hero">
+      <view class="p-hero-top">
+        <view>
+          <text class="p-hero-kicker">MY PROMOTION</text>
+          <text class="p-hero-title">推广中心</text>
+        </view>
+        <text class="p-hero-badge">已开通</text>
+      </view>
+      <view class="p-code-box">
+        <view class="p-code-main">
+          <text class="p-code-label">专属推广码</text>
+          <text class="p-code-value">{{refCode || '—'}}</text>
+        </view>
+        <view class="p-code-copy" bindtap="copyCode">复制</view>
+      </view>
+      <button class="btn primary block p-share" open-type="share">分享给好友</button>
+      <view class="p-hero-sub">链接、二维码、朋友圈分享任意页面都算，好友打开并登录即自动绑定。</view>
+    </view>
+
+    <!-- 开通后必读：绑定范围与计佣口径 -->
+    <view class="block p-promo-rules">
+      <view class="block-hd">
+        <text class="bt">分享与计佣规则</text>
+      </view>
+      <view class="p-promo-rule">
+        <text class="p-promo-k">绑定</text>
+        <text class="p-promo-v">分享任意页面的链接、二维码或朋友圈，好友打开并登录即自动绑定，绑定后不可改绑。</text>
+      </view>
+      <view class="p-promo-rule">
+        <text class="p-promo-k">计佣</text>
+        <text class="p-promo-v">只有好友第一次付款才会产生佣金，第二次及以后的付款（含续费）不产生佣金。</text>
+      </view>
+    </view>
+
+    <view class="block p-money">
+      <view class="p-money-row">
+        <view class="p-money-cell">
+          <text class="p-money-num">¥{{amounts.pending}}</text>
+          <text class="p-money-label">待结算</text>
+        </view>
+        <view class="p-money-divider"></view>
+        <view class="p-money-cell">
+          <text class="p-money-num">¥{{amounts.available}}</text>
+          <text class="p-money-label">可提现</text>
+        </view>
+        <view class="p-money-divider"></view>
+        <view class="p-money-cell">
+          <text class="p-money-num">¥{{amounts.withdrawn}}</text>
+          <text class="p-money-label">已到账</text>
+        </view>
+      </view>
+      <view class="p-money-foot">
+        <text>累计收益 ¥{{amounts.earning}}</text>
+        <text wx:if="{{statsText}}">{{statsText}}</text>
+      </view>
+    </view>
+
+    <view class="block">
+      <view class="p-line">
+        <text class="p-line-label">一级佣金比例</text>
+        <text class="p-line-value">{{rateText}}</text>
+      </view>
+      <view class="p-line">
+        <text class="p-line-label">二级佣金比例</text>
+        <text class="p-line-value">{{level2RateText}}</text>
+      </view>
+      <view class="p-hint">{{level2Note || '比例由平台统一设置，推广者不可修改；一级与二级分别计佣，平台调整只影响之后产生的新订单。'}}</view>
+    </view>
+
+    <view class="block">
+      <view class="block-hd">
+        <text class="bt">提现</text>
+        <text class="bs">可提现 ¥{{amounts.available}}</text>
+      </view>
+      <view class="p-rule-row">
+        <text class="p-rule-k">起提金额</text>
+        <text class="p-rule-v">¥{{minWithdraw}}</text>
+      </view>
+      <view class="p-rule-row">
+        <text class="p-rule-k">单笔上限</text>
+        <text class="p-rule-v">¥{{maxWithdraw}}</text>
+      </view>
+      <view class="p-rule-row">
+        <text class="p-rule-k">手续费</text>
+        <text class="p-rule-v">{{feeRateText}}（无阶梯）</text>
+      </view>
+      <view class="p-rule-row">
+        <text class="p-rule-k">冻结规则</text>
+        <text class="p-rule-v">次月 {{freezeDay}} 日后可提（Apple 到账后解冻）</text>
+      </view>
+      <button class="btn primary block p-main-btn" bindtap="openWithdraw">申请提现</button>
+      <view class="p-hint">{{reviewNote || '提交后需平台人工审核，审核通过后由财务打款；到账以平台回填为准。'}}</view>
+    </view>
+
+    <view class="p-tabs">
+      <view class="p-tab {{tab === 'commission' ? 'on' : ''}}" data-tab="commission" bindtap="switchTab">
+        佣金流水<text class="p-tab-cnt">{{commissionTotal}}</text>
+      </view>
+      <view class="p-tab {{tab === 'withdraw' ? 'on' : ''}}" data-tab="withdraw" bindtap="switchTab">
+        提现记录<text class="p-tab-cnt">{{withdrawTotal}}</text>
+      </view>
+    </view>
+
+    <view wx:if="{{listsLoading}}" class="p-loading p-loading-sm">
+      <text class="p-loading-t">加载记录…</text>
+    </view>
+
+    <block wx:elif="{{tab === 'commission'}}">
+      <view wx:if="{{!commissions.length}}" class="p-empty">暂无佣金流水，分享给好友试试</view>
+      <view class="p-rec" wx:for="{{commissions}}" wx:key="id">
+        <view class="p-rec-hd">
+          <text class="p-rec-amt">¥{{item.amountText}}</text>
+          <text class="pst {{item.statusClass}}">{{item.statusText}}</text>
+        </view>
+        <view class="p-rec-line">{{item.levelText || '一级佣金'}} · 订单 {{item.orderId || item.sourcePaymentId || item.paymentId || '—'}} · 佣金比例 {{item.rateText || rateText}}</view>
+        <view class="p-rec-line">佣金基数 ¥{{item.baseText}}<text wx:if="{{item.createdText}}"> · {{item.createdText}}</text></view>
+        <view wx:if="{{item.eligibleText}}" class="p-rec-line p-rec-muted">可提现时间 {{item.eligibleText}}</view>
+        <view wx:if="{{item.reverseReason}}" class="p-rec-warn">{{item.reverseReason}}</view>
+      </view>
+    </block>
+
+    <block wx:else>
+      <view wx:if="{{!withdrawals.length}}" class="p-empty">暂无提现记录</view>
+      <view class="p-rec" wx:for="{{withdrawals}}" wx:key="id">
+        <view class="p-rec-hd">
+          <text class="p-rec-amt">¥{{item.amountText}}</text>
+          <text class="pst {{item.statusClass}}">{{item.statusText}}</text>
+        </view>
+        <view class="p-rec-line">申请时间 {{item.applyText || '—'}} · 手续费 ¥{{item.feeText}}</view>
+        <view class="p-rec-line">预计到账 ¥{{item.netText}}<text wx:if="{{item.paidText}}"> · 打款 {{item.paidText}}</text></view>
+        <view wx:if="{{item.failText}}" class="p-rec-warn">{{item.failText}}</view>
+        <view wx:if="{{item.cancelable}}" class="p-rec-ops">
+          <button class="p-mini" data-id="{{item.id}}" bindtap="onCancelWithdraw">撤销申请</button>
+        </view>
+      </view>
+    </block>
+
+    <view class="p-bottom-note">佣金与提现数据由平台人工分账，如有疑问请联系平台客服核对。</view>
+  </block>
+
+  <!-- 提现面板 -->
+  <view wx:if="{{sheetOpen}}" class="p-mask" bindtap="closeWithdraw">
+    <view class="p-sheet" catchtap="noop">
+      <view class="p-sheet-hd">
+        <text class="p-sheet-title">申请提现</text>
+        <text class="p-sheet-close" bindtap="closeWithdraw">×</text>
+      </view>
+      <view class="p-sheet-av">可提现余额 ¥{{amounts.available}}</view>
+      <view class="field">
+        <text class="f-label">提现金额（元）</text>
+        <input
+          class="p-input"
+          type="digit"
+          value="{{withdrawAmount}}"
+          placeholder="最低 {{minWithdraw}} 元，单笔最高 {{maxWithdraw}} 元"
+          bindinput="onAmount"
+        />
+      </view>
+      <view class="p-fee-row">
+        <text>手续费（{{feeRateText}}）</text>
+        <text>¥{{withdrawFee}}</text>
+      </view>
+      <view class="p-fee-row">
+        <text>预计到账</text>
+        <text class="p-fee-net">¥{{withdrawNet}}</text>
+      </view>
+      <view class="p-hint">提交后进入人工审核，审核通过后由财务打款；到账以平台回填为准。</view>
+      <button
+        class="btn primary block p-main-btn"
+        disabled="{{withdrawing}}"
+        bindtap="submitWithdraw"
+      >{{withdrawing ? '提交中…' : '提交申请'}}</button>
+    </view>
+  </view>
+</view>

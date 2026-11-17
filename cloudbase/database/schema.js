@@ -316,6 +316,72 @@ const COLLECTIONS = [
       { field: 'status', unique: false },
       { field: 'createdAt', unique: false }
     ]
+  },
+  {
+    name: 'csBindings',
+    /* 客服绑定用户：一个客服（id=csId）只能绑定一个用户，一个用户（uid）也只能归属一个客服 */
+    permission: { read: false, write: false },
+    indexes: [
+      { field: 'uid', unique: true },
+      { field: 'boundAt', unique: false }
+    ]
+  },
+  {
+    name: 'csCommissions',
+    /* 客服提成流水：只统计绑定账号「直接下级」的会员支付，paymentId 幂等 */
+    permission: { read: false, write: false },
+    indexes: [
+      { field: 'paymentId', unique: true },
+      { field: 'csId', unique: false },
+      { field: 'payerUid', unique: false },
+      { field: 'paidAt', unique: false }
+    ]
+  },
+  {
+    name: 'csRatings',
+    /* 客服评价：一张代采代售咨询单只能评价一次，自动聚合进客服档案 */
+    permission: { read: false, write: false },
+    indexes: [
+      { field: 'leadId', unique: true },
+      { field: 'csId', unique: false },
+      { field: 'createdAt', unique: false }
+    ]
+  },
+  {
+    name: 'csProfiles',
+    /* 客服个人配置：单独提成比例与代采代售佣金比例（为空时用 settings#cs 的全局默认） */
+    permission: { read: false, write: false },
+    indexes: [{ field: 'id', unique: true }]
+  },
+  {
+    name: 'agencyContracts',
+    /* 居间合同：一条代采代售咨询单只允许一份有效合同，驳回重传按版本叠加 */
+    permission: { read: false, write: false },
+    indexes: [
+      { field: 'leadId', unique: true },
+      { field: 'agencyId', unique: false },
+      { field: 'csId', unique: false },
+      { field: 'status', unique: false }
+    ]
+  },
+  {
+    name: 'csAgencyCommissions',
+    /* 代采代售佣金：服务费到账后计提，paymentId 幂等；退款只写冲正字段，不新增行 */
+    permission: { read: false, write: false },
+    indexes: [
+      { field: 'paymentId', unique: true },
+      { field: 'csId', unique: false },
+      { field: 'paidAt', unique: false }
+    ]
+  },
+  {
+    name: 'agencyClaims',
+    /* 委托独家领取锁：agencyId 唯一，抢锁成功者才可看到委托内容与金额 */
+    permission: { read: false, write: false },
+    indexes: [
+      { field: 'agencyId', unique: true },
+      { field: 'uid', unique: false }
+    ]
   }
 ]
 

@@ -6,6 +6,7 @@ const guard = require('../../utils/guard')
 const sharePoster = require('../../utils/share-poster')
 const shop = require('../../utils/shop')
 const prefs = require('../../utils/prefs')
+const bizUtil = require('../../utils/biz')
 const { request } = require('../../utils/request')
 
 /* 水印瓦片数量：2 列 × 6 行，铺满整个查看层，任一截图区域都能截到账号标识 */
@@ -62,6 +63,87 @@ function shareTitleOf(p) {
   ].filter(Boolean).join(' · ')
 }
 
+/* 商机池条目 → 商品详情视图：字段与普通发布一一对齐，全平台共用同一套商品详情页 */
+function poolProductOf(o) {
+  const info = Array.isArray(o.info) ? o.info : []
+  const pick = function () {
+    for (let i = 0; i < arguments.length; i++) {
+      const hit = info.filter((it) => it && it.k === arguments[i])[0]
+      if (hit && hit.v) return String(hit.v)
+    }
+    return ''
+  }
+  const kind = String(o.kind || '')
+  const isRent = /租/.test(kind)
+  const mediaItems = (Array.isArray(o.media) ? o.media : []).map((m) => {
+    if (!m) return null
+    const url = m.url || m.fileId || m.src || ''
+    if (!url) return null
+    const type = String(m.type || m.mime || '')
+    return {
+      kind: m.kind === 'video' || /^video\//i.test(type) ? 'video' : 'image',
+      url,
+      poster: m.poster || m.cover || ''
+    }
+  }).filter(Boolean)
+  const qty = Number(o.qty) || 0
+  return {
+    id: o.id,
+    poolType: o.type,
+    /* 代采 = 平台代买（我供货）；代售 = 平台代卖（我采购） */
+    agencySide: o.type === 'agency' ? (o.side || (/代售/.test(kind) ? 'sell' : 'buy')) : '',
+    title: o.title || [o.cat, o.model].filter(Boolean).join(' '),
+    brand: o.brand || pick('品牌'),
+    model: o.model || '',
+    cat: o.cat || pick('设备品类') || '',
+    qty,
+    /* 商机条目没有单独的起订量：留空，避免和可售数量重复展示 */
+    minQty: 0,
+    supply: pick('供给类型'),
+    cond: pick('成色', '成色要求'),
+    condLevel: '',
+    tax: pick('税费', '税费要求'),
+    taxShort: pick('税费', '税费要求'),
+    city: o.city || pick('所在城市'),
+    deliver: pick('可交付时间', '可起租时间'),
+    images: mediaItems.filter((m) => m.kind === 'image').length,
+    isRent,
+    tradeMode: kind || (o.type === 'demand' ? '求购' : '出售'),
+    priceMode: 'fixed',
+    priceText: o.priceText || '面议',
+    priceUnit: '',
+    status: o.closed ? '已关闭' : '在售',
+    closed: isRent ? pick('价格方式') : '',
+    term: pick('租期', '期望租期'),
+    deposit: pick('押金', '押金接受度'),
+    pay: pick('租金支付', '付款方式'),
+    note: pick('交易说明', '其他说明', '补充说明'),
+    accept: pick('验收标准', '验收要求'),
+    limit: pick('可承接数量'),
+    requirements: pick('接单要求', '承租方要求', '租赁条款要求'),
+    flow: (Array.isArray(o.flow) ? o.flow : []).map((t) => ({ n: String(t), d: '' })),
+    must: Array.isArray(o.must) ? o.must : [],
+    nego: Array.isArray(o.nego) ? o.nego : [],
+    mediaItems,
+    checklist: [],
+    views: Number(o.views) || 0,
+    favCount: 0,
+    published: o.published || '',
+    tags: [],
+    isMine: false,
+    mine: false,
+    privateShare: false,
+    /* 商机池不直接公开主体主页，联系方式领取后在会话里对接 */
+    contactHidden: true,
+    ownerExposure: 'hidden',
+    ownerKey: '',
+    ownerSubject: o.org || '',
+    owner: { short: o.type === 'demand' ? '需' : '商', nick: o.type === 'demand' ? '需求方' : '商机发布方' },
+    org: o.org || '',
+    platformOnly: o.type === 'agency'
+  }
+}
+
 Page({
   data: {
     product: null,
@@ -109,12 +191,21 @@ Page({
     /* 货主公开了电话但当前用户不是商机会员：显示开通引导 */
     memberOnlyContact: false,
     /* 朋友圈单页模式：只能浏览，页面内提示从右上角进入完整小程序 */
-    singlePage: false
+    singlePage: false,
+    /* 从商机池进入：展示与普通商品完全一致，只在确认条件后先领取再开会话 */
+    bizMode: false
   },
 
   onLoad(options) {
     const id = (options && options.id) || ''
     this.productId = id
+    /* 商机池点进来：复用普通商品详情，额外带上领取动作；
+       求购 / 代采代售也走这一页，全平台只有这一套商品详情 */
+    const biz = String((options && options.biz) || '')
+    this.bizType = ['supply', 'demand', 'agency'].indexOf(biz) >= 0 ? biz : ''
+    this.bizMode = !!this.bizType
+    this.bizMine = this.bizMode && !!(options && options.mine === '1')
+    this.setData({ bizMode: this.bizMode, bizType: this.bizType })
     /* 分享链接只带 id 与 from=share，不带 uid / 手机号 / 线索号 */
     this.fromShare = !!(options && options.from === 'share')
     /* 栈底补首页后重建的本页：浏览记录 / 浏览量已由上一实例记过，避免重复计数 */
@@ -130,6 +221,11 @@ Page({
 
   /* 云端商品详情：不可见状态（待审核 / 已下架 / 已驳回）对非属主返回不存在 */
   async loadRemote(id) {
+    /* 商机池的求购 / 代采代售：取同一条商机数据，版式仍用这套商品详情 */
+    if (this.bizType === 'demand' || this.bizType === 'agency') {
+      await this.loadPoolItem(id)
+      return
+    }
     try {
       const doc = await request('user', 'product.detail', { id }, { silent: true })
       if (!doc || !doc.id) {
@@ -138,8 +234,28 @@ Page({
       }
       /* 保密：内容照常展示，只隐藏主体与联系方式，站内对话不受影响 */
       this.applyProduct(shop.toProduct(doc))
+      /* 我的商机点进来：领取时已解锁的联系方式直接在详情页展示 */
+      this.loadBizContact()
     } catch (e) {
       /* 云端不可用或商品已下架：有本地数据就继续展示，否则显示失效态 */
+      this.markMissing()
+    }
+  },
+
+  /* 商机池的求购 / 代采代售：数据取自同一条商机，页面仍是这套商品详情 */
+  async loadPoolItem(id) {
+    try {
+      const res = await request('user', 'biz.list', {}, { silent: true })
+      const items = (res && res.items) || []
+      const item = items.filter((o) => o && String(o.id) === String(id))[0]
+      if (!item) {
+        this.markMissing()
+        return
+      }
+      this.applyProduct(poolProductOf(item))
+      /* 我的商机点进来：领取时已解锁的联系方式直接在详情页展示 */
+      this.loadBizContact()
+    } catch (e) {
       this.markMissing()
     }
   },
@@ -188,7 +304,7 @@ Page({
       checklistDone,
       checklistTotal,
       checklistPercent: checklistTotal ? Math.round((checklistDone / checklistTotal) * 100) : 0,
-      fav: fav.isFav('product', product.id),
+      fav: this.bizType ? false : fav.isFav('product', product.id),
       isMine: !!product.mine,
       contactHidden,
       privateShare,
@@ -208,7 +324,7 @@ Page({
 
   /* 浏览量计数：后端按 30 分钟去重，同一用户反复看只算一次；不计自己的发布 */
   incrViews(product) {
-    if (!product || !product.id || product.mine || this.rootFixed) return
+    if (!product || !product.id || product.mine || this.rootFixed || this.bizType) return
     request('user', 'view.count', {
       kind: 'product',
       id: product.id
@@ -217,7 +333,7 @@ Page({
 
   /* 浏览记录：本地留存，供「我的 - 浏览记录」回看；自己的发布不记录 */
   recordView(product) {
-    if (!product || !product.id || product.mine || this.rootFixed) return
+    if (!product || !product.id || product.mine || this.rootFixed || this.bizType) return
     fav.recordView({
       kind: 'product',
       id: product.id,
@@ -468,6 +584,11 @@ Page({
      带上商品上下文进入对话页，管理端按商品归组咨询留言 */
   contactPlatform() {
     const p = this.data.product || {}
+    /* 代采 / 代售与其他商机一致：先在页面上确认必须条件，全部满足后由平台对接 */
+    if (p.platformOnly) {
+      this.consult()
+      return
+    }
     chat.goKf({
       targetType: 'product',
       targetId: String(p.id || this.productId || ''),
@@ -543,17 +664,71 @@ Page({
   async doOpenChat(conds) {
     if (this.data.openingChat) return
     const p = this.data.product || {}
+    const bizType = this.bizType || 'supply'
     this.setData({ openingChat: true })
     try {
+      /* 商机池：先确认领取，领取成功才进入「我的商机」，随后自动进会话 */
+      if (this.data.bizMode) {
+        try {
+          await bizUtil.claimRemote(bizType, p.id || this.productId, Array.isArray(p.must) ? p.must : [])
+        } catch (err) {
+          return
+        }
+      }
+      /* 代采 / 代售由平台统一对接：领取后提交对接单并进入客服会话 */
+      if (bizType === 'agency') {
+        const res = await request('user', 'biz.consult', { agencyId: p.id || this.productId }, { silent: true })
+        const threadId = (res && (res.threadId || res.leadId)) || ''
+        this.setData({ condSheet: false })
+        if (threadId) {
+          wx.navigateTo({ url: '/pages/chat/chat?threadId=' + encodeURIComponent(String(threadId)) })
+        } else {
+          wx.showToast({ title: (res && res.hint) || '已提交平台对接，正在等待平台客服处理', icon: 'none', duration: 3000 })
+        }
+        return
+      }
       const ok = await chat.openChat({
-        targetType: 'product',
+        targetType: bizType === 'demand' ? 'demand' : 'product',
         targetId: p.id || this.productId,
         conds: conds,
+        /* 商机池进入：会话打上来源标记，消息页展示「商机」 */
+        fromBiz: this.data.bizMode === true,
         onPhone: (phone) => this.setData({ ownerPhone: phone })
       })
       if (ok) this.setData({ condSheet: false })
     } finally {
       this.setData({ openingChat: false })
+    }
+  },
+
+  /* 商机：标记不满足，留在商机池但不再计入首页角标 */
+  async markUnsatisfied() {
+    if (this.marking) return
+    const p = this.data.product || {}
+    this.marking = true
+    try {
+      await bizUtil.markRemote(this.bizType || 'supply', p.id || this.productId, true)
+      this.setData({ condSheet: false })
+      wx.showToast({ title: '已标记不满足', icon: 'none' })
+      setTimeout(() => {
+        if ((getCurrentPages() || []).length > 1) wx.navigateBack()
+      }, 600)
+    } catch (err) {
+      /* request 已按错误码提示，留在当前页 */
+    } finally {
+      this.marking = false
+    }
+  },
+
+  /* 我的商机点进来：领取时已解锁的联系电话直接展示，列表里不再堆联系方式 */
+  async loadBizContact() {
+    if (!this.data.bizMode || !this.bizMine) return
+    try {
+      const res = await bizUtil.claimRemote(this.bizType || 'supply', this.productId, [], { silent: true })
+      const phone = (res && res.contact && res.contact.phone) || ''
+      if (phone) this.setData({ ownerPhone: phone })
+    } catch (err) {
+      /* 领取信息拉取失败不阻断详情展示 */
     }
   },
 
@@ -566,10 +741,26 @@ Page({
     this.doOpenChat(this.data.condList.map((c) => ({ k: c.t, satisfied: c.state === 'yes' })))
   },
 
-  /* 走完整咨询表单：采购数量、预算、税费等需要留档的场景 */
+  /* 走完整咨询表单：采购数量、预算、税费等需要留档的场景；
+     已逐项确认的必须条件一并带过去，表单里不用重新点一遍满足 */
   fullConsult() {
     const p = this.data.product || {}
-    wx.navigateTo({ url: '/pages/consult/consult?id=' + encodeURIComponent(p.id || this.productId || '') })
+    const id = encodeURIComponent(p.id || this.productId || '')
+    const list = this.data.condList || []
+    const conds = list
+      .map((c) => (c.state === 'yes' ? '1' : (c.state === 'no' ? '0' : 'x')))
+      .join('')
+    /* 条件文本 + 结果一并带上：咨询页条件顺序与详情页可能不同，按文本对齐更稳 */
+    const picked = list.filter((c) => c.state).map((c) => ({ k: c.t, v: c.state }))
+    const bizType = this.bizType || ''
+    /* 代采＝平台代买，我来供货 → 填供给信息；代售＝平台代卖，我来采购 → 填需求信息 */
+    const demandForm = bizType === 'demand' || (bizType === 'agency' && p.agencySide === 'buy')
+    wx.navigateTo({
+      url: '/pages/consult/consult?id=' + id
+        + (bizType ? '&biz=' + bizType : '')
+        + (demandForm ? '&type=demand' : '')
+        + (/^x*$/.test(conds) ? '' : '&conds=' + conds + '&condj=' + encodeURIComponent(JSON.stringify(picked)))
+    })
   },
 
   /* 举报该商品：进入统一举报表单，提交后进入管理端「风险提示 - 举报反馈」 */
@@ -586,6 +777,20 @@ Page({
   /* 开通商机会员：搜索免费，联系电话等对接能力仅会员可用 */
   goBiz() {
     wx.navigateTo({ url: '/pages/biz/biz' })
+  },
+
+  /* 自己发布的商品：底部主按钮「我的发布」→「我的 - 我发布的 - 商品」 */
+  goMyPub() {
+    try {
+      const app = getApp()
+      if (app && app.globalData) app.globalData.minePub = 'product'
+    } catch (e) {}
+    wx.switchTab({
+      url: '/pages/mine/mine',
+      fail: () => {
+        wx.navigateTo({ url: '/pages/mine/mine' })
+      }
+    })
   },
 
   back() {

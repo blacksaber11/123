@@ -262,6 +262,14 @@
   margin-top: 8rpx;
 }
 
+.nw-cmt-more {
+  padding: 28rpx 0;
+  text-align: center;
+  font-size: 24rpx;
+  font-weight: 600;
+  color: var(--brand);
+}
+
 .nw-cmt {
   padding: 22rpx 0;
   border-bottom: 1rpx solid var(--line);

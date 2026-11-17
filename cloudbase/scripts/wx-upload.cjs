@@ -76,6 +76,17 @@ if (!privateKeyPath) {
 }
 
 ;(async () => {
+  /* 先把兜底版本号同步成这次要上传的版本，保证设置页 / 关于页显示的版本与上传版本一致 */
+  const versionSrc = path.join(projectPath, 'miniprogram', 'utils', 'version.js')
+  try {
+    const src = fs.readFileSync(versionSrc, 'utf8')
+    const next = src.replace(/(const FALLBACK_VERSION = ')[^']*(')/, '$1' + version + '$2')
+    if (next !== src) fs.writeFileSync(versionSrc, next)
+    console.log('VERSION_SYNC ' + versionSrc + ' -> ' + version)
+  } catch (err) {
+    console.error('版本号同步失败（不影响上传）：' + (err && err.message))
+  }
+
   const project = new ci.Project({
     appid,
     type: 'miniProgram',

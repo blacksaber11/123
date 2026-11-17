@@ -73,6 +73,8 @@ async function openChat(opts) {
   const payload = {}
   payload[o.targetType === 'demand' ? 'demandId' : 'productId'] = o.targetId
   payload.conds = o.conds || []
+  /* 从商机池 / 商机详情发起：服务端落库来源，消息页在会话名后展示「商机」 */
+  if (o.fromBiz) payload.fromBiz = true
 
   let res = null
   try {

@@ -100,8 +100,8 @@ function clearPhoneSkipped() {
  * 其它参数（含 openid、手机号、线索号）一律不带。
  */
 function gate(pageRoute, pageOptions) {
-  /* 所有页面都关掉右上角转发入口，材料与线索不允许转发 */
-  hideShare()
+  /* 分享按黑名单处理：默认开放，登录 / 发布 / 私密会话等页面关闭 */
+  hideShare(pageRoute)
   if (!isGate(pageRoute)) return true
   const user = readUser()
   /* 已登录且拿到手机号才放行：发布 / 聊天必须能通过手机号联系到人 */
@@ -125,17 +125,71 @@ function gate(pageRoute, pageOptions) {
 }
 
 /**
+ * 当前待绑定推广码：由 app.js 从分享链接的 ?ref= / scene=ref%3D 里解析并写入 incomingRef。
+ * 取不到时返回空串，登录参数里就不会出现 ref。
+ * 注意：这里只读「别人分享给我的码」，不能读自己的推广码，否则分享会被记到自己名下。
+ */
+function currentRef() {
+  try {
+    const app = getApp()
+    return String((app && app.globalData && app.globalData.incomingRef) || '').trim()
+  } catch (err) {
+    return ''
+  }
+}
+
+/* 自己的推广码缓存键：开通推广大使后由登录态下发，冷启动尚未登录时分享也能带上 */
+const MY_REF_KEY = 'suanli_my_ref_code'
+
+/* 本次启动是否已向服务端同步过登录态：避免页面反复 ensureLogin 时重复请求 */
+let promoterSynced = false
+
+/* 读自己的推广码（同步，冷启动可用） */
+function readMyRefCode() {
+  try {
+    return String(wx.getStorageSync(MY_REF_KEY) || '').trim()
+  } catch (err) {
+    return ''
+  }
+}
+
+/* 写自己的推广码：同时落到本地缓存与 globalData，退出登录 / 取消大使资格时传空串清除 */
+function writeMyRefCode(code) {
+  const value = String(code || '').trim().slice(0, 32)
+  try {
+    if (value) wx.setStorageSync(MY_REF_KEY, value)
+    else wx.removeStorageSync(MY_REF_KEY)
+  } catch (err) { /* 缓存不可用时只更新内存 */ }
+  try {
+    const app = getApp()
+    if (app && app.globalData) app.globalData.refCode = value
+  } catch (err) { /* 取不到 app 时忽略 */ }
+  return value
+}
+
+/**
  * 保证已登录；未登录则静默走一次 wx.login + auth.login。
  * 不弹任何授权框：昵称、头像由用户在「我的 - 个人信息」按需补充。
  * 返回 user（匿名视图：uid、nick、phoneMasked、realnameMasked 等）。
  */
 async function ensureLogin(app) {
   const cached = readUser()
+  const ref = currentRef()
   if (cached && cached.uid) {
     if (app && app.globalData) app.globalData.user = cached
+    /* 每次冷启动静默刷新一次登录态：推广大使开通 / 被取消后，分享用的推广码能立刻同步 */
+    if (ref || !promoterSynced) {
+      promoterSynced = true
+      try {
+        return await wxLogin(ref ? { ref } : {})
+      } catch (err) {
+        return cached
+      }
+    }
     return cached
   }
-  const user = await wxLogin({})
+  promoterSynced = true
+  const user = await wxLogin(ref ? { ref } : {})
   if (app && app.globalData) app.globalData.user = user
   return user
 }
@@ -156,11 +210,17 @@ async function wxLogin(profile) {
   const nick = String(p.nick || '').trim()
   if (nick) payload.nick = nick
   if (p.avatar) payload.avatar = p.avatar
+  /* 分享进入时的推广码：登录即绑定，服务端按「首次绑定后不可改绑」处理 */
+  const ref = String(p.ref || '').trim()
+  if (ref) payload.ref = ref
   const user = await call('user', 'auth.login', payload)
   /* 静默登录不采集任何个人信息，因此不写协议同意记录；
      只有用户主动勾选并授权手机号时才调用 markConsent 留痕 */
   const stored = Object.assign({}, user)
   writeUser(stored)
+  /* 推广大使：登录态里带自己的推广码时写入全局与缓存，之后任意页面分享 / 海报都带上 */
+  const promoter = user && user.promoter
+  if (promoter) writeMyRefCode(promoter.active ? promoter.refCode : '')
   try {
     const app = getApp()
     if (app && app.globalData) app.globalData.user = stored
@@ -187,6 +247,9 @@ function markConsent(user) {
 function logout() {
   clearSession()
   clearUser()
+  /* 退出后清掉自己的推广码，避免换账号登录时把上一个人的码带进分享 */
+  writeMyRefCode('')
+  promoterSynced = false
   try {
     const app = getApp()
     if (app && app.globalData) {
@@ -210,6 +273,8 @@ module.exports = {
   markPhoneSkipped,
   skippedPhone,
   clearPhoneSkipped,
+  readMyRefCode,
+  writeMyRefCode,
   USER_KEY,
   PROFILE_KEY
 }

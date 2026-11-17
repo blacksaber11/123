@@ -8,19 +8,41 @@
   <!-- 私密发布＝匿名公开：内容照常展示，发布人完全匿名 -->
   <view wx:if="{{privateShare}}" class="callout warn private-tip">匿名发布 · 内容公开展示，但不显示发布人，也无法从这里进入对方主页</view>
 
-  <!-- Hero 区 -->
-  <view class="hero demand">
-    <view class="hero-bg"></view>
-    <view class="hbadge">
-      <text class="pill-tag {{demand.isRent ? 'rent' : 'buy'}}">{{demand.tradeMode}}</text>
-      <text class="chip">{{demand.status}}</text>
+  <!-- 参考图片与视频：与商品页同一套展示；没有图片时用文字占位展示型号 / 数量 / 预算 -->
+  <view class="block media-sec">
+    <view class="block-hd">
+      <text class="bt">需求参考图片</text>
+      <text class="r">{{mediaSlides.length ? mediaSummary : '暂无图片'}}</text>
     </view>
-    <view class="hero-fav" bindtap="toggleFav">{{fav ? '★' : '☆'}}</view>
-    <view class="htxt">{{demand.model}}</view>
-    <view class="hsub">{{demand.brand}} · 需 {{demand.qty}} 台 · {{demand.city}}</view>
-    <view class="dots">
-      <text class="dot on"></text>
-      <text class="dot"></text>
+    <view wx:if="{{mediaSlides.length}}" class="media-stage">
+      <view class="hbadge stage-badge">
+        <text class="pill-tag {{demand.isRent ? 'rent' : 'buy'}}">{{demand.tradeMode}}</text>
+        <text class="chip">{{demand.status}}</text>
+      </view>
+      <view class="hero-fav" bindtap="toggleFav">{{fav ? '★' : '☆'}}</view>
+      <swiper class="media-swiper" current="{{mediaIndex}}" bindchange="onMediaSwipe" circular="{{mediaSlides.length > 1}}">
+        <swiper-item class="ms-cell" wx:for="{{mediaSlides}}" wx:for-index="index" wx:key="k">
+          <image wx:if="{{item.kind === 'image'}}" class="ms-media" src="{{item.url}}" mode="aspectFill" lazy-load data-index="{{index}}" bindtap="previewMedia" />
+          <view wx:else class="ms-media ms-video" data-index="{{index}}" bindtap="previewMedia">
+            <image wx:if="{{item.poster}}" class="ms-video-poster" src="{{item.poster}}" mode="aspectFill" />
+            <view class="ms-video-play">▶</view>
+            <text class="ms-video-tip">点击全屏播放</text>
+          </view>
+        </swiper-item>
+      </swiper>
+      <view wx:if="{{mediaSlides.length > 1}}" class="ms-hint">左右滑动切换</view>
+      <view wx:if="{{mediaSlides.length > 1}}" class="ms-count">{{mediaIndex + 1}} / {{mediaSlides.length}}</view>
+    </view>
+    <!-- 没有图片：文字占位，展示品牌 / 型号 / 数量 / 预算 / 城市 -->
+    <view wx:else class="media-stage">
+      <view class="ms-empty">
+        <text wx:if="{{demand.brand}}" class="ms-empty-brand">{{demand.brand}}</text>
+        <text class="ms-empty-t">{{demand.model || demand.cat || '算力需求'}}</text>
+        <text wx:if="{{demand.qty || demand.city}}" class="ms-empty-sub">{{demand.qty ? '需 ' + demand.qty + ' 台' : ''}}{{demand.qty && demand.city ? ' · ' : ''}}{{demand.city || ''}}</text>
+        <text class="ms-empty-budget">{{demand.budgetText}}{{demand.budgetMode === 'nego' ? '' : ' 以内'}}</text>
+        <text class="ms-empty-d">需求方暂未上传参考图片</text>
+        <text class="ms-empty-h">满足必须条件后可在对话中沟通细节</text>
+      </view>
     </view>
   </view>
 
@@ -43,7 +65,6 @@
       <text class="chip">{{demand.model}}</text>
       <text class="chip">需 {{demand.qty}} 台</text>
       <text class="chip">{{demand.city}}</text>
-      <text wx:for="{{demand.tags}}" wx:key="*this" class="chip brand">{{item}}</text>
     </view>
 
     <view class="spec-grid">
@@ -58,13 +79,14 @@
       <view class="cell"><view class="k">交付时间</view><view class="v">{{demand.deliver}}</view></view>
       <view wx:if="{{demand.accept}}" class="cell"><view class="k">验收方式</view><view class="v">{{demand.accept}}</view></view>
       <view wx:if="{{demand.isRent}}" class="cell"><view class="k">租期要求</view><view class="v">{{demand.termText || '可议'}}</view></view>
+      <view wx:if="{{demand.rentLimitText}}" class="cell"><view class="k">租赁条款要求</view><view class="v">{{demand.rentLimitText}}</view></view>
       <view wx:if="{{demand.isRent}}" class="cell"><view class="k">价格方式</view><view class="v">{{demand.closed || '可议'}}</view></view>
       <view class="cell"><view class="k">浏览量</view><view class="v">{{demand.views}}</view></view>
       <view class="cell"><view class="k">需求状态</view><view class="v">{{demand.status}}</view></view>
     </view>
 
     <view class="callout" style="margin-top: 20rpx">
-      需求发布后即可见，平台会进行抽查审核；平台仅提供信息发布与居间对接，不核验需求方真实交易意图。
+      需求发布后即可见；平台不审核交易流程，只提供信息发布与居间撮合，不核验需求方真实交易意图。
     </view>
   </view>
 
@@ -148,6 +170,21 @@
     </view>
   </view>
 
+  <!-- 联系入口：只展示需求方公开的联系电话；私信入口固定在底部栏 -->
+  <view wx:if="{{!isMine}}" class="block consult-entry">
+    <view class="block-hd">
+      <text class="bt">⑤ 联系需求方</text>
+    </view>
+    <view class="callout brand">
+      <view wx:if="{{ownerPhone}}" class="contact-phone">
+        <text class="cp-k">联系电话</text>
+        <text class="cp-v">{{ownerPhone}}</text>
+        <text class="cp-act" bindtap="copyOwnerPhone">复制</text>
+      </view>
+      <view wx:else class="contact-phone-none">未公开电话号码，请通过私信联系需求方</view>
+    </view>
+  </view>
+
   <!-- 响应咨询（仅发布方可见） -->
   <view wx:if="{{isMine}}" class="block">
     <view class="block-hd">
@@ -185,21 +222,23 @@
     </view>
   </view>
 
-  <view style="height: 200rpx"></view>
+  <!-- 底部占位：给固定栏留出高度 -->
+  <view style="height: 260rpx"></view>
 
-  <!-- 底部响应栏 -->
+  <!-- 底部响应栏：数据单独一行，操作一行；主按钮占满剩余宽度，任何机型都不会被挤掉 -->
   <view class="sticky-consult safe-bottom">
-    <view wx:if="{{isMine}}" class="row">
-      <view class="cnt"><text class="b">{{responses.length}}</text> 人响应 · {{demand.status}}</view>
-      <button class="btn ghost share-btn" open-type="share">分享</button>
-      <button class="btn ghost share-btn" catchtap="savePoster">海报</button>
-      <button class="btn ghost lg" bindtap="back">返回</button>
+    <view class="meta">
+      <view class="cnt">
+        <block wx:if="{{isMine}}"><text class="b">{{responses.length}}</text> 人响应</block>
+        <block wx:else><text class="b">{{demand.views}}</text> 次浏览</block>
+      </view>
+      <text class="meta-tip">{{demand.status}}</text>
     </view>
-    <view wx:else class="row">
-      <view class="cnt"><text class="b">{{demand.views}}</text> 次浏览</view>
+    <view class="row">
       <button class="btn ghost share-btn" open-type="share">分享</button>
       <button class="btn ghost share-btn" catchtap="savePoster">海报</button>
-      <button class="btn primary lg" bindtap="respond">联系需求方</button>
+      <button wx:if="{{isMine}}" class="btn primary lg grow" bindtap="back">返回</button>
+      <button wx:else class="btn primary lg grow" bindtap="respond">{{bizMode ? '领取商机' : '私信需求方'}}</button>
     </view>
     <view class="hint">先确认必须条件，满足后直接与需求方对话</view>
   </view>
@@ -223,9 +262,10 @@
       </view>
     </scroll-view>
     <view class="cs-ft">
-      <button class="btn ghost" bindtap="fullRespond">填报价</button>
+      <button wx:if="{{bizMode && !condPass}}" class="btn ghost" bindtap="markUnsatisfied">标记不满足</button>
+      <button wx:else class="btn ghost" bindtap="fullRespond">{{bizMode ? '填写完整需求' : '填报价'}}</button>
       <button class="btn primary" bindtap="confirmCond" disabled="{{!condPass || openingChat}}">
-        {{openingChat ? '正在打开…' : (condPass ? '确认并开始对话' : '还有 ' + condUnmet + ' 项未确认')}}
+        {{openingChat ? '正在打开…' : (condPass ? (bizMode ? '领取并发起对话' : '确认并开始对话') : '还有 ' + condUnmet + ' 项未确认')}}
       </button>
     </view>
   </view>

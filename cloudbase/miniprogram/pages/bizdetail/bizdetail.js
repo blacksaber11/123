@@ -1,8 +1,25 @@
-/* 商机详情：逐项确认发布者的必须条件，全部满足后才能领取；
-   不满足可标记，商机仍保留在列表的「不满足」分类里，只是不再角标提醒 */
+/* 商机详情：展示内容与普通发布详情一致（图片、规格、发布者全部信息、必须条件），
+   只是打上商机标签进入商机池；条件全部满足后左下角变成「填写完整需求」，
+   复用普通发布的咨询 / 响应页，填完提交才能发布 */
 const biz = require('../../utils/biz')
 const { request } = require('../../utils/request')
 const { goThread } = require('../../utils/chat')
+
+/* 发布时上传的图片与视频：与普通详情页同一份数据，缺字段时按图片处理 */
+function mediaSlidesOf(list) {
+  return (Array.isArray(list) ? list : []).map((m, i) => {
+    if (!m) return null
+    const url = m.url || m.fileId || m.src || ''
+    if (!url) return null
+    const type = String(m.type || m.mime || '')
+    return {
+      k: String(i),
+      kind: m.kind === 'video' || /^video\//i.test(type) ? 'video' : 'image',
+      url,
+      poster: m.poster || m.cover || ''
+    }
+  }).filter(Boolean)
+}
 
 /* 列表与详情共用同一条商机：优先按 id + 类型匹配，类型缺失时按 id 兜底 */
 function pickItem(list, id, type) {
@@ -21,6 +38,10 @@ Page({
     /* 商机会员未开通 / 已到期：不展示商机内容，引导回商机页开通 */
     locked: false,
     opp: null,
+    /* 与普通发布详情一致：发布时上传的图片与视频正常展示 */
+    mediaSlides: [],
+    mediaIndex: 0,
+    mediaSummary: '',
     mustList: [],
     condTotal: 0,
     condMet: 0,
@@ -38,6 +59,14 @@ Page({
     this.type = options && options.type ? String(options.type) : ''
     wx.setNavigationBarTitle({ title: '商机详情' })
     this.load()
+  },
+
+  /* 从「填写完整需求」返回：那边可能已提交响应并开通会话，回到本页刷新状态 */
+  onShow() {
+    if (this.needReload) {
+      this.needReload = false
+      this.load()
+    }
   },
 
   async load() {
@@ -86,13 +115,28 @@ Page({
     const opp = Object.assign({}, item, {
       unit: item.unit || '台',
       isAgency: item.type === 'agency',
-      platformOnly: item.type === 'agency'
+      platformOnly: item.type === 'agency',
+      /* 发布者设定的全部信息 / 可协商项 / 交易流程：历史数据缺失时按空数组渲染 */
+      info: Array.isArray(item.info) ? item.info : [],
+      nego: Array.isArray(item.nego) ? item.nego : [],
+      flow: Array.isArray(item.flow) ? item.flow : []
     })
+    /* 图片与视频：与普通发布详情同一套展示，没有媒体时退回文字概要 */
+    const mediaSlides = mediaSlidesOf(item.media)
+    const imgCount = mediaSlides.filter((m) => m.kind === 'image').length
+    const videoCount = mediaSlides.filter((m) => m.kind === 'video').length
+    const mediaSummary = [
+      imgCount ? imgCount + ' 张图片' : '',
+      videoCount ? videoCount + ' 段视频' : ''
+    ].filter(Boolean).join(' · ')
     this.setData({
       loading: false,
       notFound: false,
       locked: false,
       opp: opp,
+      mediaSlides: mediaSlides,
+      mediaIndex: 0,
+      mediaSummary: mediaSummary,
       claimed: claimed,
       unsatisfied: item.unsatisfied === true,
       consulted: item.consulted === true,
@@ -125,6 +169,58 @@ Page({
     })
   },
 
+  /* 图片 / 视频：与普通发布详情一样正常展示，点击全屏查看 */
+  onMediaSwipe(e) {
+    const index = Number(e && e.detail && e.detail.current) || 0
+    if (index === this.data.mediaIndex) return
+    this.setData({ mediaIndex: index })
+  },
+
+  previewMedia(e) {
+    const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
+    const slides = this.data.mediaSlides || []
+    const index = Number(ds.index) || 0
+    const slide = slides[index]
+    if (!slide) return
+    if (slide.kind === 'video') {
+      if (wx.previewMedia) {
+        wx.previewMedia({
+          sources: slides.map((s) => ({ url: s.url, type: s.kind, poster: s.poster || '' })),
+          current: index
+        })
+        return
+      }
+      wx.showToast({ title: '当前微信版本不支持查看视频', icon: 'none' })
+      return
+    }
+    const images = slides.filter((s) => s.kind === 'image').map((s) => s.url)
+    wx.previewImage({ current: slide.url, urls: images })
+  },
+
+  /* 条件全部满足后：左下角变成「填写完整需求」，复用普通发布的咨询 / 响应页，
+     填完提交后才能发布（发起对话），不再单独做商机填写页 */
+  moreInfo() {
+    const opp = this.data.opp
+    if (!opp) return
+    if (!this.data.condPass) {
+      wx.showToast({ title: '请先确认全部必须条件', icon: 'none' })
+      return
+    }
+    this.needReload = true
+    const id = encodeURIComponent(opp.id)
+    /* 本页已逐项确认的必须条件一并带入咨询页，不用在表单里重新点一遍 */
+    const list = this.data.mustList || []
+    const conds = list
+      .map((c) => (c.state === 'yes' ? '1' : (c.state === 'no' ? '0' : 'x')))
+      .join('')
+    const picked = list.filter((c) => c.state).map((c) => ({ k: c.t, v: c.state }))
+    const extra = /^x*$/.test(conds) ? '' : '&conds=' + conds + '&condj=' + encodeURIComponent(JSON.stringify(picked))
+    const url = (opp.type === 'supply'
+      ? '/pages/consult/consult?id=' + id
+      : '/pages/consult/consult?type=demand&id=' + id) + '&from=biz' + extra
+    wx.navigateTo({ url: url })
+  },
+
   /* 领取商机：必须全部条件满足；成功后在本页内联展示联系方式，不弹窗 */
   async claim() {
     const opp = this.data.opp
@@ -144,7 +240,11 @@ Page({
       if (this.remote) {
         const payload = opp.type === 'supply'
           ? { targetType: 'supply', supplyId: opp.id }
-          : { targetType: 'demand', demandId: opp.id }
+          : (opp.type === 'agency'
+            ? { targetType: 'agency', agencyId: opp.id }
+            : { targetType: 'demand', demandId: opp.id })
+        /* 逐项确认过的必须条件一起提交，服务端会复核，避免前端被绕过 */
+        payload.conds = this.data.mustList.filter((c) => c.state === 'yes').map((c) => c.t)
         const res = await request('user', 'biz.claim', payload, { silent: true })
         contact = (res && res.contact) || null
       } else {
@@ -167,7 +267,10 @@ Page({
         unsatisfied: false,
         opp: merged
       })
-      wx.showToast({ title: '已领取，联系方式已解锁', icon: 'none' })
+      wx.showToast({
+        title: opp.platformOnly ? '已领取，可提交平台对接' : '已领取，联系方式已解锁',
+        icon: 'none'
+      })
     } catch (err) {
       const msg = String((err && err.message) || '')
       this.setData({ claiming: false })
@@ -240,8 +343,8 @@ Page({
       if (this.remote) {
         const conds = this.data.mustList.map((c) => ({ k: c.t, satisfied: true }))
         const payload = opp.type === 'supply'
-          ? { productId: opp.id, conds: conds }
-          : { demandId: opp.id, conds: conds }
+          ? { productId: opp.id, conds: conds, fromBiz: true }
+          : { demandId: opp.id, conds: conds, fromBiz: true }
         const res = await request('user', 'chat.open', payload, { silent: true })
         threadId = res && res.threadId ? String(res.threadId) : ''
       }
@@ -269,20 +372,16 @@ Page({
     this.setData({ consulting: true })
     try {
       if (this.remote) {
-        await request('user', 'biz.consult', { agencyId: opp.id }, { silent: true })
-        try {
-          await request('user', 'msg.send', {
-            body: '我想咨询该委托：' + (opp.title || '') + '（委托编号 ' + opp.id + '）',
-            targetType: 'agency',
-            targetId: opp.id,
-            targetTitle: opp.title || ''
-          }, { silent: true })
-          this.setData({ consulting: false, consulted: true })
-          wx.navigateTo({ url: '/pages/chat/chat' })
+        const res = await request('user', 'biz.consult', { agencyId: opp.id }, { silent: true })
+        /* 咨询单已建立：直接进入该咨询会话，客服领取前显示「正在等待平台客服处理」 */
+        const threadId = (res && (res.threadId || res.leadId)) || ''
+        this.setData({ consulting: false, consulted: true })
+        if (threadId) {
+          wx.navigateTo({ url: '/pages/chat/chat?threadId=' + encodeURIComponent(threadId) })
           return
-        } catch (err) {
-          /* 对话建立失败不影响已提交的对接申请 */
         }
+        wx.showToast({ title: (res && res.hint) || '需求已提交，正在等待平台客服处理', icon: 'none', duration: 3000 })
+        return
       } else {
         biz.consult(opp.id)
       }

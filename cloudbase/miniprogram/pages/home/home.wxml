@@ -1,6 +1,18 @@
 <view class="home">
   <!-- 固定头部：Tab 切换 + 搜索栏 -->
   <view class="home-hd">
+    <!-- 首页横幅：内容与滚动速度由管理端配置，点击弹窗展示详情 -->
+    <view wx:if="{{(tab === 'sell' || tab === 'buy') && bannerText}}" class="home-banner" bindtap="openBanner">
+      <view class="hb-ico">公告</view>
+      <view class="hb-view">
+        <view class="hb-track" style="animation-duration:{{bannerDur}}s">
+          <text class="hb-text">{{bannerText}}</text>
+          <text class="hb-text">{{bannerText}}</text>
+        </view>
+      </view>
+      <view class="hb-more">详情</view>
+    </view>
+
     <!-- 资讯视图不再显示「资讯圈」标签，头部直接是搜索栏 -->
     <view wx:if="{{tab !== 'news'}}" class="seg-tabs">
       <view class="seg {{tab === 'sell' ? 'on' : ''}}" data-tab="sell" bindtap="switchTab">在售货源</view>
@@ -37,7 +49,7 @@
     <view class="ht-item" bindtap="goBiz">
       <view class="ht-ico"><image class="ht-img" src="/assets/icons/ht-biz.png" mode="aspectFit" /></view>
       <view class="ht-tt">商机</view>
-      <view class="ht-ds">99 元 / 月</view>
+      <view class="ht-ds">{{bizHint || '¥99 / 月 · 开通查看'}}</view>
       <view wx:if="{{bizBadge}}" class="ht-badge">{{bizBadge > 99 ? '99+' : bizBadge}}</view>
     </view>
   </view>
@@ -74,7 +86,7 @@
     <scroll-view scroll-x="true" class="ns-scroll" enhanced show-scrollbar="{{false}}">
       <view class="ns-chips">
         <view class="ns-chip {{newsScope === 'all' ? 'on' : ''}}" data-scope="all" bindtap="switchNewsScope">全国</view>
-        <view class="ns-chip {{newsScope === 'city' ? 'on' : ''}}" data-scope="city" bindtap="switchNewsScope">同城 · {{newsLocalCity}}</view>
+        <view class="ns-chip {{newsScope === 'city' ? 'on' : ''}}" data-scope="city" bindtap="switchNewsScope">同城 · {{newsLocalCity || '未设置城市'}}</view>
         <view class="ns-chip {{newsScope === 'pick' ? 'on' : ''}}" data-scope="pick" bindtap="switchNewsScope">{{newsScope === 'pick' && newsCity ? newsCity : '选择城市'}} ▾</view>
       </view>
     </scroll-view>
@@ -87,7 +99,6 @@
     <block wx:if="{{tab === 'sell'}}">
       <view wx:for="{{items}}" wx:key="id" class="gcard" data-id="{{item.id}}" bindtap="openDetail">
         <view class="top">
-          <view class="avatar {{item.anon ? 'anon' : ''}}" data-key="{{item.ownerKey}}" data-nick="{{item.ownerSubject || item.ownerText}}" catchtap="openOwner">{{item.ownerShort}}</view>
           <text class="top-info">{{item.ownerText}} · {{item.city}} · {{item.published}}</text>
           <view class="top-right">
             <text class="pill-tag {{item.isRent ? 'rent' : ''}}">{{item.tradeMode}}</text>
@@ -149,7 +160,6 @@
     <block wx:else>
       <view wx:for="{{items}}" wx:key="id" class="gcard demand" data-id="{{item.id}}" bindtap="openDetail">
         <view class="top">
-          <view class="avatar demand-av {{item.anon ? 'anon' : ''}}" data-key="{{item.ownerKey}}" data-nick="{{item.ownerSubject || item.publisher}}" catchtap="openOwner">{{item.anon ? '匿' : '需'}}</view>
           <text class="top-info">{{item.contact}} · {{item.city}} · {{item.published}}</text>
           <view class="top-right">
             <text class="pill-tag {{item.isRent ? 'rent' : 'buy'}}">{{item.tradeMode}}</text>
@@ -189,14 +199,25 @@
       </view>
     </block>
 
-    <view wx:if="{{!loading && items.length === 0}}" class="empty">
+    <view wx:if="{{!loading && !(tab === 'news' && newsError) && items.length === 0}}" class="empty">
       <image class="big-img" src="/assets/icons/empty-inbox.png" mode="aspectFit" />
-      <view class="ttl">{{tab === 'news' ? '这个范围内还没有资讯' : '当前条件下没有匹配' + (tab === 'sell' ? '货源' : '需求')}}</view>
+      <view class="ttl">{{tab === 'news' ? '这个范围内还没有资讯' : (tab === 'sell' ? '没有符合条件的货源' : '没有符合条件的求购需求')}}</view>
       <view class="ds">{{tab === 'news' ? '可以切换到全国，或自己发布一条资讯。' : '可以放宽条件，或发布' + (tab === 'sell' ? '求购需求' : '商品') + '等待对方来找你。'}}</view>
       <view class="acts">
+        <button wx:if="{{tab !== 'news' && hasMore}}" class="btn sm" bindtap="loadMore">加载更多</button>
         <button wx:if="{{tab === 'sell' || tab === 'buy'}}" class="btn sm" bindtap="clearFilter">清空筛选条件</button>
         <button wx:if="{{tab === 'news'}}" class="btn sm primary" bindtap="openNewsPub">发布资讯</button>
         <button wx:if="{{tab === 'sell' || tab === 'buy'}}" class="btn sm primary" bindtap="goPublish">{{tab === 'sell' ? '发布需求' : '发布商品'}}</button>
+      </view>
+    </view>
+
+    <!-- 资讯接口失败：展示空态与重试，不用演示资讯兜底 -->
+    <view wx:if="{{tab === 'news' && newsError && !loading}}" class="empty">
+      <image class="big-img" src="/assets/icons/empty-inbox.png" mode="aspectFit" />
+      <view class="ttl">资讯加载失败</view>
+      <view class="ds">网络或服务暂时不可用，请稍后重试。</view>
+      <view class="acts">
+        <button class="btn sm primary" bindtap="retryNews">重新加载</button>
       </view>
     </view>
 
@@ -296,8 +317,8 @@
                   bindinput="onNewsPubInput" placeholder="写清数量、预算、交付时间等（可直接留联系方式）"></textarea>
       </view>
       <view class="dc-group">
-        <view class="dc-label">发布城市（读取本机定位，不可修改）</view>
-        <view class="dc-static">{{newsLocalCity}} · 定位城市</view>
+        <view class="dc-label">发布城市（取自「我的」资料，不可修改）</view>
+        <view class="dc-static">{{newsLocalCity ? newsLocalCity + ' · 账号所在城市' : '未设置城市 · 请先在「我的」填写所在城市'}}</view>
       </view>
       <view class="dc-group">
         <view class="dc-label">私密发布</view>
@@ -314,6 +335,22 @@
       <button class="btn primary" bindtap="submitNews" disabled="{{newsSubmitting}}">{{newsSubmitting ? '提交中…' : '发布'}}</button>
     </view>
   </view>
+  <!-- 首页横幅详情：逐条展示标题与正文 -->
+  <view wx:if="{{bannerOpen}}" class="filter-mask" bindtap="closeBanner"></view>
+  <view wx:if="{{bannerOpen}}" class="banner-modal" catchtap="noop">
+    <view class="bm-hd">
+      <text class="bm-tt">公告详情</text>
+      <view class="bm-x" bindtap="closeBanner">✕</view>
+    </view>
+    <scroll-view scroll-y="true" class="bm-bd">
+      <view wx:for="{{bannerItems}}" wx:key="id" class="bm-item">
+        <view class="bm-t">{{item.title}}</view>
+        <view wx:if="{{item.content}}" class="bm-c">{{item.content}}</view>
+      </view>
+    </scroll-view>
+    <view class="bm-ft"><button class="btn primary" bindtap="closeBanner">知道了</button></view>
+  </view>
+
   <!-- 朋友圈单页模式：没有底部导航与登录入口，提示从右上角进入完整小程序 -->
   <view wx:if="{{singlePage}}" class="sp-bar">朋友圈预览 · 点右上角 ··· 选择「前往小程序」查看完整功能</view>
 </view>

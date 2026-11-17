@@ -8,7 +8,7 @@
       </view>
     </view>
     <view class="bz-ds">{{mineMode ? '只显示你已领取的商机，可随时回看联系方式并直接发起站内对话' : '已发布需求 + 平台核验后的代采 / 代售委托，按你的库存自动匹配；委托类由平台代为对接'}}</view>
-    <!-- 提示力度：做成明确的设置按钮，旁边提示可手动调整匹配范围 -->
+    <!-- 商机提示设置：显示时间、排序、型号筛选与匹配力度都在同一个面板里 -->
     <view wx:if="{{!mineMode}}" class="bz-pref-row">
       <view class="bz-pref-btn" bindtap="openPref" hover-class="bz-pref-btn-hover">
         <view class="pfr-ico">
@@ -16,10 +16,9 @@
           <view class="pfr-line"><text class="pfr-knob" style="left:11rpx"></text></view>
           <view class="pfr-line"><text class="pfr-knob" style="left:6rpx"></text></view>
         </view>
-        <text class="pfr-t">提示力度</text>
-        <text class="pfr-v">{{prefLevelName}}</text>
+        <text class="pfr-t">商机提示设置</text>
+        <text class="pfr-v">{{prefLevelName}} · {{dayLabel}}</text>
       </view>
-      <text class="bz-pref-hint" bindtap="openPref">点此手动设置 ›</text>
     </view>
     <view wx:if="{{!mineMode}}" class="bz-stats">
       <view class="bz-s">
@@ -117,43 +116,43 @@
         <view class="gb">
           <text class="gb-no">1</text>
           <view class="gb-c">
-            <view class="gb-t">真实商机，主体公开</view>
-            <view class="gb-d">发布者必须公开主体身份；代采 / 代售核验资质与金额后才进商机池。</view>
+            <view class="gb-t">公开手机号直接看明文</view>
+            <view class="gb-d">普通信息流里，货主主动公开的联系电话你可直接复制拨打；商机池里领取过的联系人手机号永久可回看，未公开的走站内对话。未开通时联系方式打码。</view>
           </view>
         </view>
         <view class="gb">
           <text class="gb-no">2</text>
           <view class="gb-c">
-            <view class="gb-t">平台筛选，只推对得上的</view>
-            <view class="gb-d">按型号、成色、起订量逐条比对，满足库存条件才出现，对不上的不推送。</view>
+            <view class="gb-t">按库存自动匹配商机</view>
+            <view class="gb-d">填一次你的库存型号（品牌 / 系列 / 成色 / 起订量），平台按九维规则自动对上求购与货源，不匹配的不会推给你。可随时切换「宽松 / 标准 / 严格」三档预设。</view>
           </view>
         </view>
         <view class="gb">
           <text class="gb-no">3</text>
           <view class="gb-c">
-            <view class="gb-t">开通后看完整商机</view>
-            <view class="gb-d">未开通只看条数与打码卡片；开通后可见型号、数量、预算与匹配库存。</view>
+            <view class="gb-t">完整主体与联系人</view>
+            <view class="gb-d">未开通可见型号、数量、价格与脱敏主体（如「某国企***公司」）；开通后可见完整发布者主体、联系人电话与匹配的库存条目。</view>
           </view>
         </view>
         <view class="gb">
           <text class="gb-no">4</text>
           <view class="gb-c">
-            <view class="gb-t">领取后给联系人</view>
-            <view class="gb-d">领取后给主体与联系人；公开手机号可直接拨打，未公开走站内对话。</view>
+            <view class="gb-t">四类榜单看行情</view>
+            <view class="gb-d">需求榜、火热榜、供给榜、品类榜，掌握当前热门机型、成交价区间与供给分布，判断行情不用再靠打听。</view>
           </view>
         </view>
         <view class="gb">
           <text class="gb-no">5</text>
           <view class="gb-c">
-            <view class="gb-t">代采 / 代售由平台代为对接</view>
-            <view class="gb-d">平台核验上架的委托只进商机池，提交申请后由平台核实推进。</view>
+            <view class="gb-t">代采 / 代售一键对接平台</view>
+            <view class="gb-d">平台核验资质与金额后上架的委托，只进商机池不公开；会员点开委托逐项确认必须条件后，点「咨询平台」提交需求，由客服核实后推进，全程不泄露你的联系方式给第三方。</view>
           </view>
         </view>
         <view class="gb">
           <text class="gb-no">6</text>
           <view class="gb-c">
-            <view class="gb-t">四类榜单看行情</view>
-            <view class="gb-d">需求榜、火热榜、供给榜、品类榜，掌握热门机型与价格区间。</view>
+            <view class="gb-t">真实主体准入，匿名不进池</view>
+            <view class="gb-d">发布者必须公开主体身份（企业 / 个人实名）才能进商机池；私密 / 匿名发布不参与匹配，代采 / 代售经平台核验资质与金额后才上架。</view>
           </view>
         </view>
       </view>
@@ -215,16 +214,29 @@
       </view>
     </view>
 
+    <!-- 未开通：脱敏商机预览，固定十条高度，内部可滑动看其余，不展示联系方式 -->
     <view class="bz-teaser">
-      <view class="teaser-hd">匹配到的商机（开通后可见价格与匹配详情）</view>
-      <view wx:for="{{items}}" wx:key="id" class="teaser-row">
-        <view class="tr-l">
-          <text class="tr-kind {{item.kind === '代采' ? 'buy' : 'sell'}}">{{item.kind}}</text>
-          <text class="tr-model">{{item.model}}</text>
-        </view>
-        <text class="tr-price">¥ ****</text>
+      <view class="teaser-hd">
+        <text class="teaser-tt">匹配到的商机</text>
+        <text class="teaser-sub">{{teaserItems.length}} 条 · 开通后可见联系方式</text>
       </view>
-      <view wx:if="{{!items.length}}" class="teaser-none">暂时没有和你条件匹配的商机：完善库存型号 / 成色 / 起订量，或发布求购需求后再看</view>
+      <scroll-view wx:if="{{teaserItems.length}}" class="teaser-scroll" scroll-y="true" show-scrollbar="{{false}}">
+        <view wx:for="{{teaserItems}}" wx:key="id" class="tes-row">
+          <view class="tes-top">
+            <text class="tr-kind {{item.type === 'supply' ? 'sell' : (item.kind === '代采' ? 'buy' : (item.kind === '代售' ? 'sell' : 'demand'))}}">{{item.kind}}</text>
+            <text class="tes-model">{{item.model}}</text>
+            <text class="tes-price">{{item.priceText}}</text>
+          </view>
+          <view class="tes-mid">
+            <text wx:if="{{item.matchModel}}" class="tes-mm">{{item.matchModel}}</text>
+            <text class="tes-via">{{item.matchText || (item.matchVia ? '基于' + item.matchVia : '')}}</text>
+            <text class="tes-time">{{item.published}}</text>
+          </view>
+          <view class="tes-bot">主体 {{item.org || '已脱敏'}}</view>
+        </view>
+      </scroll-view>
+      <view wx:else class="teaser-none">暂时没有和你条件匹配的商机：完善库存型号 / 成色 / 起订量，或发布求购需求后再看</view>
+      <view wx:if="{{teaserItems.length}}" class="teaser-foot">上下滑动查看其余商机 · 联系方式与完整主体开通后可见</view>
     </view>
   </block>
 
@@ -236,73 +248,129 @@
       <text class="sb-b" bindtap="goBack">返回商机 ›</text>
     </view>
 
-    <view class="bz-tabs cat-tabs">
-      <view wx:for="{{filters}}" wx:key="key"
-            class="bz-tab {{filter === item.key ? 'on' : ''}}"
-            data-key="{{item.key}}" bindtap="switchFilter">{{item.label}}</view>
-    </view>
+    <!-- 筛选栏：分类 / 排序 / 型号，点开后贴边展开下拉面板，可叠加筛选 -->
+    <view wx:if="{{filterMenu}}" class="bz-mask" bindtap="closeMenu"></view>
+    <view class="bz-filter">
+      <view class="bz-trig-inner">
+        <view class="bz-trigger {{filter !== 'all' || filterMenu === 'cat' ? 'on' : ''}}" data-menu="cat" bindtap="toggleMenu">
+          <text class="bt-v">{{filterLabel}}</text>
+          <text class="bt-arw {{filterMenu === 'cat' ? 'up' : ''}}">▾</text>
+        </view>
+        <view class="bz-trigger {{prefs.sort !== 'latest' || filterMenu === 'sort' ? 'on' : ''}}" data-menu="sort" bindtap="toggleMenu">
+          <text class="bt-v">{{sortLabel}}</text>
+          <text class="bt-arw {{filterMenu === 'sort' ? 'up' : ''}}">▾</text>
+        </view>
+        <view class="bz-trigger {{modelFilter || filterMenu === 'model' ? 'on' : ''}}" data-menu="model" bindtap="toggleMenu">
+          <text class="bt-v">{{modelFilter || '全部型号'}}</text>
+          <text class="bt-arw {{filterMenu === 'model' ? 'up' : ''}}">▾</text>
+        </view>
+      </view>
 
-    <view class="opp-list">
-      <view wx:for="{{items}}" wx:key="id" class="opp-card"
-            data-id="{{item.id}}" data-type="{{item.type}}" bindtap="openDetail">
-        <view class="op-top">
-          <view class="op-top-l">
-            <text class="op-kind {{item.type === 'supply' ? 'sell' : (item.kind === '代采' ? 'buy' : (item.kind === '代售' ? 'sell' : 'demand'))}}">{{item.kind}}</text>
-            <text wx:if="{{item.closed}}" class="op-mode">{{item.statusText || '已结束'}}</text>
-            <text wx:elif="{{item.claimed}}" class="op-mode">已领取</text>
-            <text wx:if="{{item.platformOnly}}" class="op-mode">平台对接</text>
-          </view>
-          <view class="op-top-r" catchtap="noop">
-            <text class="op-fee">{{item.feeText}}</text>
-            <button class="op-share" open-type="share" data-id="{{item.id}}" data-type="{{item.type}}">分享</button>
-            <text class="op-save" catchtap="savePoster" data-id="{{item.id}}">海报</text>
+      <!-- 下拉面板：贴齐筛选栏下拉，整行选项，当前项打勾 -->
+      <view wx:if="{{filterMenu}}" class="bz-menu">
+        <view wx:if="{{filterMenu === 'cat'}}" class="bf-opts">
+          <view wx:for="{{filters}}" wx:key="key"
+                class="bf-opt {{filter === item.key ? 'on' : ''}}"
+                data-key="{{item.key}}" bindtap="switchFilter">
+            <text>{{item.label}}</text>
+            <text wx:if="{{filter === item.key}}" class="bf-check">✓</text>
           </view>
         </view>
-        <view class="op-model">{{item.model}}</view>
-        <view class="op-price">
-          <text class="op-p">{{item.priceText}}</text>
-          <text class="op-unit">/ {{item.unit}} × {{item.qty}}{{item.unit}}</text>
-        </view>
-        <view wx:if="{{!item.closed}}" class="op-chips">
-          <text class="chip">{{item.cat}}</text>
-          <text class="chip">{{item.city}}</text>
-          <text class="chip brand">{{item.type === 'supply' ? '需求匹配' : '库存匹配'}} ×{{item.stockQty}}</text>
-        </view>
-        <view wx:if="{{item.stockText}}" class="op-stock">{{item.type === 'supply' ? '货源' : '我的库存'}}：{{item.stockText}}</view>
-        <view wx:if="{{item.demandText && !item.closed}}" class="op-stock">{{item.demandText}}</view>
-        <view class="op-meta">{{item.org}} · {{item.published}} · {{item.closed ? '已结束，仅供回看' : item.expireText}}<text wx:if="{{item.type !== 'agency'}}" class="op-more">详情 ›</text></view>
-        <view wx:if="{{item.claimText}}" class="op-claim">{{item.claimText}}</view>
-
-        <!-- 平台单：对接说明与按钮分开，不挤在一起 -->
-        <view wx:if="{{item.platformOnly}}" class="op-platform">{{item.consulted ? '已提交，平台将联系你核实' : '平台居中联系，不展示对方联系方式；核实后推送采购方'}}</view>
-
-        <view wx:if="{{item.contactVisible || item.canChat}}" class="op-contact" catchtap="noop">
-          <view class="oc-l">
-            <text class="oc-name">{{item.contact || item.org || (item.claimed ? '已领取商机' : '')}}</text>
-            <text wx:if="{{item.phone}}" class="oc-phone">{{item.phone}}</text>
-            <text wx:else class="oc-phone empty">对方未留电话，请用站内对话</text>
+        <view wx:elif="{{filterMenu === 'sort'}}" class="bf-opts">
+          <view wx:for="{{sortOptions}}" wx:key="key"
+                class="bf-opt {{prefs.sort === item.key ? 'on' : ''}}"
+                data-key="{{item.key}}" bindtap="pickSort">
+            <text>{{item.label}}</text>
+            <text wx:if="{{prefs.sort === item.key}}" class="bf-check">✓</text>
           </view>
-          <button wx:if="{{item.phone}}" class="btn sm" data-phone="{{item.phone}}" bindtap="copyPhone">复制电话</button>
-          <button wx:if="{{!item.closed && (item.type === 'demand' || item.type === 'supply')}}" class="btn sm primary" data-id="{{item.id}}" data-type="{{item.type}}" bindtap="chatOpp">站内对话</button>
         </view>
-        <view wx:else class="op-foot {{item.platformOnly ? 'platform' : ''}} {{item.unsatisfied ? 'unsatisfied' : ''}}" catchtap="noop">
-          <text class="op-tip">{{item.platformOnly ? '代采 / 代售委托由平台代为对接，客服核实后推送采购方，平台会联系你确认交易细节' : (item.unsatisfied ? '已标记不满足 · 商机仍保留在这里，不再角标提醒；可重新查看条件' : '进入商机页逐项确认必须条件，全部满足后可领取')}}</text>
-          <button wx:if="{{item.platformOnly}}"
-                  class="btn sm primary op-btn"
-                  loading="{{consultingId === item.id}}"
-                  disabled="{{item.consulted || consultingId === item.id}}"
-                  data-id="{{item.id}}"
-                  bindtap="consultOpp">{{item.consulted ? '已提交 · 待平台核实' : '联系平台'}}</button>
-          <button wx:elif="{{item.type === 'demand' || item.type === 'supply'}}"
-                  class="btn sm primary op-btn" data-id="{{item.id}}" data-type="{{item.type}}" bindtap="viewOpp">{{item.unsatisfied ? '重新查看' : '查看商机'}}</button>
+        <view wx:else class="bf-opts">
+          <view class="bf-opt {{!modelFilter ? 'on' : ''}}" data-key="" bindtap="pickModel">
+            <text>全部型号</text>
+            <text wx:if="{{!modelFilter}}" class="bf-check">✓</text>
+          </view>
+          <view wx:for="{{matchModels}}" wx:key="*this"
+                class="bf-opt {{modelFilter === item ? 'on' : ''}}"
+                data-key="{{item}}" bindtap="pickModel">
+            <text>{{item}}</text>
+            <text wx:if="{{modelFilter === item}}" class="bf-check">✓</text>
+          </view>
+          <view wx:if="{{!matchModels.length}}" class="bf-empty">当前分类下暂时没有商机型号可筛</view>
         </view>
       </view>
     </view>
 
+    <view class="opp-list">
+      <!-- 商品卡与普通发布完全一致：点击整张卡片直接查看商机，不再单独放「查看商机」按钮 -->
+      <view wx:for="{{items}}" wx:key="id" class="gcard"
+            data-id="{{item.id}}" data-type="{{item.type}}" bindtap="openDetail">
+        <view class="top">
+          <text class="top-info">{{item.org || '平台商机'}} · {{item.city || '城市未填写'}} · {{item.published}}</text>
+          <view class="top-right">
+            <text class="pill-tag {{item.isRent ? 'rent' : ((item.type === 'supply' || item.kind === '代售') ? '' : 'buy')}}">{{item.kind}}</text>
+            <!-- 与首页商品卡一致：右上角收藏 -->
+            <view class="fav-btn {{item.fav ? 'on' : ''}}" data-id="{{item.id}}" data-type="{{item.type}}" catchtap="toggleFav">{{item.fav ? '★' : '☆'}}</view>
+          </view>
+        </view>
+        <view class="title">{{item.title || item.model}}</view>
+        <!-- 条件标签与普通商品卡同一套口径：品类 / 成色 / 税费 / 供给类型 -->
+        <view wx:if="{{!item.closed}}" class="chips">
+          <text wx:if="{{item.cat}}" class="chip">{{item.cat}}</text>
+          <text wx:if="{{!item.isRent && item.cond}}" class="chip">{{item.cond}}</text>
+          <text wx:if="{{item.taxShort}}" class="chip">{{item.taxShort}}</text>
+          <text wx:if="{{item.supply}}" class="chip">{{item.supply}}</text>
+        </view>
+        <view class="mid">
+          <view class="thumb {{item.isRent ? 'rent' : (item.type === 'demand' ? 'demand' : '')}}">
+            <image wx:if="{{item.cover}}" class="thumb-img" src="{{item.cover}}" mode="aspectFill" lazy-load />
+            <view wx:else class="thumb-in">
+              <text class="ti-model">{{item.model || item.kind}}</text>
+              <text wx:if="{{item.qty}}" class="ti-qty">{{item.qty}} {{item.unit}}</text>
+            </view>
+            <text wx:if="{{item.mediaCount > 1}}" class="thumb-n">{{item.mediaCount}} 图</text>
+          </view>
+          <view class="meta">
+            <!-- 价格文案已含单位（如「¥31.4 万 / 台」），这里只补数量，避免重复显示单位 -->
+            <view class="price">{{item.priceText}}<text wx:if="{{item.qty}}" class="p-unit">× {{item.qty}}{{item.unit}}</text></view>
+            <!-- 与普通商品卡同一行：品牌 · 城市 -->
+            <view wx:if="{{item.cardSub}}" class="sub">{{item.cardSub}}</view>
+            <!-- 已领取列表里不再提示「已有 N 家领取 / 匹配了哪条需求」，这些信息在领取前才有意义 -->
+            <view wx:if="{{item.demandText && !item.closed && state !== 'claimed'}}" class="sub">{{item.demandText}}</view>
+            <view wx:if="{{item.claimText && state !== 'claimed'}}" class="sub">{{item.claimText}}</view>
+          </view>
+        </view>
+        <!-- 匹配依据：复用普通商品卡，只在卡片下方多这一行说明命中原因 -->
+        <view wx:if="{{item.matchText || item.matchModel}}" class="op-match">
+          <text class="om-t">匹配依据</text>
+          <text wx:if="{{item.matchModel}}" class="om-model">{{item.matchModel}}</text>
+          <text wx:if="{{item.matchText}}" class="om-via">{{item.matchText}}</text>
+        </view>
+        <!-- 底部与普通商品卡一致：左侧浏览量，右侧状态；「我的商机」里全是已领取，
+             不再重复标「已领取」，只在右侧保留一个轻量删除入口 -->
+        <view class="foot">
+          <text>浏览 {{item.views}}</text>
+          <text wx:if="{{item.closed}}" class="hot">{{item.statusText || '已结束'}}</text>
+          <text wx:elif="{{item.claimed && state !== 'claimed'}}" class="hot brand">已领取</text>
+          <text wx:elif="{{item.unsatisfied}}" class="hot">已标记不满足</text>
+          <view wx:if="{{item.closed || item.expireText}}" class="r">{{item.closed ? '已结束，仅供回看' : item.expireText}}</view>
+          <text
+            wx:if="{{item.claimed && (mineMode || listMode)}}"
+            class="foot-del"
+            data-id="{{item.id}}"
+            data-type="{{item.type}}"
+            catchtap="deleteOpp"
+          >删除</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 下滑加载更多：默认 10 条，继续下滑追加 -->
+    <view wx:if="{{filteredCount > items.length}}" class="bz-more">下滑查看其余 {{filteredCount - items.length}} 条商机</view>
+
     <view wx:if="{{!items.length}}" class="empty">
       <image class="big-img" src="/assets/icons/empty-target.png" mode="aspectFit" />
       <view class="ttl">{{state === 'claimed' ? '还没有领取过商机' : (state === 'unsatisfied' ? '没有标记不满足的商机' : '暂无匹配商机')}}</view>
-      <view class="ds">{{state === 'claimed' ? '领取后的商机会保存在这里，可随时复制电话或发起站内对话' : (state === 'unsatisfied' ? '在商机页逐项确认后标记「不满足」的商机会保留在这里，不再角标提醒，可随时重新查看' : '只展示和你库存的型号、成色、起订量匹配的需求，以及和你求购需求匹配的货源；主体信息未公开的发布内容不会进入商机池')}}</view>
+      <view class="ds">{{state === 'claimed' ? '领取后的商机会保存在这里，点开可查看联系方式并发起对话' : (state === 'unsatisfied' ? '在商机页逐项确认后标记「不满足」的商机会保留在这里，不再角标提醒，可随时重新查看' : '只展示和你库存的型号、成色、起订量匹配的需求，以及和你求购需求匹配的货源；主体信息未公开的发布内容不会进入商机池')}}</view>
       <view wx:if="{{mineMode}}" class="acts">
         <button class="btn primary" bindtap="goAllBiz">去看可领取商机</button>
       </view>
@@ -354,22 +422,50 @@
     <view wx:if="{{!remote}}" class="ms-demo" bindtap="demoActivate">原型演示：模拟客服已开通</view>
   </view>
 
-  <!-- 提示力度设置：三档预设 + 品牌 / 型号 / 数量 / 容量 / 价格 / 城市 / 成色 / 税费 / 供给微调 -->
+  <!-- 商机提示设置：显示时间 + 匹配力度（分类 / 排序 / 型号已移到列表上方的筛选栏） -->
   <view wx:if="{{prefOpen}}" class="m-mask" bindtap="closePref"></view>
-  <view wx:if="{{prefOpen}}" class="m-sheet">
+  <view wx:if="{{prefOpen}}" class="m-sheet pf-sheet">
     <view class="ms-hd">
-      <text>商机提示力度</text>
+      <text>商机提示设置</text>
       <text class="ms-x" bindtap="closePref">✕</text>
     </view>
-    <view class="pf-ds">力度越宽松，匹配到的商机越多；越严格，只推完全对得上的。保存后立即按新力度重新匹配。</view>
-    <view class="pf-levels">
-      <view wx:for="{{prefLevels}}" wx:key="key"
-            class="pf-level {{prefs.level === item.key ? 'on' : ''}}"
-            data-key="{{item.key}}" bindtap="pickPrefLevel">
-        <text class="pf-name">{{item.name}}</text>
-        <text class="pf-desc">{{item.desc}}</text>
+
+    <!-- 设置项区域单独滚动，底部「保存」常驻，不随内容移动 -->
+    <view class="pf-body">
+    <view class="pf-sec">
+      <view class="pf-sec-hd">
+        <text class="pf-sec-t">显示时间</text>
+        <text class="pf-sec-s">只看这段时间内发布的商机</text>
+      </view>
+      <view class="pf-opts">
+        <text wx:for="{{dayOptions}}" wx:key="key"
+              class="pf-opt {{prefs.days === item.key ? 'on' : ''}}"
+              data-key="{{item.key}}" bindtap="pickDays">{{item.label}}</text>
+        <text class="pf-opt {{daysCustom ? 'on' : ''}}" data-key="custom" bindtap="pickDays">手动设置</text>
+      </view>
+      <view wx:if="{{daysCustom}}" class="pf-days-input">
+        <input class="pf-input" type="number" value="{{daysInput}}" placeholder="输入 1-90 天"
+               bindinput="bindDaysInput" bindconfirm="confirmDays" />
+        <text class="pf-days-unit">天内</text>
+        <view class="pf-days-ok" bindtap="confirmDays">确定</view>
       </view>
     </view>
+
+    <view class="pf-sec">
+      <view class="pf-sec-hd">
+        <text class="pf-sec-t">匹配力度</text>
+        <text class="pf-sec-s">力度越宽松，匹配到的商机越多</text>
+      </view>
+      <view class="pf-levels">
+        <view wx:for="{{prefLevels}}" wx:key="key"
+              class="pf-level {{prefs.level === item.key ? 'on' : ''}}"
+              data-key="{{item.key}}" bindtap="pickPrefLevel">
+          <text class="pf-name">{{item.name}}</text>
+          <text class="pf-desc">{{item.desc}}</text>
+        </view>
+      </view>
+    </view>
+
     <view class="pf-dims">
       <view wx:for="{{prefDims}}" wx:key="key" class="pf-dim">
         <view class="pf-dim-hd">
@@ -384,6 +480,7 @@
       </view>
     </view>
     <view class="pf-note">例：只要 B300、数量少一点也能接 → 选「宽松」；只顾同城、报价必须在预算内 → 把「城市」「价格」分别调紧；4T 也能接受 3T → 把「容量」调成「容量不限」。价格按对方预算 / 采购价比对，任一方没填价格时不作限制。</view>
+    </view>
     <button class="btn primary block pf-save" bindtap="savePref" loading="{{prefSaving}}" disabled="{{prefSaving}}">保存并重新匹配</button>
   </view>
 

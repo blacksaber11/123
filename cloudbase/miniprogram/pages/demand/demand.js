@@ -6,6 +6,7 @@ const fav = require('../../utils/fav')
 const inbox = require('../../utils/inbox')
 const shop = require('../../utils/shop')
 const sharePoster = require('../../utils/share-poster')
+const bizUtil = require('../../utils/biz')
 const { request } = require('../../utils/request')
 
 /* 预算已带「/ 台」这类单位时直接拼接，避免出现「¥ 9,600 / 台 / 台」 */
@@ -68,6 +69,10 @@ function shareDescOf(d) {
 Page({
   data: {
     demand: null,
+    /* 需求参考图片 / 视频：有就展示，没有用文字占位 */
+    mediaSlides: [],
+    mediaIndex: 0,
+    mediaSummary: '',
     /* 发布方设定的条件与流程：原样展示，与咨询页共用同一份数据 */
     must: [],
     nego: [],
@@ -97,12 +102,18 @@ Page({
     /* 需求方公开了电话但当前用户不是商机会员：显示开通引导 */
     memberOnlyContact: false,
     /* 朋友圈单页模式：只能浏览，页面内提示从右上角进入完整小程序 */
-    singlePage: false
+    singlePage: false,
+    /* 从商机池进入：展示与普通需求完全一致，只在确认条件后先领取再开会话 */
+    bizMode: false
   },
 
   onLoad(options) {
     const id = (options && options.id) || ''
     this.demandId = id
+    /* 商机池点进来：复用普通求购详情，额外带上领取动作 */
+    this.bizMode = !!(options && options.biz === 'demand')
+    this.bizMine = this.bizMode && !!(options && options.mine === '1')
+    this.setData({ bizMode: this.bizMode })
     /* 分享链接只带 id 与 from=share，不带 uid / 手机号 / 线索号 */
     this.fromShare = !!(options && options.from === 'share')
     this.setData({ fromShare: this.fromShare })
@@ -126,6 +137,8 @@ Page({
       this.cloudMode = true
       /* 保密：内容照常展示，只隐藏主体与联系方式，站内对话不受影响 */
       this.applyDemand(shop.toDemand(doc))
+      /* 我的商机点进来：领取时已解锁的联系方式直接在详情页展示 */
+      this.loadBizContact()
       if (this.data.isMine) await this.loadResponses()
     } catch (e) {
       /* 云端不可用或需求已关闭：有本地数据就继续展示，否则显示失效态 */
@@ -146,9 +159,23 @@ Page({
     /* 保密发布：服务端不给联系电话，前端同时隐藏主体信息 */
     const privateShare = demand.privateShare === true
     const contactHidden = privateShare || demand.contactHidden === true
+    /* 参考图片 / 视频：没有媒体时页面用文字占位展示型号、数量与预算 */
+    const mediaItems = Array.isArray(demand.mediaItems) ? demand.mediaItems : []
+    const mediaSlides = mediaItems
+      .filter((m) => m && m.url && (m.kind === 'image' || m.kind === 'video'))
+      .map((m, i) => ({ k: String(i), kind: m.kind, url: m.url, poster: m.poster || '' }))
+    const imgCount = mediaSlides.filter((m) => m.kind === 'image').length
+    const videoCount = mediaSlides.filter((m) => m.kind === 'video').length
+    const mediaSummary = [
+      imgCount ? imgCount + ' 张图片' : '',
+      videoCount ? videoCount + ' 段视频' : ''
+    ].filter(Boolean).join(' · ')
     this.setData({
       demand,
       missing: false,
+      mediaSlides,
+      mediaIndex: 0,
+      mediaSummary,
       must: (demand.must || []).slice(),
       nego: (demand.nego || []).slice(),
       flow: (demand.flow || []).slice(),
@@ -306,6 +333,37 @@ Page({
     wx.showToast({ title: on ? '已收藏' : '已取消收藏', icon: 'none' })
   },
 
+  /* 参考图片轮播：左右滑动切换当前序号 */
+  onMediaSwipe(e) {
+    this.setData({ mediaIndex: e.detail.current || 0 })
+  },
+
+  /* 点图片 / 视频查看大图：图片进预览，视频全屏播放 */
+  previewMedia(e) {
+    const i = Number(e.currentTarget.dataset.index) || 0
+    const slides = this.data.mediaSlides || []
+    const cur = slides[i]
+    if (!cur) return
+    if (wx.previewMedia) {
+      wx.previewMedia({
+        current: i,
+        sources: slides.map((m) => ({
+          url: m.url,
+          type: m.kind === 'video' ? 'video' : 'image',
+          poster: m.poster || ''
+        }))
+      })
+      return
+    }
+    /* 低版本基础库只支持图片预览 */
+    const imgs = slides.filter((m) => m.kind === 'image')
+    const urls = imgs.map((m) => m.url)
+    if (!urls.length) return
+    const at = Math.max(0, imgs.indexOf(cur))
+    /* 需求图片关闭长按菜单，不提供保存 / 转发入口 */
+    wx.previewImage({ current: urls[at], urls, showmenu: false })
+  },
+
   // 联系需求方：先逐项确认需求方的必须条件，全部满足后直接进入与需求方的会话
   respond() {
     if (this.data.isMine) {
@@ -361,15 +419,56 @@ Page({
     const d = this.data.demand || {}
     this.setData({ openingChat: true })
     try {
+      /* 商机池：先确认领取，领取成功才进入「我的商机」，随后自动进会话 */
+      if (this.data.bizMode) {
+        try {
+          await bizUtil.claimRemote('demand', d.id || this.demandId, Array.isArray(this.data.must) ? this.data.must : [])
+        } catch (err) {
+          return
+        }
+      }
       const ok = await chat.openChat({
         targetType: 'demand',
         targetId: d.id || this.demandId,
         conds: conds,
+        /* 商机池进入：会话打上来源标记，消息页展示「商机」 */
+        fromBiz: this.data.bizMode === true,
         onPhone: (phone) => this.setData({ ownerPhone: phone })
       })
       if (ok) this.setData({ condSheet: false })
     } finally {
       this.setData({ openingChat: false })
+    }
+  },
+
+  /* 商机：标记不满足，留在商机池但不再计入首页角标 */
+  async markUnsatisfied() {
+    if (this.marking) return
+    const d = this.data.demand || {}
+    this.marking = true
+    try {
+      await bizUtil.markRemote('demand', d.id || this.demandId, true)
+      this.setData({ condSheet: false })
+      wx.showToast({ title: '已标记不满足', icon: 'none' })
+      setTimeout(() => {
+        if ((getCurrentPages() || []).length > 1) wx.navigateBack()
+      }, 600)
+    } catch (err) {
+      /* request 已按错误码提示，留在当前页 */
+    } finally {
+      this.marking = false
+    }
+  },
+
+  /* 我的商机点进来：领取时已解锁的联系电话直接展示，列表里不再堆联系方式 */
+  async loadBizContact() {
+    if (!this.data.bizMode || !this.bizMine) return
+    try {
+      const res = await bizUtil.claimRemote('demand', this.demandId, [], { silent: true })
+      const phone = (res && res.contact && res.contact.phone) || ''
+      if (phone) this.setData({ ownerPhone: phone })
+    } catch (err) {
+      /* 领取信息拉取失败不阻断详情展示 */
     }
   },
 
@@ -382,10 +481,19 @@ Page({
     this.doOpenChat(this.data.condList.map((c) => ({ k: c.t, satisfied: c.state === 'yes' })))
   },
 
-  /* 走完整响应表单：报价、数量等需要留档的场景 */
+  /* 走完整响应表单：报价、数量等需要留档的场景；
+     已逐项确认的必须条件一并带过去，表单里不用重新点一遍满足 */
   fullRespond() {
+    const list = this.data.condList || []
+    const conds = list
+      .map((c) => (c.state === 'yes' ? '1' : (c.state === 'no' ? '0' : 'x')))
+      .join('')
+    /* 条件文本 + 结果一并带上：咨询页条件顺序与详情页可能不同，按文本对齐更稳 */
+    const picked = list.filter((c) => c.state).map((c) => ({ k: c.t, v: c.state }))
     wx.navigateTo({
       url: '/pages/consult/consult?type=demand&id=' + this.data.demand.id
+        + (this.data.bizMode ? '&biz=demand' : '')
+        + (/^x*$/.test(conds) ? '' : '&conds=' + conds + '&condj=' + encodeURIComponent(JSON.stringify(picked)))
     })
   },
 

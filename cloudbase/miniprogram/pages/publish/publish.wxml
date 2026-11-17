@@ -692,6 +692,16 @@
           </view>
         </view>
 
+        <view class="field" wx:if="{{isRent}}">
+          <text class="f-label">租赁限制条款</text>
+          <view class="chip-group">
+            <view wx:for="{{groups.rentLimits}}" wx:key="v"
+                  class="chip {{item.on ? 'on' : ''}}"
+                  data-key="rentLimits" data-val="{{item.v}}" bindtap="pickChip">{{item.v}}</view>
+          </view>
+          <view class="tip">可多选，会展示在详情页；留空表示无额外限制条款。</view>
+        </view>
+
         <view class="field">
           <text class="f-label">{{type === 'buy' ? '期望供给' : (isRent ? '供给状态' : '供给类型')}}<text class="req">*</text></text>
           <view class="chip-group">
@@ -816,6 +826,8 @@
           <view class="ch-note" wx:elif="{{channel === 'pool'}}">仅商机：只在商机池按型号匹配展示，只有付费的商机会员能看到；意向更精准，成交意向度更高。</view>
           <view class="ch-note" wx:else>二者都发：普通用户可在{{type === 'sell' ? '首页商品池' : '需求列表'}}看到并在平台内发起私聊；商机会员还会在商机池匹配到你，你公开手机号时可直接联系本人。</view>
         </view>
+
+        <!-- 商机名额已取消：进池后所有匹配到的会员都可以领取，发布方不需要设置 -->
       </view>
 
       <!-- 图片与视频 -->
@@ -1013,11 +1025,6 @@
               <text class="f-label">交易说明<text class="opt">选填</text></text>
               <textarea class="ta" value="{{form.note}}" data-key="note" bindinput="onInput" maxlength="300"
                         placeholder="补充发票、质保、发货、验机等说明，最多 300 字"></textarea>
-            </view>
-            <view class="field">
-              <text class="f-label">接单要求<text class="opt">选填</text></text>
-              <textarea class="ta" value="{{form.requirements}}" data-key="requirements" bindinput="onInput" maxlength="300"
-                        placeholder="如：需提供营业执照与用途说明，支持先验后付"></textarea>
             </view>
           </block>
         </block>

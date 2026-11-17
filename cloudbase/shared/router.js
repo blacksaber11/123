@@ -5,6 +5,7 @@ const { createUserHandlers } = require('./handlers.user')
 const { createAdminHandlers } = require('./handlers.admin')
 const { createMarketUserHandlers, createMarketAdminHandlers } = require('./market')
 const { createInsightsUserHandlers, createInsightsAdminHandlers } = require('./insights')
+const { createPromoteUserHandlers, createPromoteAdminHandlers } = require('./promote')
 const { createSubscribe } = require('./subscribe')
 const { can } = require('./rbac')
 const { hit, windowStartOf } = require('./ratelimit')
@@ -97,10 +98,6 @@ const RATE_RULES = {
     limit: RATE_LIMITS.publishNews,
     key: (data, ctx) => 'publishNews:' + String(ctx.openid)
   },
-  'biz.apply': {
-    limit: RATE_LIMITS.bizApply,
-    key: (data, ctx) => 'bizApply:' + String(ctx.openid)
-  },
   'biz.claim': {
     limit: RATE_LIMITS.bizClaim,
     key: (data, ctx) => 'bizClaim:' + String(ctx.openid)
@@ -109,6 +106,11 @@ const RATE_RULES = {
   'biz.mark': {
     limit: RATE_LIMITS.bizClaim,
     key: (data, ctx) => 'bizClaim:' + String(ctx.openid)
+  },
+  /* 代采代售对接：每次都会写咨询消息与媒体，防止高频重复提交刷客服工作台 */
+  'biz.consult': {
+    limit: RATE_LIMITS.bizConsult,
+    key: (data, ctx) => 'bizConsult:' + String(ctx.openid)
   },
   /* 首页商机角标：轻量读接口，与浏览接口同档限速 */
   'biz.badge': {
@@ -156,6 +158,11 @@ const RATE_RULES = {
   'demand.detail': {
     limit: RATE_LIMITS.browse,
     key: (data, ctx) => 'browse:' + String(ctx.openid)
+  },
+  /* 推广提现：按账号限速，避免脚本反复提交占用审核队列 */
+  'promote.withdraw': {
+    limit: RATE_LIMITS.withdraw,
+    key: (data, ctx) => 'withdraw:' + String(ctx.openid)
   },
   /* 直聊内容读取：按账号限速，避免用 threadId 枚举他人会话 */
   'msg.thread': {
@@ -230,17 +237,16 @@ const INVALIDATE_MAP = Object.freeze({
   'agency.paid': ['agencies'],
   'agency.cancel': ['agencies'],
   'agency.delete': ['agencies'],
-  'agency.receipt': ['agencies'],
-  'agency.dealConfirm': ['agencies', 'payments'],
+  'agency.payProof': ['agencies', 'payments'],
   'agency.confirm': ['agencies'],
   'agency.review': ['agencies'],
   'agency.reject': ['agencies'],
   'agency.close': ['agencies'],
+  'agency.complete': ['agencies', 'payments'],
   /* 商机会员与领取记录（影响角标 / 列表统计） */
   'biz.grant': ['biz'],
   'biz.revoke': ['biz'],
   'biz.setExpire': ['biz'],
-  'biz.purchase': ['biz'],
   'biz.claim': ['biz'],
   'biz.mark': ['biz'],
   /* 型号库 / 系统设置 / 筛选规则（规则数进看板统计） */
@@ -251,9 +257,26 @@ const INVALIDATE_MAP = Object.freeze({
   'rule.create': ['stats'],
   'rule.update': ['stats'],
   'rule.sort': ['stats'],
-  /* 收款确认 / 退款同时影响财务与商机会员状态 */
-  'payment.confirm': ['finance', 'biz', 'agencies'],
-  'payment.refund': ['finance', 'biz', 'agencies']
+  /* 委托服务费确认到账 / 退款同时影响财务与委托单状态 */
+  'payment.feeConfirm': ['finance', 'agencies'],
+  'payment.refund': ['finance', 'biz', 'agencies'],
+  /**
+   * 举报处置会联动下架 / 退回 / 删除商品、需求或资讯：
+   * 处置后必须清掉对应的列表与详情缓存，否则被下架内容在 TTL 内仍可被命中缓存读到。
+   */
+  'report.handle': ['products', 'demands', 'news', 'stats', 'biz', 'insights'],
+  /* 资讯类：列表为全站共享缓存，发布 / 审核 / 下架 / 删除与点赞都要失效 */
+  'news.create': ['news'],
+  'news.review': ['news'],
+  'news.offline': ['news'],
+  'news.publish': ['news'],
+  'news.submit': ['news'],
+  'news.delete': ['news'],
+  'news.like': ['news'],
+  'news.comment.add': ['news'],
+  'news.comment.delete': ['news'],
+  /* 收藏数展示在商品 / 需求详情与列表中 */
+  'fav.set': ['products', 'demands', 'agencies', 'news']
 })
 
 /** 这些错误属于安全事件，必须落审计 */
@@ -311,13 +334,15 @@ function createRouter(options) {
       {},
       createAdminHandlers({ repo, keys, now, env, cloud: options.cloud, subscribe }),
       createMarketAdminHandlers({ repo, keys, now, subscribe }),
-      createInsightsAdminHandlers({ repo, keys, now, subscribe })
+      createInsightsAdminHandlers({ repo, keys, now, subscribe }),
+      createPromoteAdminHandlers({ repo, keys, now, payoutClient: options.payoutClient })
     )
     : Object.assign(
       {},
       createUserHandlers({ repo, keys, now, cache, notify: options.notify, exchangePhone: options.exchangePhone, subscribe }),
-      createMarketUserHandlers({ repo, keys, now, cache, subscribe }),
-      createInsightsUserHandlers({ repo, keys, now })
+      createMarketUserHandlers({ repo, keys, now, cache, subscribe, cloud: options.cloud }),
+      createInsightsUserHandlers({ repo, keys, now }),
+      createPromoteUserHandlers({ repo, keys, now, payoutClient: options.payoutClient })
     )
 
   /** 行为事件：只记录成功动作，失败静默；同时按概率触发 90 天清理 */

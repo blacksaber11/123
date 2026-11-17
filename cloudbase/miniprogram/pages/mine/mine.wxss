@@ -367,6 +367,8 @@
   margin-bottom: 12rpx;
 }
 .mr-top .st {
+  flex: none;
+  white-space: nowrap;
   font-size: 20rpx;
   padding: 0 12rpx;
   line-height: 36rpx;

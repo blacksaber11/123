@@ -4,7 +4,8 @@ const guard = require('../../utils/guard')
 const { SUBJECT_NOTICE } = require('../../utils/privacy')
 const M = require('../../utils/mock')
 const shop = require('../../utils/shop')
-const { request } = require('../../utils/request')
+const bizUtil = require('../../utils/biz')
+const { request, uploadFile } = require('../../utils/request')
 const { normalizePhone, isValidPhone, phoneError } = require('../../utils/validate')
 
 /* 上传材料的缩略图水印：指向当前账号与昵称，便于泄漏追责 */
@@ -71,25 +72,28 @@ function chips(key, label, req, list, multi, extra) {
   }, extra || {}))
 }
 
-/* 微信已授权手机号：直接展示脱敏值，不再手填；服务端按本人号码兜底 */
-function wechatPhoneMasked() {
+/* 主体与联系人：直接带入「我的 · 个人信息」里已保存的资料，本页只读，不再重复填写 */
+function contactValues() {
   const u = readUser() || {}
-  return u.hasPhone ? (u.phoneMasked || '已授权微信手机号') : ''
+  return {
+    strong: u.subjectType || '',
+    subject: u.subject || '',
+    realname: u.realname || u.realnameMasked || '',
+    phone_info: u.phoneMasked || ''
+  }
 }
 
-/* 主体类型必填；手机号优先用微信授权，未授权时才手填 */
 const CONTACT_SECTION = () => {
-  const masked = wechatPhoneMasked()
+  const v = contactValues()
   return {
     title: '主体与联系人',
-    note: masked ? '手机号已用微信授权' : '手机号仅平台坐席可见',
+    note: '自动带入「我的 · 个人信息」',
     tip: SUBJECT_NOTICE,
     fields: [
-      chips('strong', '主体类型', true, ['个人', '个体户', '国央企', '央企', '国企', '上市公司', '民企', '外企', '合资企业', '合伙企业', '事业单位', '政府机关', '社会团体', '其他'], false),
-      F('subject', '单位 / 主体名称', false, 'text', { ph: '如：杭州云帆数据科技有限公司（选填）' }),
-      masked
-        ? F('phone_info', '联系人手机号', false, 'info', { value: masked })
-        : F('phone', '联系人手机号', true, 'phone', { ph: '11 位手机号，用于建企微群时邀请' })
+      F('strong', '主体类型', false, 'info', { value: v.strong || '未填写' }),
+      F('subject', '单位 / 主体名称', false, 'info', { value: v.subject || '未填写' }),
+      F('realname', '联系人', false, 'info', { value: v.realname || '未填写' }),
+      F('phone_info', '联系人手机号', false, 'info', { value: v.phone_info || '未授权 · 请到「我的」授权' })
     ]
   }
 }
@@ -135,16 +139,6 @@ function rentSections(p) {
         chips('deliver', '期望起租时间', true, ['3 天内', '7 天内', '30 天内', '不限'], false)
       ]
     },
-    {
-      title: '租赁条款接受',
-      note: '须逐条选择接受',
-      fields: [
-        chips('rent_agree', '签署租赁意向协议', true, ['接受签署租赁意向协议', '不接受'], false),
-        chips('rent_prepay', '按期预付租金', true, ['接受按期预付租金', '不接受'], false),
-        chips('rent_usage', '用途合规', true, ['承诺用途仅限训练 / 推理等合规业务', '不接受'], false),
-        chips('rent_nosub', '不转租', true, ['承诺不转租、不二次转让', '不接受'], false)
-      ]
-    },
     NOTE_SECTION('补充条件，如接入方式、试租期等'),
     CONTACT_SECTION()
   ]
@@ -165,7 +159,6 @@ function demandSellSections(d) {
         chips('tax', '税费', true, ['含税', '不含税', '可开专票'], true),
         chips('deliver', '可交付时间', true, ['3 天内', '7 天内', '30 天内'], false),
         chips('accept', '同台互验', true, ['接受同台互验', '不接受'], false),
-        chips('code_yn', '暗语视频', true, ['能提供', '暂不能提供'], false, { tip: '协商后按约定录制' }),
         chips('regulate', '资金监管账户', false, ['支持', '不支持'], false, { tip: '期货需求建议填写' }),
         chips('dc_info', '是否需要实际使用机房信息', true, ['需要', '不需要'], false, { tip: '是否需要向需求方提供实际使用机房的相关信息' })
       ]
@@ -193,19 +186,8 @@ function demandRentSections(d) {
         chips('tax', '税费', true, ['含税', '不含税', '可开专票'], true),
         chips('deliver', '可起租时间', true, ['当日可起租', '3 天内', '7 天内', '30 天内'], false),
         chips('accept', '同台互验', true, ['接受同台互验', '不接受'], false),
-        chips('code_yn', '暗语视频', true, ['能提供', '暂不能提供'], false, { tip: '协商后按约定录制' }),
         chips('regulate', '租金资金监管账户', false, ['支持', '不支持'], false, { tip: '期货需求建议填写' }),
         chips('dc_info', '是否需要实际使用机房信息', true, ['需要', '不需要'], false, { tip: '是否需要向需求方提供实际使用机房的相关信息' })
-      ]
-    },
-    {
-      title: '租赁条款承诺',
-      note: '须逐条选择接受',
-      fields: [
-        chips('rent_agree', '签署租赁意向协议', true, ['接受签署租赁意向协议', '不接受'], false),
-        chips('rent_prepay', '按期预付租金', true, ['接受按期预付租金', '不接受'], false),
-        chips('rent_usage', '用途合规', true, ['承诺用途仅限训练 / 推理等合规业务', '不接受'], false),
-        chips('rent_nosub', '不转租', true, ['承诺不转租、不二次转让', '不接受'], false)
       ]
     },
     NOTE_SECTION('如接入方式、带宽、试租期等'),
@@ -213,11 +195,12 @@ function demandRentSections(d) {
   ]
 }
 
-/* 统计已填写项：文本有值 / chips 至少选中一项 */
+/* 统计已填写项：文本有值 / chips 至少选中一项；自动带入的只读项不计入 */
 function countFilled(sections) {
   let n = 0
   sections.forEach((sec) => {
     sec.fields.forEach((f) => {
+      if (f.type === 'info') return
       if (f.type === 'chips') {
         if (f.opts.some((o) => o.on)) n++
       } else if (String(f.value || '').trim()) {
@@ -226,23 +209,6 @@ function countFilled(sections) {
     })
   })
   return n
-}
-
-/* 首个未填的必填项 */
-function firstMissing(sections) {
-  let miss = null
-  sections.forEach((sec) => {
-    if (miss) return
-    sec.fields.forEach((f) => {
-      if (miss || !f.req) return
-      if (f.type === 'chips') {
-        if (!f.opts.some((o) => o.on)) miss = f
-      } else if (!String(f.value || '').trim()) {
-        miss = f
-      }
-    })
-  })
-  return miss
 }
 
 Page({
@@ -281,6 +247,20 @@ Page({
     const id = String(opts.id || '')
     this.targetId = id
     this.isDemandTarget = isDemand
+    /* 商机池进入：先领取商机，再提交完整需求并进入会话；代采代售同样走「填写完整需求」 */
+    this.bizType = opts.biz === 'demand' || opts.biz === 'supply' || opts.biz === 'agency' ? opts.biz : ''
+    /* 商机来源：商机池（含商机详情「填写完整需求」）发起的会话，消息页展示「商机」标签 */
+    this.fromBiz = opts.from === 'biz' || this.bizType === 'supply' || this.bizType === 'demand'
+    /* 详情页已逐项确认的必须条件：1=满足 / 0=不满足 / x=未选，按顺序带入，不用再点一遍 */
+    this.presetConds = String(opts.conds || '').split('')
+      .map((ch) => (ch === '1' ? 'yes' : (ch === '0' ? 'no' : '')))
+    /* 条件文本索引：详情页与咨询页的条件顺序可能不同，优先按文本对齐 */
+    this.presetMap = {}
+    try {
+      ;(JSON.parse(opts.condj || '[]') || []).forEach((it) => {
+        if (it && it.k && (it.v === 'yes' || it.v === 'no')) this.presetMap[String(it.k)] = it.v
+      })
+    } catch (e) { /* 参数异常时退回按序号带入 */ }
     /* 没有标的 id 说明链接不完整：直接返回，绝不拿演示数据顶替成别人的标的 */
     if (!id) {
       wx.showToast({ title: '咨询链接已失效，请从详情页进入', icon: 'none' })
@@ -288,8 +268,72 @@ Page({
       return
     }
     /* 先渲染本地演示数据，云端数据到达后覆盖 */
+    if (this.bizType === 'agency') {
+      this.loadPoolTarget(id)
+      return
+    }
     this.applyTarget(isDemand ? this.buildDemandTarget(id) : M.productById(id))
     this.loadRemote(id, isDemand)
+  },
+
+  /* 代采 / 代售委托：条目只存在于商机池，与详情页同源读取，不走 demand.detail */
+  async loadPoolTarget(id) {
+    try {
+      const res = await request('user', 'biz.list', {}, { silent: true })
+      const item = ((res && res.items) || []).filter((it) => it && String(it.id) === String(id))[0]
+      if (!item) {
+        this.markMissing()
+        return
+      }
+      /* 代采＝平台代买（我供货 → 填供给信息）；代售＝平台代卖（我采购 → 填需求信息） */
+      this.isDemandTarget = this.poolSideOf(item) === 'buy'
+      this.applyTarget(this.poolTarget(item))
+    } catch (e) {
+      this.markMissing()
+    }
+  },
+
+  /* 代采 / 代售方向：服务端返回 side 优先，缺失时按委托类型文案兜底 */
+  poolSideOf(o) {
+    const side = String((o && o.side) || '')
+    if (side === 'sell' || side === 'buy') return side
+    return /代售/.test(String((o && o.kind) || '')) ? 'sell' : 'buy'
+  },
+
+  /* 商机条目 → 咨询表单标的：字段与商品详情页同口径 */
+  poolTarget(o) {
+    const info = Array.isArray(o.info) ? o.info : []
+    const pick = function () {
+      for (let i = 0; i < arguments.length; i++) {
+        const hit = info.filter((it) => it && it.k === arguments[i])[0]
+        if (hit && hit.v) return String(hit.v)
+      }
+      return ''
+    }
+    const kind = String(o.kind || '')
+    return {
+      id: o.id,
+      agencySide: this.poolSideOf(o),
+      title: o.title || [o.cat, o.model].filter(Boolean).join(' '),
+      brand: o.brand || pick('品牌'),
+      cat: o.cat || pick('设备品类') || '',
+      model: o.model || '',
+      qty: Number(o.qty) || 0,
+      city: o.city || '',
+      isRent: /租/.test(kind),
+      priceText: o.priceText || '面议',
+      priceUnit: '',
+      cond: pick('成色', '成色要求'),
+      tax: pick('税费', '税费要求'),
+      taxShort: pick('税费', '税费要求'),
+      supply: pick('供给类型'),
+      deliver: pick('可交付时间', '可起租时间'),
+      rentLimits: [],
+      flow: Array.isArray(o.flow) ? o.flow : [],
+      must: Array.isArray(o.must) ? o.must : [],
+      nego: Array.isArray(o.nego) ? o.nego : [],
+      mine: false
+    }
   },
 
   /* 云端标的：商品 / 需求的最新发布方条件与流程 */
@@ -323,10 +367,13 @@ Page({
     const isDemand = this.isDemandTarget
     const isRent = !!product.isRent
     const isMine = !!product.mine
-    /* 必须条件：云端后到时按条件文本沿用用户已确认的选项，不重置勾选 */
-    const mustList = (product.must || []).map((t) => {
+    /* 必须条件：详情页已确认的选项按文本优先带入、序号兜底；
+       云端后到也沿用用户已确认的选项，不重置勾选 */
+    const preset = this.presetConds || []
+    const presetMap = this.presetMap || {}
+    const mustList = (product.must || []).map((t, i) => {
       const prev = (this.data.mustList || []).filter((c) => c.t === t)[0]
-      return { t, state: (prev && prev.state) || '' }
+      return { t, state: (prev && prev.state) || presetMap[t] || preset[i] || '' }
     })
     const negoList = (product.nego || []).slice()
     const flow = (product.flow || []).slice()
@@ -359,10 +406,10 @@ Page({
         : (isDemand
           ? '请对照需求方的必须条件逐项确认，并填写供给信息。平台核对后联系双方。'
           : (isRent
-            ? '设备留在出租方机房、你方远程接入使用，不涉及实物交付与成色。填写租期、租金预算与条款接受情况。'
-            : '你填写的信息越完整，平台越能优先把你对接给合适的货主。必须条件未满足时无法提交。')),
+            ? '设备留在出租方机房、你方远程接入使用，不涉及实物交付与成色。填写租期、租金预算与押金条件即可。'
+            : '填写信息不必面面俱到，满足全部必须条件即可发起聊天。')),
       sections,
-      total: sections.reduce((s, sec) => s + sec.fields.length, 0),
+      total: sections.reduce((s, sec) => s + sec.fields.filter((f) => f.type !== 'info').length, 0),
       mustList,
       negoList,
       flow,
@@ -373,6 +420,36 @@ Page({
       condPass: condTotal > 0 ? condMet === condTotal : true,
       filled: countFilled(sections)
     })
+    /* 主体与联系人：先用本地缓存渲染，再拉云端资料刷新（只读，不影响已填写内容） */
+    this.refreshContact()
+  },
+
+  /* 主体与联系人只读值刷新：直接用「我的 · 个人信息」保存的资料 */
+  async refreshContact() {
+    if (this.contactLoaded) return
+    this.contactLoaded = true
+    try {
+      const p = await request('user', 'profile.get', {}, { silent: true })
+      if (!p) return
+      const values = {
+        strong: p.subjectType || '未填写',
+        subject: p.subject || '未填写',
+        realname: p.realname || p.realnameMasked || '未填写',
+        phone_info: p.phoneMasked || '未授权 · 请到「我的」授权'
+      }
+      const sections = (this.data.sections || []).map((sec) => {
+        const fields = sec.fields || []
+        if (!fields.some((f) => f.type === 'info' && values[f.key] !== undefined)) return sec
+        return Object.assign({}, sec, {
+          fields: fields.map((f) => (
+            f.type === 'info' && values[f.key] !== undefined ? Object.assign({}, f, { value: values[f.key] }) : f
+          ))
+        })
+      })
+      this.setData({ sections })
+    } catch (e) {
+      /* 云端不可用：沿用本地缓存里的资料 */
+    }
   },
 
   // 求购 / 租赁需求转成可复用的咨询目标结构（条件与流程沿用发布方设定）
@@ -383,7 +460,6 @@ Page({
     return Object.assign({}, d, {
       priceText: d.budgetText,
       priceUnit: '以内',
-      requirements: '响应需提供可承接数量、报价与可交付时间，主体资质由平台核对后转交发布方。',
       rentLimits: []
     })
   },
@@ -585,6 +661,7 @@ Page({
     const out = {}
     this.data.sections.forEach((sec) => {
       sec.fields.forEach((f) => {
+        if (f.type === 'info') return
         if (f.type === 'chips') {
           const on = f.opts.filter((o) => o.on).map((o) => o.label)
           if (on.length) out[f.key] = on.join(' / ')
@@ -597,7 +674,7 @@ Page({
   },
 
   /* 需求说明：给坐席看的客观摘要，可直接留联系方式（平台不拦截） */
-  buildSummary(values) {
+  buildSummary(values, max) {
     const p = this.data.product || {}
     const parts = []
     if (values.qty) parts.push('数量 ' + values.qty + ' 台')
@@ -616,7 +693,104 @@ Page({
     if (values.supply) parts.push('供给 ' + values.supply)
     if (values.note) parts.push(values.note)
     if (!parts.length) parts.push('咨询「' + (p.title || '') + '」')
-    return parts.join('；').slice(0, 200)
+    return parts.join('；').slice(0, Number(max) || 200)
+  },
+
+  /* 上传表单里的图片 / 视频，返回可直接写进会话的地址 */
+  async uploadMaterials() {
+    const list = this.data.imgList.map((m) => ({ kind: 'image', path: m.path }))
+      .concat(this.data.videoList.map((m) => ({ kind: 'video', path: m.path })))
+    const out = []
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i]
+      try {
+        const ext = m.kind === 'image' ? '.jpg' : '.mp4'
+        /* 文件名只用随机串 + 36 进制时间戳，避免云端文件 ID 里出现连续数字被联系方式校验拦截 */
+        const url = await uploadFile(m.path, {
+          kind: 'chat',
+          cloudPath: 'chat/' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10) + ext
+        })
+        if (url) out.push({ kind: m.kind, url })
+      } catch (err) {
+        /* 单个材料上传失败不阻断提交 */
+      }
+    }
+    return out
+  },
+
+  /* 把表单里上传的图片 / 视频逐个发到刚开出的会话里 */
+  async sendMaterials(threadId) {
+    const pending = this.data.imgList.length + this.data.videoList.length
+    if (!threadId || !pending) return
+    wx.showLoading({ title: '正在发送材料', mask: true })
+    const list = await this.uploadMaterials()
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i]
+      try {
+        const payload = { threadId, kind: m.kind, body: m.kind === 'image' ? '[图片]' : '[视频]' }
+        payload[m.kind] = m.url
+        await request('user', 'msg.send', payload, { silent: true })
+      } catch (err) {
+        /* 单条材料发送失败不阻断进入会话 */
+      }
+    }
+    wx.hideLoading()
+  },
+
+  /* 提交后进对话：用 redirectTo 替换本页，保证从对话返回直接回到商品 / 需求详情页 */
+  goChat(threadId) {
+    wx.redirectTo({
+      url: '/pages/chat/chat?threadId=' + encodeURIComponent(threadId),
+      fail: () => {
+        wx.navigateTo({ url: '/pages/chat/chat?threadId=' + encodeURIComponent(threadId) })
+      }
+    })
+  },
+
+  /* 代采 / 代售：先领取委托，再把填写内容提交给平台，成功后直接进入客服会话 */
+  async submitAgency(payload) {
+    this.submitting = true
+    this.setData({ submitting: true })
+    /* 平台咨询：图片 / 视频随需求一起发给客服，先传文件再提交，避免进会话后被等待状态拦住 */
+    const pending = this.data.imgList.length + this.data.videoList.length
+    let loading = false
+    try {
+      await bizUtil.claimRemote('agency', this.targetId, this.data.mustList.map((c) => c.t))
+      let media = []
+      if (pending) {
+        wx.showLoading({ title: '正在发送材料', mask: true })
+        loading = true
+        media = await this.uploadMaterials()
+      }
+      const res = await request('user', 'biz.consult', {
+        agencyId: this.targetId,
+        summary: payload.summary,
+        conds: payload.conds,
+        media
+      })
+      if (loading) {
+        wx.hideLoading()
+        loading = false
+      }
+      this.submitting = false
+      this.setData({ submitting: false })
+      const threadId = (res && (res.threadId || res.leadId)) || ''
+      if (!threadId) {
+        wx.showModal({
+          title: '已提交',
+          content: (res && res.hint) || '填写内容已提交，客服核实后会联系你。',
+          showCancel: false,
+          success: () => safeBack()
+        })
+        return
+      }
+      this.goChat(threadId)
+    } catch (err) {
+      /* request 已按错误码提示，留在表单让用户调整 */
+      if (loading) wx.hideLoading()
+      this.submitting = false
+      this.setData({ submitting: false })
+    }
   },
 
   async submit() {
@@ -632,15 +806,10 @@ Page({
       const rejected = this.data.mustList.filter((c) => c.state === 'no').length
       wx.showToast({
         title: rejected
-          ? '有 ' + rejected + ' 项必须条件你不满足，无法提交'
+          ? '有 ' + rejected + ' 项必须条件你不满足，无法发起聊天'
           : '请逐项确认必须条件（还剩 ' + this.data.condUnmet + ' 项）',
         icon: 'none'
       })
-      return
-    }
-    const miss = firstMissing(this.data.sections)
-    if (miss) {
-      wx.showToast({ title: '请填写「' + miss.label + '」', icon: 'none' })
       return
     }
     const values = this.collectValues()
@@ -660,7 +829,7 @@ Page({
     }))
     const payload = {
       phone,
-      summary: this.buildSummary(values),
+      summary: this.buildSummary(values, this.bizType === 'agency' ? 480 : 200),
       conds,
       /* 补充材料：只上送元信息（名称 / 类型 / 大小 / 类别），文件本体另行上传 */
       media: this.data.imgList.concat(this.data.videoList).map((m) => ({
@@ -672,6 +841,28 @@ Page({
     }
     if (this.data.isDemand) payload.demandId = this.targetId
     else payload.productId = this.targetId
+    /* 商机发起的咨询：服务端给会话打来源标记，消息页展示「商机」 */
+    if (this.fromBiz) payload.fromBiz = true
+
+    /* 代采 / 代售：领取委托后提交平台对接，填写内容随工单交给客服 */
+    if (this.bizType === 'agency') {
+      await this.submitAgency(payload)
+      return
+    }
+
+    /* 商机池：条件全部满足后先确认领取，领取成功才继续提交并进入会话 */
+    if (this.bizType) {
+      try {
+        await bizUtil.claimRemote(
+          this.bizType,
+          this.targetId,
+          this.data.mustList.map((c) => c.t)
+        )
+      } catch (err) {
+        /* request 已按错误码提示，留在表单让用户调整 */
+        return
+      }
+    }
 
     this.submitting = true
     this.setData({ submitting: true })
@@ -693,18 +884,12 @@ Page({
       if (app && app.globalData) app.globalData.mineDirty = true
     } catch (e) {}
 
-    /* 必须条件全部满足：后端已开通直聊，直接带用户进入独立对话页 */
+    /* 必须条件全部满足：后端已开通直聊，先把补充材料发进会话，再直接进入对话页 */
     if (receipt && receipt.chatReady && receipt.threadId) {
-      wx.showModal({
-        title: '已开启对话',
-        content: (receipt.receipt || '必须条件已满足，已为你开启与对方的会话。') +
-          '可在对话中继续沟通，材料仅你与平台可见。',
-        showCancel: false,
-        confirmText: '去沟通',
-        success: () => {
-          wx.navigateTo({ url: '/pages/chat/chat?threadId=' + encodeURIComponent(receipt.threadId) })
-        }
-      })
+      try {
+        await this.sendMaterials(receipt.threadId)
+      } catch (e) { /* 材料发送失败不影响进入会话 */ }
+      this.goChat(receipt.threadId)
       return
     }
 

@@ -242,6 +242,8 @@ Page({
             name: priv ? '私密发布' : (m.peerName || '直聊会话'),
             /* 商机会员标识：列表里跟在名字后面，点进会话仍保持一致；私密会话不展示 */
             memberLabel: priv ? '' : (m.memberLabel || ''),
+            /* 商机池发起的对话：名字后展示「商机」，和普通商品 / 需求直聊区分开 */
+            fromBiz: m.fromBiz === true,
             title: m.title || '',
             content: m.body || '',
             time: fmtTime(m.createdAt),
@@ -256,10 +258,36 @@ Page({
           thread.name = '私密发布'
           thread.memberLabel = ''
         }
+        /* 会话里任意一条消息带商机来源，整段会话都算商机发起 */
+        if (m.fromBiz === true) thread.fromBiz = true
         if (m.from === 'peer' && m.unread) thread.unread += 1
         return
       }
       const isChat = m.channel === 'kf' || m.type === 'kf.chat'
+      /* 代采代售咨询：带 threadId 的客服消息独立成会话，标题用咨询标题，状态跟领取进度走 */
+      if (isChat && m.threadId) {
+        let thread = threadIndex.get(m.threadId)
+        if (!thread) {
+          thread = {
+            threadId: m.threadId,
+            private: false,
+            cs: true,
+            name: m.targetTitle || '代采代售咨询',
+            memberLabel: m.csStatus || '',
+            title: m.targetTitle || '',
+            content: m.body || '',
+            time: fmtTime(m.createdAt),
+            atRaw: Number(m.createdAt) || 0,
+            unread: 0
+          }
+          threadIndex.set(m.threadId, thread)
+          directThreads.push(thread)
+        } else if (m.csStatus) {
+          thread.memberLabel = m.csStatus
+        }
+        if (m.from === 'staff' && m.unread) thread.unread += 1
+        return
+      }
       if (isChat) {
         chatList.push({
           id: m.id,
@@ -294,6 +322,7 @@ Page({
       id: 'thread:' + t.threadId,
       name: t.private ? '私密发布' : t.name,
       memberLabel: t.private ? '' : (t.memberLabel || ''),
+      bizLabel: t.fromBiz === true ? '商机' : '',
       content: t.content,
       time: t.time,
       atRaw: t.atRaw,

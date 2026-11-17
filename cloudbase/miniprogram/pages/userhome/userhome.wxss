@@ -74,7 +74,10 @@
 .uh-follow {
   flex: none;
   align-self: flex-start;
-  padding: 12rpx 30rpx;
+  display: inline-flex;
+  align-items: center;
+  height: 64rpx;
+  padding: 0 30rpx;
   border-radius: 999rpx;
   font-size: 26rpx;
   font-weight: 600;
@@ -129,11 +132,14 @@
 }
 .uh-copy {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 56rpx;
   font-size: 22rpx;
   color: var(--brand);
   background: var(--brand-soft);
   border-radius: 999rpx;
-  padding: 4rpx 16rpx;
+  padding: 0 20rpx;
 }
 .uh-tip {
   margin-top: 12rpx;
@@ -218,8 +224,11 @@
 
 /* 底部操作栏 */
 .uh-report {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 72rpx;
   margin-top: 24rpx;
-  text-align: center;
   font-size: 22rpx;
   color: var(--muted);
   text-decoration: underline;

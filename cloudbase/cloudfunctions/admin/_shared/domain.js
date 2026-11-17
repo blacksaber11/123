@@ -130,6 +130,14 @@ function channelOf(data, visibility) {
 }
 
 /**
+ * 商机领取名额已取消：商机在架期间所有匹配到的会员都可以领取，
+ * 历史数据里的 claimLimit 一律按 0（不限）处理。
+ */
+function claimLimitOf() {
+  return 0
+}
+
+/**
  * 发布商品：出售 / 出租。
  * 出租场景不接收交易地与成色，服务端直接忽略这两个字段（不是信任客户端）。
  *
@@ -183,6 +191,8 @@ function buildProduct(data, ownerId, at, opts) {
     channel,
     /* 是否进入商机池：由渠道推导，兼容旧字段与旧查询 */
     bizPool: visibility === VISIBILITIES.PUBLIC && channel !== PUBLISH_CHANNELS.NORMAL,
+    /* 商机领取名额：0 表示不限，发布者可在发布页选择 3 家 / 5 家 / 自定义 */
+    claimLimit: claimLimitOf(data, channel),
     currency,
     currencySymbol: cur.symbol,
     currencyLabel: cur.label,
@@ -326,6 +336,8 @@ function buildDemand(data, ownerId, at, opts) {
     channel,
     /* 是否进入商机池：由渠道推导，兼容旧字段与旧查询 */
     bizPool: visibility === VISIBILITIES.PUBLIC && channel !== PUBLISH_CHANNELS.NORMAL,
+    /* 商机领取名额：0 表示不限，发布者可在发布页选择 3 家 / 5 家 / 自定义 */
+    claimLimit: claimLimitOf(data, channel),
     currency,
     currencySymbol: cur.symbol,
     currencyLabel: cur.label,
@@ -407,7 +419,7 @@ function buildDemand(data, ownerId, at, opts) {
 }
 
 /**
- * 需求侧必须条件：由「供给类型 / 同台互验 / 暗语视频」联动生成，客户端不能自定义。
+ * 需求侧必须条件：由「供给类型 / 同台互验」联动生成，客户端不能自定义。
  * 租赁场景固定含「明确租金 / 租期 / 押金条款」，期货场景改为租金资金监管。
  */
 function mustForDemand(rental, supply, data) {
@@ -417,13 +429,11 @@ function mustForDemand(rental, supply, data) {
     if (data.sameMachine !== false) out.push('接受同台互验')
     if (supply === '期货') out.push('支持租金资金监管账户')
     else out.push('提供设备实拍图片', '提供设备实拍视频')
-    if (data.codeAsk !== false) out.push('可提供暗语视频（协商后录制）')
     return out
   }
   if (data.sameMachine !== false) out.push('接受同台互验')
   if (supply === '期货') out.push('支持资金监管账户')
   else out.push('提供设备实拍图片', '提供设备实拍视频')
-  if (data.codeAsk !== false) out.push('可提供暗语视频（协商后录制）')
   return out
 }
 

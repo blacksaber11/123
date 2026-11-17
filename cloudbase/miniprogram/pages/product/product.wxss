@@ -43,20 +43,20 @@
 .publisher .pub-nm {
   font-size: 28rpx;
   font-weight: 700;
-  color: var(--ink-1);
+  color: var(--ink);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 .publisher .owner-go {
   margin-left: 6rpx;
-  color: var(--ink-3);
+  color: var(--muted);
   font-weight: 400;
 }
 .publisher .pub-sb {
   margin-top: 4rpx;
   font-size: 22rpx;
-  color: var(--ink-3);
+  color: var(--muted);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -74,7 +74,7 @@
 .publisher .pub-act.on {
   background: var(--line-2);
   border-color: var(--line-2);
-  color: var(--ink-3);
+  color: var(--muted);
 }
 .publisher .pub-phone {
   margin-top: 6rpx;
@@ -82,10 +82,14 @@
   color: var(--brand);
 }
 .publisher .pub-phone-act {
+  display: inline-flex;
+  align-items: center;
+  height: 52rpx;
   margin-left: 10rpx;
-  padding: 0 10rpx;
-  border-radius: 6rpx;
+  padding: 0 16rpx;
+  border-radius: 8rpx;
   background: var(--brand-soft);
+  vertical-align: middle;
 }
 
 /* 私密发布提示卡：沿用 callout 风格，与下方内容拉开间距 */
@@ -120,16 +124,16 @@
 }
 .hero-fav {
   position: absolute;
-  top: 18rpx;
-  right: 20rpx;
-  width: 60rpx;
-  height: 60rpx;
+  top: 14rpx;
+  right: 16rpx;
+  width: 72rpx;
+  height: 72rpx;
   border-radius: 16rpx;
   border: 1rpx solid rgba(255,255,255,.28);
   background: rgba(15, 16, 32, .5);
   color: #fff;
   font-size: 32rpx;
-  line-height: 60rpx;
+  line-height: 72rpx;
   text-align: center;
   z-index: 4;
 }
@@ -513,7 +517,7 @@
 /* 可点进卖家主页的提示箭头 */
 .owner-go {
   margin-left: 8rpx;
-  color: #B4B4BB;
+  color: var(--muted);
   font-size: 26rpx;
   font-weight: 400;
   line-height: 1;
@@ -620,6 +624,7 @@
   box-sizing: border-box;
 }
 .ck-chip .ck-nm {
+  min-width: 0;
   font-size: 21rpx;
   color: var(--ink-2);
   overflow: hidden;
@@ -798,8 +803,8 @@
   font-size: 22rpx;
   line-height: 1.4;
   text-align: center;
-  color: #8A5A00;
-  background: #FFF7E6;
+  color: var(--warn);
+  background: var(--warn-soft);
   border-bottom: 1rpx solid var(--line);
 }
 
@@ -826,10 +831,16 @@
   padding: 18rpx 28rpx 20rpx;
   z-index: 100;
 }
+.sticky-consult .meta {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-bottom: 12rpx;
+}
 .sticky-consult .row {
   display: flex;
   align-items: center;
-  gap: 20rpx;
+  gap: 16rpx;
 }
 /* 左下角咨询人数：数字与文案同一行，避免竖排换行 */
 .sticky-consult .cnt {
@@ -851,13 +862,27 @@
   font-weight: 700;
   line-height: 1;
 }
+.sticky-consult .meta-tip {
+  flex: none;
+  font-size: 20rpx;
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* 按钮：button 组件自带左右 auto 外边距，在 flex 行里会吃掉剩余空间，这里统一清零 */
 .sticky-consult .btn {
   flex: none;
+  margin: 0;
+  width: auto;
 }
-/* 分享按钮：比主操作轻一档，避免抢走「咨询客服」的视觉重心 */
+/* 主操作占满剩余宽度，始终完整可见 */
+.sticky-consult .btn.grow {
+  flex: 1;
+  min-width: 0;
+}
+/* 分享按钮：比主操作轻一档，避免抢走「私信」的视觉重心 */
 .sticky-consult .share-btn {
   height: 80rpx;
-  padding: 0 28rpx;
+  padding: 0 24rpx;
   font-size: 26rpx;
   border-radius: 16rpx;
 }
@@ -915,10 +940,10 @@
 }
 .cs-x {
   position: absolute;
-  right: 0;
-  top: 0;
-  width: 56rpx;
-  height: 56rpx;
+  right: -8rpx;
+  top: -8rpx;
+  width: 72rpx;
+  height: 72rpx;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -963,6 +988,8 @@
   gap: 10rpx;
 }
 .cs-confirm .cc-btn {
+  flex: none;
+  white-space: nowrap;
   min-width: 96rpx;
   height: 56rpx;
   padding: 0 18rpx;
@@ -991,13 +1018,19 @@
   display: flex;
   gap: 16rpx;
   padding-top: 20rpx;
+  justify-content: flex-end;
 }
+/* 按钮按内容宽度排布，不拉满整行：只有一颗主按钮时也保持常规宽度靠右 */
 .cs-ft .btn {
-  flex: 1;
+  flex: 0 1 auto;
+  min-width: 240rpx;
+  padding: 0 36rpx;
   margin: 0;
 }
 .cs-ft .btn.primary {
-  flex: 2;
+  flex: 1 1 auto;
+  min-width: 300rpx;
+  max-width: 420rpx;
 }
 /* 提示块里的补充说明（如「货主已公开电话」） */
 .callout-extra {
@@ -1042,9 +1075,9 @@
 }
 .vw-x {
   flex: none;
-  width: 64rpx;
-  height: 64rpx;
-  line-height: 64rpx;
+  width: 72rpx;
+  height: 72rpx;
+  line-height: 72rpx;
   text-align: center;
   border-radius: 50%;
   background: rgba(255, 255, 255, .14);
@@ -1140,4 +1173,38 @@
   line-height: 1.6;
   color: rgba(255, 255, 255, .62);
   text-align: center;
+}
+/* ⑤ 联系栏：只展示公开电话或未公开提示；私信入口固定在底部栏 */
+.contact-phone {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+.contact-phone .cp-k {
+  flex: none;
+  font-size: 24rpx;
+  color: var(--ink-2);
+}
+.contact-phone .cp-v {
+  flex: 1;
+  min-width: 0;
+  font-size: 30rpx;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 1rpx;
+}
+.contact-phone .cp-act {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 64rpx;
+  padding: 0 24rpx;
+  font-size: 22rpx;
+  color: var(--brand);
+  border: 1rpx solid var(--brand);
+  border-radius: 999rpx;
+}
+.contact-phone-none {
+  font-size: 26rpx;
+  color: var(--ink-2);
 }

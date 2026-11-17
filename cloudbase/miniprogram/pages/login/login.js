@@ -1,5 +1,6 @@
 const { wxLogin, readUser, writeUser, hasPhone, markConsent } = require('../../utils/auth')
 const { request, uploadFile } = require('../../utils/request')
+const guard = require('../../utils/guard')
 
 const HOME = '/pages/home/home'
 const LOGIN_ROUTE = '/pages/login/login'
@@ -158,6 +159,8 @@ Page({
 
   /* 进入即静默登录；没有手机号的账号停在「手机号登录」这一步 */
   onShow() {
+    /* 登录页在黑名单内：统一关闭右上角分享 */
+    guard.hideShare('pages/login/login')
     if (!this.data.loading && !this.data.error && !this.data.needPhone) this.doLogin()
   },
 

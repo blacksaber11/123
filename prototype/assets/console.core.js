@@ -150,6 +150,25 @@
     } catch (err) { return false }
   }
 
+  /**
+   * 本地快照只用于首屏渲染；进站后向服务端对齐一次权限。
+   * 否则角色新增页面（如「咨询工单」「客服业务」）后，旧快照会让菜单一直不出现。
+   */
+  async function refreshSession() {
+    if (!state.token) return
+    let data
+    try { data = await api('admin.session') } catch (err) { return }
+    if (!data) return
+    const before = [state.pages.join(','), state.actions.join(','), (state.account && state.account.name) || ''].join('|')
+    state.account = { name: data.name, role: data.role, org: data.org }
+    state.pages = Array.isArray(data.pages) ? data.pages : []
+    state.actions = Array.isArray(data.actions) ? data.actions : []
+    state.tempPermission = data.tempPermission || null
+    saveSession()
+    const after = [state.pages.join(','), state.actions.join(','), (state.account && state.account.name) || ''].join('|')
+    if (before !== after) renderShell()
+  }
+
   /* ---------------- 图标 ---------------- */
   const ICONS = {
     grid: '<rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/>',
@@ -433,20 +452,25 @@
   const NAV = [
     { group: '运营', items: [
       { key: 'dashboard', page: 'stats', label: '数据看板', icon: 'grid', desc: '业务增长与实时指标' },
-      { key: 'workbench', page: 'workbench', label: '工作台', icon: 'bolt', desc: '今天要处理的事' }
+      /* 工单中心已并入工作台：工作台内直接展示待领取咨询与工单核心表，detail 页仍可深链进入 */
+      { key: 'workbench', page: ['workbench', 'leads', 'consult'], label: '工作台', icon: 'bolt', desc: '今天要处理的事' }
     ] },
     { group: '业务', items: [
-      { key: 'leads', page: 'leads', label: '咨询单', icon: 'bolt', desc: '领取、转派与推进咨询' },
+      /* 代采代售委托独立成页，与工单中心分开 */
+      { key: 'biz', page: 'biz', label: '代采代售', icon: 'file', desc: '委托审核与成交确认' },
       { key: 'products', page: 'products', label: '商品管理', icon: 'media', desc: '货源审核与上下架' },
       { key: 'demands', page: 'demands', label: '需求管理', icon: 'file', desc: '求购需求审核与关闭' },
-      { key: 'biz', page: 'biz', label: '代采代售', icon: 'spark', desc: '委托审核、联系缴费与成交' },
+      /* 电销线索只在电销专员登录时出现；管理员从「用户管理」导出即可，不再单独占一个 tab */
+      { key: 'sales', page: 'sales', label: '电销线索', icon: 'phone', roles: ['sales'], desc: '线索号码与拨号记录' },
       { key: 'users', page: 'users', label: '用户管理', icon: 'users', desc: '用户档案、商机会员与权限' },
       { key: 'messages', page: 'messages', label: '消息中心', icon: 'chat', desc: '用户留言与客服回复' },
+      { key: 'cs', page: 'cs', label: '客服业务', icon: 'users', desc: '绑定用户、业绩提成与服务评价' },
       { key: 'risk', page: 'risk', label: '风险提示', icon: 'shield', desc: '风险单与内容监管' },
-      { key: 'media', page: ['boards', 'news'], label: '媒体', icon: 'media', desc: '资讯 / 榜单 / 价格水平' }
+      { key: 'media', page: ['boards', 'news'], label: '媒体', icon: 'media', desc: '资讯 / 榜单 / 价格水平 / 首页横幅' }
     ] },
     { group: '经营', items: [
       { key: 'finance', page: 'finance', label: '财务中心', icon: 'wallet', desc: '收款与营收' },
+      { key: 'promote', page: 'promote', label: '推广管理', icon: 'chart', roles: ['admin', 'finance'], desc: '推广者、佣金与人工分账' },
       { key: 'accounts', page: 'accounts', label: '账号与权限', icon: 'key', desc: '账号、角色与临时权限' },
       { key: 'settings', page: 'settings', label: '设置', icon: 'settings', desc: '规则与平台配置' }
     ] },
@@ -457,7 +481,11 @@
     ] }
   ]
   const NAV_FLAT = NAV.reduce((acc, group) => acc.concat(group.items), [])
-  const ROLE_LABEL = { admin: '管理员', cs: '客服坐席', finance: '财务专员' }
+  const ROLE_LABEL = {
+    admin: '管理员', cs: '客服坐席', finance: '财务专员', sales: '电销专员',
+    /* 预设自定义角色：与后端 PRESET_ROLES 保持一致 */
+    ops: '运营专员', content: '内容运营', cs_lead: '客服主管', auditor: '审核专员', analyst: '数据运营'
+  }
 
   function canPage(page) {
     if (!page) return true
@@ -471,14 +499,35 @@
     return !!state.account && state.account.role === 'admin'
   }
 
+  /** 推广管理按角色开放：admin / finance 可见，其余页面仍沿用 pages 权限 */
+  function navAllowed(item) {
+    if (!item) return false
+    if (item.roles && item.roles.length) {
+      const role = state.account && state.account.role
+      if (role && item.roles.indexOf(role) >= 0) return true
+    }
+    return canPage(item.page)
+  }
   function accessibleNav() {
     return NAV.map((group) => ({
       group: group.group,
-      items: group.items.filter((item) => canPage(item.page))
+      items: group.items.filter((item) => navAllowed(item))
     })).filter((group) => group.items.length)
   }
+  /** 页面 key → 所属导航项：合并入口后（如 consult / biz 同属「工单中心」）仍能定位菜单 */
+  function navOwnerOf(page) {
+    return NAV_FLAT.find((item) => item.key === page) ||
+      NAV_FLAT.find((item) => {
+        const keys = Array.isArray(item.page) ? item.page : [item.page]
+        return keys.indexOf(page) >= 0
+      }) || null
+  }
   function navConf(key) {
-    return NAV_FLAT.find((item) => item.key === key) || NAV_FLAT[0]
+    return navOwnerOf(key) || NAV_FLAT[0]
+  }
+  function navGroupOf(page) {
+    const owner = navOwnerOf(page)
+    return NAV.find((g) => g.items.indexOf(owner) >= 0) || {}
   }
   function firstPage() {
     const groups = accessibleNav()
@@ -696,7 +745,7 @@
           body: '<div>' + list.map((acc) => {
             return '<div class="list-row" data-role="' + esc(acc.role) + '">' +
               '<div class="grow"><div class="strong">' + esc(acc.name || acc.username) + '</div>' +
-              '<div class="small" style="color:var(--ink-3)">' + esc(acc.username) + ' · ' + esc(roleText[acc.role] || acc.role) + '</div></div>' +
+              '<div class="small" style="color:var(--muted-2)">' + esc(acc.username) + ' · ' + esc(roleText[acc.role] || acc.role) + '</div></div>' +
               '<span class="btn xs">填入</span></div>'
           }).join('') + '</div>'
         })
@@ -790,7 +839,7 @@
 
     /* 多个角标共用同一份待处理数据，避免重复请求 */
     let leadPendingP = null
-    const leadPending = () => canPage('leads')
+    const leadPending = () => canPage('consult')
       ? (leadPendingP = leadPendingP || fetchTotal('lead.list', { targetType: 'agency', status: '待分配', page: 1, limit: 1 }))
       : Promise.resolve(null)
     let agencyPendingP = null
@@ -812,16 +861,13 @@
 
     if (todos) {
       paintNav(badgeOf('workbench'), todos.total)
-      paintNav(badgeOf('leads'), todos.leads)
-      paintNav(badgeOf('messages'), todos.unread)
-      paintNav(badgeOf('reports'), todos.reports)
-      paintNav(badgeOf('risk'), todos.risk)
-      paintNav(badgeOf('finance'), todos.payments)
+      /* 代采代售独立入口：只提示待审核 / 待确认的委托，不再混入工单数据 */
       paintNav(badgeOf('biz'), todos.agency)
+      paintNav(badgeOf('messages'), todos.unread)
+      /* 侧边栏只有一个「风险提示」nav item，把举报数 + 风险单数合并显示 */
+      paintNav(badgeOf('risk'), (Number(todos.reports) || 0) + (Number(todos.risk) || 0))
+      paintNav(badgeOf('finance'), todos.payments)
     } else {
-      if (canPage('leads')) {
-        jobs.push(leadPending().then((n) => { if (n !== null) paintNav(badgeOf('leads'), n) }))
-      }
       if (canPage('biz')) {
         jobs.push(agencyPending().then((n) => { if (n !== null) paintNav(badgeOf('biz'), n) }))
       }
@@ -841,7 +887,7 @@
   /* ---------------- 应用框架 ---------------- */
   function renderShell() {
     const navGroups = accessibleNav()
-    if (!state.page || !navConf(state.page) || !canPage(navConf(state.page).page)) state.page = firstPage()
+    if (!state.page || !navConf(state.page) || !navAllowed(navConf(state.page))) state.page = firstPage()
     const conf = navConf(state.page)
     const account = state.account || { name: '运营账号', role: 'admin' }
     const root = document.getElementById('root')
@@ -857,7 +903,7 @@
               <div class="side-group">
                 <div class="side-label">${esc(group.group)}</div>
                 ${group.items.map((item) => `
-                  <button class="nav-item ${item.key === state.page ? 'on' : ''}" data-nav="${item.key}">
+                  <button class="nav-item ${(navOwnerOf(state.page) || {}).key === item.key ? 'on' : ''}" data-nav="${item.key}">
                     <span class="nav-ico">${icon(item.icon)}</span>
                     <span class="nav-text">${esc(item.label)}</span>
                     <span class="nav-badge" data-badge="${item.key}" hidden></span>
@@ -874,7 +920,7 @@
         <div class="main">
           <header class="topbar">
             <div>
-              <div class="crumb">运营中台 / ${esc((NAV.find((g) => g.items.some((i) => i.key === state.page)) || {}).group || '')}</div>
+              <div class="crumb">运营中台 / ${esc(navGroupOf(state.page).group || '')}</div>
               <h1>${esc(conf.label)}</h1>
             </div>
             <div class="topbar-right">
@@ -910,7 +956,7 @@
   }
 
   function navigate(key, query) {
-    if (!navConf(key) || !canPage(navConf(key).page)) { toast('当前账号无权访问该页面', 'err'); return }
+    if (!navConf(key) || !navAllowed(navConf(key))) { toast('当前账号无权访问该页面', 'err'); return }
     state.page = key
     /* 跨页定位参数：例如从工作台「举报反馈」直接落到风险提示的举报 tab */
     state.pageQuery = query && typeof query === 'object' ? Object.assign({}, query) : null
@@ -920,8 +966,9 @@
     closeModal()
     const root = document.getElementById('root')
     if (!root.querySelector('.app')) { renderShell(); return }
-    root.querySelectorAll('[data-nav]').forEach((btn) => btn.classList.toggle('on', btn.getAttribute('data-nav') === key))
-    const group = NAV.find((g) => g.items.some((i) => i.key === key)) || {}
+    const ownerKey = (navOwnerOf(key) || {}).key
+    root.querySelectorAll('[data-nav]').forEach((btn) => btn.classList.toggle('on', btn.getAttribute('data-nav') === ownerKey))
+    const group = navGroupOf(key)
     const conf = navConf(key)
     const crumb = root.querySelector('.topbar .crumb')
     if (crumb) crumb.textContent = '运营中台 / ' + (group.group || '')
@@ -934,6 +981,8 @@
   async function renderPage(showToast) {
     const view = document.getElementById('view')
     if (!view) return
+    /* 工作台会把 view 切成撑满一屏的固定布局，切页时复原 */
+    view.classList.remove('view-fill', 'cf-fill')
     const seq = ++renderSeq
     const conf = navConf(state.page)
     const fn = (window.ConsolePages || {})[state.page]
@@ -971,6 +1020,8 @@
       return
     }
     renderShell()
+    /* 首屏用本地快照秒开，随后静默对齐服务端最新权限，菜单变化时自动重绘 */
+    refreshSession()
   }
 
   Object.assign(Console, {
@@ -985,7 +1036,7 @@
 
   window.addEventListener('hashchange', () => {
     const key = (location.hash || '').replace(/^#\/?/, '')
-    if (key && key !== state.page && navConf(key) && canPage(navConf(key).page)) navigate(key)
+    if (key && key !== state.page && navAllowed(navConf(key))) navigate(key)
   })
 
   /* 等页面脚本注册完再启动，避免恢复登录态时首屏拿不到模块 */
