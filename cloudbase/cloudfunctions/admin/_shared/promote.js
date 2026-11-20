@@ -26,7 +26,7 @@
 
 const { AppError, CODES } = require('./errors')
 const { str, normalizePaging } = require('./validate')
-const { randomId, sha256Hex } = require('./crypto')
+const { randomId, sha256Hex, userNoOf } = require('./crypto')
 const { appendAudit } = require('./audit')
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -43,17 +43,19 @@ const PROMOTE_RATE_MAX = 0.3
 const PROMOTE_RATE_DEFAULT = 0.15
 /** 二级佣金比例：默认与一级一致 15%，可单独调整 */
 const PROMOTE_L2_RATE_DEFAULT = 0.15
+/** 客服绑定用户的一级佣金比例：与普通推广人分开设置，默认 15% */
+const PROMOTE_CS_RATE_DEFAULT = 0.15
 /** 二级佣金落库单号后缀：同一笔支付产生两级佣金，避免 paymentId 唯一索引冲突 */
 const PROMOTE_L2_SUFFIX = '#L2'
 
 /** 提现规则 */
 const WITHDRAW_FEE_RATE = 0.05
-const WITHDRAW_MIN = 100
+const WITHDRAW_MIN = 0.01
 const WITHDRAW_MAX = 20000
 /** 单用户单日累计上限（按实际出款净额，路径 A / B 合并） */
 const WITHDRAW_DAILY_MAX = 20000
-/** 每人每日最多申请次数 */
-const WITHDRAW_DAILY_COUNT = 3
+/** 每人每月最多申请次数（驳回 / 取消不占次数，允许修正后重新申请） */
+const WITHDRAW_MONTHLY_COUNT = 1
 /** 商户单日手动商家转账上限（超过顺延次日） */
 const MERCHANT_DAILY_TRANSFER_MAX = 100000
 /** 个税起征口径（taxEnabled=false 时不启用） */
@@ -103,17 +105,11 @@ const WITHDRAW_OCCUPYING = Object.freeze([
   WITHDRAW_STATUS.FAILED
 ])
 
-/** 终态：不再占用余额，activeKey 改写唯一退休键（不能置 null，见 retiredKeyOf） */
-const WITHDRAW_TERMINAL = Object.freeze([
-  WITHDRAW_STATUS.PAID,
-  WITHDRAW_STATUS.REJECTED,
-  WITHDRAW_STATUS.CANCELLED
-])
-
 const DEFAULT_SETTINGS = Object.freeze({
   id: 'promote',
-  /* 平台统一比例（只读给推广者）：一级 / 二级分别设置 */
+  /* 平台统一比例（只读给推广者）：普通推广人只有一级；客服绑定用户两级分开设置 */
   commissionRate: PROMOTE_RATE_DEFAULT,
+  csLevel1Rate: PROMOTE_CS_RATE_DEFAULT,
   level2Rate: PROMOTE_L2_RATE_DEFAULT,
   rateMin: PROMOTE_RATE_MIN,
   rateMax: PROMOTE_RATE_MAX,
@@ -121,7 +117,7 @@ const DEFAULT_SETTINGS = Object.freeze({
   minWithdraw: WITHDRAW_MIN,
   maxWithdraw: WITHDRAW_MAX,
   dailyMaxWithdraw: WITHDRAW_DAILY_MAX,
-  dailyMaxCount: WITHDRAW_DAILY_COUNT,
+  monthlyMaxCount: WITHDRAW_MONTHLY_COUNT,
   freezeDay: 15,
   /* Apple 渠道结算到账晚于次月 15 日且可能事后退款：佣金到账确认前不解冻（文档 3.5） */
   appleArrivalHold: true,
@@ -145,8 +141,8 @@ const DEFAULT_SETTINGS = Object.freeze({
 
 const AGREEMENT_TEXT = [
   '一、推广者须为平台实名注册用户，开通前须阅读并同意本协议。',
-  '二、佣金比例由平台统一设置并在推广中心只读展示；一级推广按平台设置的一级比例计佣，仅客服绑定账号另按其下级的首次付款计二级佣金，比例调整仅对调整后新支付的订单生效。',
-  '三、开通推广后，分享任意页面（链接、二维码、朋友圈）都携带推广标识，好友打开并登录即自动绑定；开通前的历史分享不绑定任何用户，也不追溯计佣。',
+  '二、佣金比例由平台统一设置并在推广中心只读展示，推广者不可自行修改；比例调整仅对调整后新支付的订单生效。',
+  '三、分享任意页面（链接、二维码、朋友圈）都会携带本人的推广标识，好友打开并登录即自动绑定，先到先得且不可改绑；但只有开通推广之后建立的绑定才计入绑定人数并产生佣金，开通前分享带来的绑定不计佣金、开通后也不追溯。',
   '四、被邀请用户首次登录时自动绑定推广关系，先到先得，不支持改绑。',
   '五、只有被邀请用户的首次会员支付成功才计入佣金，第二次及以后的付款（含续费）不再产生佣金；佣金冻结至首次支付月份次月 15 日 00:00 后可申请提现。',
   '六、佣金按毛额扣除 5% 手续费后出款；提现须经平台人工审核，由财务在商户平台人工分账或商家转账。',
@@ -203,11 +199,61 @@ function dateTimeText(ms) {
   return `${dateText(ms)} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
 }
 
+/**
+ * 收款银行卡口径：持卡人 / 开户行 / 卡号。
+ * 开通推广时可留空，提现前必须补全；卡号统一去空格，仅接受 12–19 位数字。
+ */
+function normalizeBankCard(data, opts) {
+  const d = data || {}
+  const optional = !!(opts && opts.optional)
+  const holder = str(d.bankHolder, { field: '持卡人', max: 40 })
+  const bankName = str(d.bankName, { field: '开户行', max: 60 })
+  const account = String(d.bankAccount == null ? '' : d.bankAccount).replace(/\s+/g, '')
+  if (!holder && !bankName && !account) {
+    if (optional) return null
+    throw new AppError(CODES.VALIDATION, '请完整填写收款银行卡（持卡人 / 开户行 / 卡号）')
+  }
+  if (!holder || !bankName) throw new AppError(CODES.VALIDATION, '请完整填写收款银行卡（持卡人 / 开户行 / 卡号）')
+  if (!/^\d{12,19}$/.test(account)) throw new AppError(CODES.VALIDATION, '银行卡号需为 12–19 位数字')
+  return { bankHolder: holder, bankName, bankAccount: account }
+}
+
+/** 银行卡脱敏：仅保留末四位 */
+function maskBankAccount(account) {
+  const value = String(account || '')
+  if (!value) return ''
+  return value.length <= 4 ? value : '**** **** **** ' + value.slice(-4)
+}
+
+/** 提现单 / 用户资料上的银行信息视图；opts.full=true 时输出完整卡号（仅管理端） */
+function bankViewOf(doc, user, opts) {
+  const d = doc || {}
+  const u = user || {}
+  const holder = d.bankHolder || u.bankHolder || ''
+  const bankName = d.bankName || u.bankName || ''
+  const account = d.bankAccount || u.bankAccount || ''
+  return {
+    bankHolder: holder,
+    bankName,
+    bankAccount: opts && opts.full ? account : '',
+    bankAccountMasked: maskBankAccount(account),
+    bankReady: !!(holder && bankName && account)
+  }
+}
+
 /** 北京时间当天起止 [start, end) */
 function dayRange(ms) {
   const d = new Date(Number(ms) + CN_OFFSET)
   const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - CN_OFFSET
   return { start, end: start + DAY_MS }
+}
+
+/** 北京时间自然月区间：提现次数按月限制用 */
+function monthRange(ms) {
+  const d = new Date(Number(ms) + CN_OFFSET)
+  const y = d.getUTCFullYear()
+  const m = d.getUTCMonth()
+  return { start: Date.UTC(y, m, 1) - CN_OFFSET, end: Date.UTC(y, m + 1, 1) - CN_OFFSET }
 }
 
 /** 冻结口径：支付时间所属月份的次月 15 日 00:00（北京时间） */
@@ -237,11 +283,14 @@ function retiredKeyOf(id) {
 /** 通道费率：iOS 由 Apple 抽成 12%，其余按微信支付 1% 估算 */
 function channelFeeRate(channel) {
   const c = String(channel || '').toLowerCase()
+  /* 手动开通（企业微信 / 对公转账）不经过支付通道，无通道费 */
+  if (c === 'manual') return 0
   return c === 'apple' || c === 'ios' ? 0.12 : 0.01
 }
 
 function normalizeChannel(channel) {
   const c = String(channel || '').toLowerCase()
+  if (c === 'manual') return 'manual'
   if (c === 'apple' || c === 'ios') return 'apple'
   if (c === 'xpay' || c === 'virtual') return 'xpay'
   return 'wxpay'
@@ -420,6 +469,8 @@ function createPromoteEngine(deps) {
     merged.payoutMode = 'manual'
     const rate = Number(merged.commissionRate)
     merged.commissionRate = Number.isFinite(rate) ? Math.min(Math.max(rate, merged.rateMin), merged.rateMax) : PROMOTE_RATE_DEFAULT
+    const csRate = Number(merged.csLevel1Rate)
+    merged.csLevel1Rate = Number.isFinite(csRate) ? Math.min(Math.max(csRate, merged.rateMin), merged.rateMax) : PROMOTE_CS_RATE_DEFAULT
     const l2Rate = Number(merged.level2Rate)
     merged.level2Rate = Number.isFinite(l2Rate) ? Math.min(Math.max(l2Rate, merged.rateMin), merged.rateMax) : PROMOTE_L2_RATE_DEFAULT
     return merged
@@ -475,20 +526,27 @@ function createPromoteEngine(deps) {
 
   /**
    * 登录时绑定推广关系。
-   * - 只有「已开通推广」的推广码才有效；
+   * - 任何正常账号的推广码都有效：未开通推广的普通用户分享进来的人也归他，
+   *   是否产生佣金仍由推广人是否为 active 决定（见 createCommission），绑定与分佣解耦；
+   * - 停用账号的码作废；
    * - 一人只能绑定一次，先到先得；
+   * - bindLocked 账号（如平台最高级账号）不允许被任何人绑定；
    * - 不带 ref 的历史分享永远不会触发绑定。
    */
   async function bindOnLogin(uid, refCode, scene) {
     const code = str(refCode, { field: '推广码', max: 16 }).toUpperCase()
     if (!code) return { bound: false, reason: 'no-ref' }
     const user = await mustUser(uid)
+    /* 最高级账号：只保留下级，任何推广码都不能再把它挂到别人名下 */
+    if (user.bindLocked === true) return { bound: false, reason: 'locked' }
     const existed = await repo.get('referralBindings', uid)
     if (existed) return { bound: false, reason: 'already', refUid: existed.refUid }
     const rows = await repo.find('users', { refCode: code }, { limit: 1 })
     const refUser = rows[0]
     if (!refUser || refUser.id === uid) return { bound: false, reason: 'invalid-ref' }
-    if (refUser.promoterStatus !== 'active') return { bound: false, reason: 'not-active' }
+    /* 普通用户（未开通推广）的码同样有效：只绑定归属，不产生佣金；
+       停用 / 推广被封禁账号的码一律作废 */
+    if (refUser.status === '停用' || refUser.promoterStatus === 'blocked') return { bound: false, reason: 'invalid-ref' }
     if (risky(refUser)) return { bound: false, reason: 'risk' }
     const boundAt = at()
     const sceneText = str(scene, { field: '场景', max: 24 }) || 'login'
@@ -512,7 +570,6 @@ function createPromoteEngine(deps) {
       refBoundAt: boundAt,
       refScene: sceneText
     })
-    void user
     await appendAudit(repo, {
       actorType: 'system',
       actorId: 'promote',
@@ -536,7 +593,9 @@ function createPromoteEngine(deps) {
     }
     const openedAt = at()
     const refCode = await ensureRefCode(uid)
-    await repo.updateWhere('users', { id: uid }, {
+    /* 收款银行卡：开通时选填，提现前必须在推广中心补全 */
+    const bank = normalizeBankCard(d, { optional: true })
+    const patch = {
       promoterStatus: 'active',
       promoterSince: user.promoterSince || openedAt,
       promoterOpenedAt: openedAt,
@@ -544,7 +603,9 @@ function createPromoteEngine(deps) {
       agreementAt: openedAt,
       refCode,
       promoterDebt: round2(user.promoterDebt || 0)
-    })
+    }
+    if (bank) Object.assign(patch, bank, { bankUpdatedAt: openedAt })
+    await repo.updateWhere('users', { id: uid }, patch)
     await repo.insert('promoteAgreements', {
       id: randomId('PA'),
       uid,
@@ -571,6 +632,30 @@ function createPromoteEngine(deps) {
     return summary(uid)
   }
 
+  /** 保存 / 修改收款银行卡：有在途提现单时禁止改动，避免打到旧卡 */
+  async function saveBank(uid, data) {
+    await mustUser(uid)
+    const bank = normalizeBankCard(data)
+    const rows = await repo.find('promoterWithdrawals', { uid }, { limit: 5000 })
+    if (rows.some((w) => isOccupyingWithdrawal(w.status))) {
+      throw new AppError(CODES.CONFLICT, '有提现单正在处理中，暂不能修改收款银行卡')
+    }
+    const current = at()
+    await repo.updateWhere('users', { id: uid }, Object.assign({}, bank, {
+      bankUpdatedAt: current,
+      updatedAt: current
+    }))
+    await appendAudit(repo, {
+      actorType: 'user',
+      actorId: uid,
+      action: 'promote.bank.save',
+      target: uid,
+      reason: `收款卡 ${bank.bankName} ${maskBankAccount(bank.bankAccount)}`,
+      at: current
+    })
+    return summary(uid)
+  }
+
   async function agreementInfo() {
     const settings = await readSettings()
     const rate = clampRate(settings.commissionRate, settings)
@@ -587,6 +672,8 @@ function createPromoteEngine(deps) {
       feeText: rateText(feeRate),
       minWithdraw: Number(settings.minWithdraw) || WITHDRAW_MIN,
       maxWithdraw: Number(settings.maxWithdraw) || WITHDRAW_MAX,
+      dailyMaxWithdraw: Number(settings.dailyMaxWithdraw) || WITHDRAW_DAILY_MAX,
+      monthlyMaxCount: Number(settings.monthlyMaxCount) || WITHDRAW_MONTHLY_COUNT,
       freezeDay: Number(settings.freezeDay) || 15,
       payoutMode: 'manual'
     }
@@ -636,6 +723,9 @@ function createPromoteEngine(deps) {
     if (!promoter) return null
     /* 客服绑定账号视同推广人：即便没走线上开通，也按两级佣金计入其推广收入 */
     const csBound = await csBoundOf(uid)
+    /* 封禁 / 停用账号一律停止计佣，客服绑定账号同样受限 */
+    if (promoter.promoterStatus === 'blocked') return null
+    if (promoter.status === '停用') return null
     if (promoter.promoterStatus !== 'active' && !csBound) return null
     if (risky(promoter)) return null
 
@@ -650,27 +740,44 @@ function createPromoteEngine(deps) {
     /* 绑定时间必须早于支付时间，否则不计佣 */
     if (boundAt && boundAt > paidAt) return null
     const openedAt = Number(promoter.promoterOpenedAt || promoter.promoterSince) || 0
-    /* 支付时间早于推广者开通时间，不计佣（不追溯历史订单）；客服绑定账号无开通时间时按绑定时间起算 */
-    if (openedAt && paidAt < openedAt) return null
-    if (!openedAt && csBound && boundAt && paidAt < boundAt) return null
+    if (csBound) {
+      /* 客服绑定账号：绑定即生效，与是否走过线上开通无关（文档 3.3） */
+      if (boundAt && paidAt < boundAt) return null
+    } else {
+      /* 支付时间早于推广者开通时间：不追溯历史订单 */
+      if (openedAt && paidAt < openedAt) return null
+      /* 绑定发生在开通推广之前：分享时推广人还没开通，之后即使开通了也不追溯这批下级 */
+      if (!openedAt) return null
+      if (boundAt && boundAt < openedAt) return null
+    }
 
-    /* 只对好友的首次会员付款计佣：存在更早的已确认会员收款即视为续费，第二次及以后付款不再产生佣金 */
+    /* 只对好友的首次会员付款计佣：存在更早的已确认会员收款即视为续费，第二次及以后付款不再产生佣金。
+       0 元赠送 / 试用开通同样落收款流水，但不属于「付款」，不能挡住之后的首次真实付款。
+       时间上只认「不晚于本笔」的收款：补录 / 乱序确认时，本笔之后的付款不能反过来把首笔佣金吃掉 */
     const buyerUid = str(d.buyerUid, { field: '买家', max: 80 })
     if (buyerUid) {
       const earlier = await repo.find('payments', {
         uid: buyerUid,
         bizType: '会员续费',
         status: '已确认',
+        paidAt: { $lt: paidAt + 1 },
         paymentId: { $ne: sourcePaymentId }
-      }, { limit: 1 })
-      if (earlier.length) return null
+      }, { sort: { paidAt: 1 }, limit: 50 })
+      const paidBefore = earlier.some((row) => centsOf(
+        row.received !== undefined && row.received !== null ? row.received : row.amount
+      ) > 0)
+      if (paidBefore) return null
     }
 
     const channel = normalizeChannel(d.channel)
     const channelRate = channelFeeRate(channel)
     const channelCost = round2(paidAmount * channelRate)
     const base = round2(paidAmount - channelCost)
-    const rate = clampRate(level === 2 ? settings.level2Rate : settings.commissionRate, settings)
+    /* 客服绑定用户：一级用「客服绑定」专属比例，二级用二级比例；普通推广人只有一级 */
+    const rate = clampRate(
+      level === 2 ? settings.level2Rate : (csBound ? settings.csLevel1Rate : settings.commissionRate),
+      settings
+    )
     const amount = round2(base * rate)
     const feeRate = Number(settings.feeRate) >= 0 ? Number(settings.feeRate) : WITHDRAW_FEE_RATE
     const feeAmount = round2(amount * feeRate)
@@ -737,8 +844,8 @@ function createPromoteEngine(deps) {
       : `预计 ${dateText(doc.eligibleAt)} 后可提现`
     await notifyUser(
       uid,
-      level === 2 ? '二级推广佣金已入账' : '推广佣金已入账',
-      `${level === 2 ? '二级好友' : '好友'}支付 ¥${paidAmount.toFixed(2)}，平台按 ${rateText(rate)} 计佣 ¥${amount.toFixed(2)}（扣 5% 手续费后 ¥${netAmount.toFixed(2)}），${rule}。`,
+      '推广佣金已入账',
+      `好友支付 ¥${paidAmount.toFixed(2)}，平台按 ${rateText(rate)} 计佣 ¥${amount.toFixed(2)}（扣 5% 手续费后 ¥${netAmount.toFixed(2)}），${rule}。`,
       'commission',
       doc.id
     )
@@ -1055,7 +1162,7 @@ function createPromoteEngine(deps) {
       await notifyUser(
         uid,
         '佣金已可提现',
-        `本期结算 ¥${n.amount.toFixed(2)}${tail}，可在推广中心申请提现（满 ${WITHDRAW_MIN} 元，需人工审核）。`,
+        `本期结算 ¥${n.amount.toFixed(2)}${tail}，可在推广中心申请提现（不设起提门槛，需人工审核）。`,
         'promote'
       )
     }
@@ -1136,7 +1243,7 @@ function createPromoteEngine(deps) {
       await notifyUser(
         uid,
         'Apple 佣金已可提现',
-        `${month} Apple 渠道款项已确认到账，本期解冻 ¥${n.amount.toFixed(2)}${tail}，可在推广中心申请提现（满 ${WITHDRAW_MIN} 元，需人工审核）。`,
+        `${month} Apple 渠道款项已确认到账，本期解冻 ¥${n.amount.toFixed(2)}${tail}，可在推广中心申请提现（不设起提门槛，需人工审核）。`,
         'promote'
       )
     }
@@ -1255,20 +1362,30 @@ function createPromoteEngine(deps) {
         if (!activeWithdraw || Number(w.applyAt) > Number(activeWithdraw.applyAt)) activeWithdraw = w
       }
     }
-    const rate = clampRate(settings.commissionRate, settings)
+    /* 客服绑定账号走专属一级比例，并可拿二级；普通推广人只有一级 */
+    const csBound = await csBoundOf(uid)
+    const rate = clampRate(csBound ? settings.csLevel1Rate : settings.commissionRate, settings)
     const level2Rate = clampRate(settings.level2Rate, settings)
     const debt = round2(user.promoterDebt)
-    /* 绑定人数：一级 / 二级分开统计（用于推广中心与推广管理展示） */
-    const bindings = await repo.find('referralBindings', { refUid: uid }, { limit: 5000 })
+    /* 绑定人数：只统计「开通推广之后」建立的绑定；开通前分享拉来的下级不计入名单与人数
+       （客服绑定账号没有线上开通时间，绑定即生效） */
+    const openedAt = Number(user.promoterOpenedAt || user.promoterSince) || 0
+    const allBindings = await repo.find('referralBindings', { refUid: uid }, { limit: 5000 })
+    const bindings = csBound ? allBindings
+      : allBindings.filter((b) => openedAt && (Number(b.boundAt) || 0) >= openedAt)
     const level1Uids = bindings.map((b) => b.uid).filter(Boolean)
     let level2Count = 0
-    if (level1Uids.length) {
+    if (csBound && level1Uids.length) {
       const l2 = await repo.find('referralBindings', { refUid: { $in: level1Uids } }, { limit: 5000 })
       level2Count = l2.length
     }
     return {
       active: user.promoterStatus === 'active',
       status: user.promoterStatus || 'none',
+      /* cs：客服绑定用户（两级）；normal：普通推广用户（仅一级） */
+      promoteType: csBound ? 'cs' : 'normal',
+      csBound: !!csBound,
+      level2Enabled: !!csBound,
       refCode: user.refCode || '',
       refCodeLocked: !!user.refCode,
       shareRef: user.refCode || '',
@@ -1283,7 +1400,7 @@ function createPromoteEngine(deps) {
       agreementVersion: user.agreementVersion || '',
       agreementAt: Number(user.agreementAt) || 0,
       agreementCurrent: user.agreementVersion === settings.agreementVersion,
-      openedAt: Number(user.promoterOpenedAt || user.promoterSince) || 0,
+      openedAt,
       referred: !!user.referredBy,
       /* 兼容旧字段：推广者不再自选比例 */
       rateEditable: false,
@@ -1302,6 +1419,8 @@ function createPromoteEngine(deps) {
         appliedToDebt: round2(user.promoterAppliedToDebt)
       },
       counts: Object.assign({ commissions: ledger.pendingCount + ledger.availableCount, referrals: bindings.length, level1: bindings.length, level2: level2Count, buyers: ledger.buyers }, counts),
+      /* 收款银行卡（脱敏）：提现必须使用本人银行卡，未补全时前端引导填写 */
+      bank: bankViewOf(null, user),
       nextEligibleAt: ledger.nextEligibleAt,
       nextEligibleText: ledger.nextEligibleAt ? dateText(ledger.nextEligibleAt) : '',
       activeWithdraw: activeWithdraw
@@ -1318,7 +1437,7 @@ function createPromoteEngine(deps) {
         minWithdraw: settings.minWithdraw,
         maxWithdraw: settings.maxWithdraw,
         dailyMaxWithdraw: settings.dailyMaxWithdraw,
-        dailyMaxCount: settings.dailyMaxCount,
+        monthlyMaxCount: settings.monthlyMaxCount,
         feeRate: Number(settings.feeRate),
         feeText: rateText(settings.feeRate),
         freezeDay: Number(settings.freezeDay),
@@ -1331,7 +1450,9 @@ function createPromoteEngine(deps) {
         blockedByDebt: debt > round2(settings.debtBlock),
         rateText: rateText(rate),
         level2RateText: rateText(level2Rate),
-        level2Note: `一级下级首次付款按 ${rateText(rate)} 计佣；普通推广人只有一级收入，仅客服绑定账号另按其下级的首次付款计 ${rateText(level2Rate)} 二级佣金`
+        level2Note: csBound
+          ? `客服绑定推广：一级下级首次付款按 ${rateText(rate)} 计佣，二级下级首次付款按 ${rateText(level2Rate)} 计佣`
+          : `普通推广：仅一级佣金，下级首次付款按 ${rateText(rate)} 计佣，无二级佣金`
       }
     }
   }
@@ -1359,7 +1480,7 @@ function createPromoteEngine(deps) {
         paymentId: doc.paymentId,
         sourcePaymentId: doc.sourcePaymentId || doc.paymentId,
         level: Number(doc.level) === 2 ? 2 : 1,
-        levelText: Number(doc.level) === 2 ? '二级佣金' : '一级佣金',
+        levelText: Number(doc.level) === 2 ? '团队佣金' : '推广佣金',
         orderId: doc.orderId || '',
         transactionId: doc.transactionId || '',
         transactionTail: doc.transactionId ? String(doc.transactionId).slice(-6) : '',
@@ -1420,9 +1541,14 @@ function createPromoteEngine(deps) {
         applyAt: Number(doc.applyAt),
         applyText: dateText(doc.applyAt),
         reviewedAt: Number(doc.reviewedAt) || 0,
+        reviewedText: dateTimeText(doc.reviewedAt),
         paidAt: Number(doc.paidAt) || 0,
         paidText: dateTimeText(doc.paidAt),
         payoutDeadlineAt: Number(doc.payoutDeadlineAt) || 0,
+        voucherUrl: doc.voucherUrl || '',
+        bankHolder: doc.bankHolder || '',
+        bankName: doc.bankName || '',
+        bankAccountMasked: doc.bankMasked || maskBankAccount(doc.bankAccount),
         failReason: doc.failReason || '',
         reviewNote: doc.reviewNote || '',
         canCancel: doc.status === WITHDRAW_STATUS.PENDING
@@ -1434,7 +1560,7 @@ function createPromoteEngine(deps) {
    * 提现申请。
    * - requestId 幂等；
    * - 同一时刻只允许一笔未完结（待审核 / 待打款 / 打款中）；
-   * - 每日最多 3 次，单日累计净额上限 20000；
+   * - 每月最多 1 次（驳回 / 取消不占次数），单日累计净额上限 20000；
    * - 欠款超过 500 元禁止申请；
    * - 先按毛额占用余额（available ↓ / withdrawing ↑ 同源同额），再写提现单。
    */
@@ -1443,6 +1569,9 @@ function createPromoteEngine(deps) {
     const user = await mustUser(uid)
     if (user.promoterStatus !== 'active') throw new AppError(CODES.FORBIDDEN, '请先开通推广')
     if (risky(user)) throw new AppError(CODES.FORBIDDEN, '该账号近期退款次数较多，暂不支持提现')
+    /* 提现必须落到本人银行卡：未补全时先让用户去推广中心填写 */
+    const bank = bankViewOf(null, user)
+    if (!bank.bankReady) throw new AppError(CODES.VALIDATION, '请先补充收款银行卡信息后再申请提现')
 
     const requestId = str(d.requestId, { field: '请求号', max: 80 }) || randomId('WQ')
     const existed = await findOne('promoterWithdrawals', { uid, requestId })
@@ -1462,11 +1591,15 @@ function createPromoteEngine(deps) {
         throw new AppError(CODES.CONFLICT, `已有${w.status}的提现单，请等待处理完成后再申请`)
       }
     }
+    /* 次数按月限制：驳回 / 取消的单不占次数，用户改完收款信息可重新申请 */
+    const month = monthRange(current)
+    const monthCount = active.filter((w) => Number(w.applyAt) >= month.start && Number(w.applyAt) < month.end &&
+      w.status !== WITHDRAW_STATUS.REJECTED && w.status !== WITHDRAW_STATUS.CANCELLED).length
+    if (monthCount >= settings.monthlyMaxCount) {
+      throw new AppError(CODES.VALIDATION, `每人每月最多申请 ${settings.monthlyMaxCount} 次，请下月再试`)
+    }
     const range = dayRange(current)
     const today = active.filter((w) => Number(w.applyAt) >= range.start && Number(w.applyAt) < range.end)
-    if (today.length >= settings.dailyMaxCount) {
-      throw new AppError(CODES.VALIDATION, `每人每日最多申请 ${settings.dailyMaxCount} 次，请明天再试`)
-    }
     let todayNet = 0
     for (const w of today) {
       if (w.status === WITHDRAW_STATUS.REJECTED || w.status === WITHDRAW_STATUS.CANCELLED) continue
@@ -1532,6 +1665,11 @@ function createPromoteEngine(deps) {
       status: WITHDRAW_STATUS.PENDING,
       method: '',
       payoutMode: 'manual',
+      /* 银行卡快照：提现单生成后即锁定，财务按此卡线下打款 */
+      bankHolder: bank.bankHolder,
+      bankName: bank.bankName,
+      bankAccount: user.bankAccount,
+      bankMasked: bank.bankAccountMasked,
       applyAt: current,
       appliedAt: current,
       reviewedAt: 0,
@@ -1607,10 +1745,16 @@ function createPromoteEngine(deps) {
       applyAt: Number(doc.applyAt),
       applyText: dateTimeText(doc.applyAt),
       reviewedAt: Number(doc.reviewedAt) || 0,
+      reviewedText: dateTimeText(doc.reviewedAt),
       payoutDeadlineAt: Number(doc.payoutDeadlineAt) || 0,
       payoutNo: doc.payoutNo || '',
       paidAt: Number(doc.paidAt) || 0,
       paidText: dateTimeText(doc.paidAt),
+      /* 打款凭证：用户可在提现记录里查看客服 / 财务上传的转账截图 */
+      voucherUrl: doc.voucherUrl || '',
+      bankHolder: doc.bankHolder || '',
+      bankName: doc.bankName || '',
+      bankAccountMasked: doc.bankMasked || maskBankAccount(doc.bankAccount),
       failReason: doc.failReason || '',
       reviewNote: doc.reviewNote || '',
       canCancel: doc.status === WITHDRAW_STATUS.PENDING
@@ -1822,17 +1966,23 @@ function createPromoteEngine(deps) {
     const current = at()
     const reviewer = str(actor, { field: '审核人', max: 80 }) || 'system'
     const deadline = current + Number(settings.payoutTimeoutHours) * HOUR_MS
+    /* 老提现单可能没有银行卡快照：审核时从用户资料补一份，保证财务有卡可打 */
+    const applicant = await repo.get('users', doc.uid)
+    const bank = bankViewOf(doc, applicant, { full: true })
+    const bankPatch = bank.bankReady && !doc.bankAccount
+      ? { bankHolder: bank.bankHolder, bankName: bank.bankName, bankAccount: bank.bankAccount, bankMasked: bank.bankAccountMasked }
+      : {}
     const res = await repo.updateWhere('promoterWithdrawals', {
       id,
       status: WITHDRAW_STATUS.PENDING
-    }, {
+    }, Object.assign({
       status: WITHDRAW_STATUS.APPROVED,
       reviewedAt: current,
       reviewedBy: reviewer,
       reviewNote: str(d.note, { field: '审核备注', max: 200 }),
       payoutDeadlineAt: deadline,
       updatedAt: current
-    })
+    }, bankPatch))
     if (res.count === 0) {
       const latest = await repo.get('promoterWithdrawals', id)
       if (latest && (latest.status === WITHDRAW_STATUS.APPROVED || latest.status === WITHDRAW_STATUS.PAYING)) {
@@ -2403,7 +2553,9 @@ function createPromoteEngine(deps) {
     let total
     if (keyword) {
       const all = await repo.find('promoterWithdrawals', filter, { sort: { reviewedAt: 1 }, limit: 500 })
-      const hit = all.filter((w) => String(w.id).indexOf(keyword) > -1 || String(w.uid).indexOf(keyword) > -1 || String(w.payoutNo || '').indexOf(keyword) > -1)
+      const uids = await uidsByUserKeyword(keyword)
+      const hit = all.filter((w) => String(w.id).indexOf(keyword) > -1 || String(w.uid).indexOf(keyword) > -1 ||
+        String(w.payoutNo || '').indexOf(keyword) > -1 || uids.has(w.uid))
       total = hit.length
       rows = hit.slice(paging.skip, paging.skip + paging.limit)
     } else {
@@ -2416,9 +2568,13 @@ function createPromoteEngine(deps) {
     }
     const items = []
     for (const w of rows) {
+      const user = await repo.get('users', w.uid)
+      const bank = bankViewOf(w, user, { full: true })
       items.push({
         id: w.id,
         uid: w.uid,
+        userNo: userNoOf(w.uid),
+        nick: (user && (user.nick || user.nickName)) || '',
         amount: round2(w.amount),
         fee: round2(w.fee),
         tax: round2(w.tax),
@@ -2439,6 +2595,11 @@ function createPromoteEngine(deps) {
         payoutAmount: round2(w.payoutAmount),
         paidAt: Number(w.paidAt) || 0,
         voucherUrl: w.voucherUrl || '',
+        bankHolder: bank.bankHolder,
+        bankName: bank.bankName,
+        bankAccount: bank.bankAccount,
+        bankAccountMasked: bank.bankAccountMasked,
+        bankReady: bank.bankReady,
         checkedBy: w.checkedBy || '',
         note: w.note || '',
         failReason: w.failReason || '',
@@ -2667,18 +2828,15 @@ function createPromoteEngine(deps) {
 
   /* ---------------- 管理端 ---------------- */
 
-  async function adminOverview(data) {
-    const p = normalizePaging(data)
-    const settings = await readSettings()
-    const d = data || {}
-    /* 中台按 q 传关键字，历史调用方传 keyword，两者都兼容 */
-    const keyword = str(d.keyword || d.q, { field: '关键词', max: 32 })
-    const statusFilter = str(d.status, { field: '状态', max: 16 })
-    let users = await repo.find('users', { promoterStatus: { $in: ['active', 'blocked'] } }, { limit: 5000 })
-    /* 客服绑定账号同样视为推广人：即使没有线上开通，也要出现在推广名单并可查两级下级 */
-    const csBindings = await repo.find('csBindings', {}, { limit: 5000 })
-    const csMap = new Map(csBindings.map((b) => [b.uid, b]))
+  /**
+   * 推广检索的用户口径：已开通（含封禁）+ 客服绑定账号。
+   * 两类人都可能产生佣金，名单与检索必须用同一口径，
+   * 否则「客服绑定（未开通）」的推广者在佣金明细里按昵称查不到。
+   */
+  async function promoterUsersForSearch(keyword) {
+    const users = await repo.find('users', { promoterStatus: { $in: ['active', 'blocked'] } }, { limit: 5000 })
     const known = new Set(users.map((u) => u.id))
+    const csBindings = await repo.find('csBindings', {}, { limit: 5000 })
     for (const b of csBindings) {
       if (!b.uid || known.has(b.uid)) continue
       const bound = await repo.get('users', b.uid)
@@ -2686,29 +2844,81 @@ function createPromoteEngine(deps) {
       users.push(bound)
       known.add(bound.id)
     }
+    /* 带关键字检索时把未开通推广的普通用户也纳入：
+       管理端需要能搜到任意用户并手动开通推广，不能只搜已开通的人 */
+    const kw = str(keyword, { field: '关键词', max: 64 })
+    if (kw) {
+      const all = await repo.find('users', {}, { limit: 5000 })
+      for (const u of all) {
+        if (known.has(u.id)) continue
+        if (!promoterMatchesKeyword(u, kw)) continue
+        users.push(u)
+        known.add(u.id)
+      }
+    }
+    return { users, csBindings }
+  }
+
+  /* 关键字命中：昵称 / 推广码 / 用户ID（uid 与 userNo 都认） */
+  function promoterMatchesKeyword(u, keyword) {
+    const kw = keyword.toLowerCase()
+    return String(u.nick || u.nickName || '').toLowerCase().includes(kw) ||
+      String(u.id) === keyword ||
+      userNoOf(u.id) === keyword.toUpperCase() ||
+      String(u.refCode || '').toUpperCase() === keyword.toUpperCase()
+  }
+
+  /**
+   * 关键字 → 用户 uid 集合（昵称 / 用户ID，uid 与 userNo 都认）。
+   * 提现单、待打款清单只有 uid，按昵称 / 用户ID 检索必须先落到 uid 集合。
+   */
+  async function uidsByUserKeyword(keyword) {
+    const kw = String(keyword).toLowerCase()
+    const upper = String(keyword).toUpperCase()
+    const users = await repo.find('users', {}, { limit: 5000 })
+    return new Set(users.filter((u) => String(u.id) === keyword ||
+      userNoOf(u.id) === upper ||
+      String(u.nick || u.nickName || '').toLowerCase().includes(kw)).map((u) => u.id))
+  }
+
+  async function adminOverview(data) {
+    const p = normalizePaging(data)
+    const settings = await readSettings()
+    const d = data || {}
+    /* 中台按 q 传关键字，历史调用方传 keyword，两者都兼容 */
+    const keyword = str(d.keyword || d.q, { field: '关键词', max: 64 })
+    const statusFilter = str(d.status, { field: '状态', max: 16 })
+    const searched = await promoterUsersForSearch(keyword)
+    const csBindings = searched.csBindings
+    const csMap = new Map(csBindings.map((b) => [b.uid, b]))
+    let users = searched.users
     if (statusFilter) {
       const want = /封禁|blocked|banned/i.test(statusFilter) ? 'blocked'
-        : /正常|active|normal/i.test(statusFilter) ? 'active' : statusFilter
-      users = users.filter((u) => u.promoterStatus === want)
+        : /正常|active|normal/i.test(statusFilter) ? 'active'
+          : /未开通|none|待开通/i.test(statusFilter) ? 'none' : statusFilter
+      users = users.filter((u) => (u.promoterStatus || 'none') === want)
     }
     if (keyword) {
-      const kw = keyword.toLowerCase()
-      users = users.filter((u) => String(u.nick || u.nickName || '').toLowerCase().includes(kw) || String(u.id).includes(keyword) || String(u.refCode || '').toUpperCase() === keyword.toUpperCase())
+      users = users.filter((u) => promoterMatchesKeyword(u, keyword))
     }
     users.sort((a, b) => (Number(b.promoterEarning) || 0) - (Number(a.promoterEarning) || 0))
     const total = users.length
     const items = users.slice(p.skip, p.skip + p.limit).map((u) => {
       const cs = csMap.get(u.id)
+      const boundByCs = !!cs
       return {
         uid: u.id,
+        userNo: userNoOf(u.id),
         nick: u.nick || u.nickName || '',
         refCode: u.refCode || '',
-        rateText: rateText(settings.commissionRate),
-        level2RateText: rateText(settings.level2Rate),
+        /* 客服绑定用户：一级按专属比例、二级按二级比例；普通推广人只有一级 */
+        rateText: rateText(boundByCs ? settings.csLevel1Rate : settings.commissionRate),
+        level2RateText: boundByCs ? rateText(settings.level2Rate) : '',
+        promoteType: boundByCs ? 'cs' : 'normal',
         rateEditable: false,
         status: u.promoterStatus || 'none',
         statusText: u.promoterStatus === 'blocked' ? '已封禁' : u.promoterStatus === 'active' ? '正常' : cs ? '客服绑定（未开通）' : '未开通',
-        csBound: !!cs,
+        csBound: boundByCs,
         csName: (cs && (cs.csName || cs.csId)) || '',
         earning: round2(u.promoterEarning),
         level1Earning: 0,
@@ -2726,7 +2936,10 @@ function createPromoteEngine(deps) {
       }
     })
     for (const item of items) {
-      const level1 = await repo.find('referralBindings', { refUid: item.uid }, { limit: 5000 })
+      /* 只统计开通推广之后建立的绑定：开通前分享拉来的下级不计入人数与名单 */
+      const allLevel1 = await repo.find('referralBindings', { refUid: item.uid }, { limit: 5000 })
+      const level1 = csMap.get(item.uid) ? allLevel1
+        : allLevel1.filter((b) => item.openedAt && (Number(b.boundAt) || 0) >= item.openedAt)
       item.level1Count = level1.length
       item.referrals = level1.length
       item.level2Count = level1.length
@@ -2745,8 +2958,10 @@ function createPromoteEngine(deps) {
       total,
       items,
       commissionRate: settings.commissionRate,
+      csLevel1Rate: settings.csLevel1Rate,
       level2Rate: settings.level2Rate,
       rateText: rateText(settings.commissionRate),
+      csLevel1RateText: rateText(settings.csLevel1Rate),
       level2RateText: rateText(settings.level2Rate),
       payoutMode: 'manual',
       autoApprove: false
@@ -2766,12 +2981,19 @@ function createPromoteEngine(deps) {
     if (!user) throw new AppError(CODES.NOT_FOUND, '推广人不存在')
     const cs = await findOne('csBindings', { uid })
 
-    /* 一级：直接绑定到本人；二级：一级下级的直接下级（同一人可同时出现在不同人的名单里） */
-    const level1Bindings = await repo.find('referralBindings', { refUid: uid }, { sort: { field: 'boundAt', dir: 'desc' }, limit: 5000 })
-    const level2Bindings = []
-    for (const b of level1Bindings) {
-      const rows = await repo.find('referralBindings', { refUid: b.uid }, { sort: { field: 'boundAt', dir: 'desc' }, limit: 5000 })
-      for (const row of rows) level2Bindings.push(Object.assign({ parentUid: b.uid }, row))
+    /* 一级：直接绑定到本人；二级：一级下级的直接下级
+       （二级佣金仅客服绑定账号可计，名单仍完整返回，由前端按绑定状态控制展示）
+       只列出「开通推广之后」绑定的下级：开通前分享拉来的不计入名单（客服绑定账号不受此限） */
+    const openedAt = Number(user.promoterOpenedAt || user.promoterSince) || 0
+    const allLevel1 = await repo.find('referralBindings', { refUid: uid }, { sort: { field: 'boundAt', dir: 'desc' }, limit: 5000 })
+    const level1Bindings = cs ? allLevel1
+      : allLevel1.filter((b) => openedAt && (Number(b.boundAt) || 0) >= openedAt)
+    let level2Bindings = []
+    if (level1Bindings.length) {
+      const rows = await repo.find('referralBindings', {
+        refUid: { $in: level1Bindings.map((b) => b.uid) }
+      }, { sort: { field: 'boundAt', dir: 'desc' }, limit: 5000 })
+      level2Bindings = rows.map((row) => Object.assign({ parentUid: row.refUid }, row))
     }
 
     /* 下级用户与会员开通情况：一次批量取回，避免逐条查询 */
@@ -2780,21 +3002,44 @@ function createPromoteEngine(deps) {
     ))
     const userMap = new Map()
     const accessMap = new Map()
+    const paidMap = new Map()
     if (uids.length) {
       const list = await repo.find('users', { id: { $in: uids } }, { limit: 5000 })
       for (const u of list) userMap.set(u.id, u)
       const access = await repo.find('bizAccess', { id: { $in: uids } }, { limit: 5000 })
       for (const a of access) accessMap.set(a.id, a)
+      /* 下级付款情况：以已确认的会员收款为准，用于统计「多少下级付过款 / 付款比例」 */
+      const pays = await repo.find('payments', { uid: { $in: uids }, status: '已确认' }, { limit: 5000 })
+      for (const p of pays) {
+        if (p.bizType && p.bizType !== '会员续费') continue
+        const row = paidMap.get(p.uid) || { amount: 0, count: 0, firstAt: 0, lastAt: 0 }
+        row.amount = round2(row.amount + round2(p.received != null ? p.received : p.amount))
+        row.count += 1
+        const when = Number(p.paidAt || p.confirmedAt || p.createdAt) || 0
+        if (when && (!row.firstAt || when < row.firstAt)) row.firstAt = when
+        if (when > row.lastAt) row.lastAt = when
+        paidMap.set(p.uid, row)
+      }
     }
     const current = at()
+    /* 佣金台账一次取回：既用于汇总，也用于按下级拆分「贡献佣金」 */
+    const ownCommissions = await repo.find('commissions', { uid }, { limit: 5000 })
+    const commissionMap = new Map()
+    for (const row of ownCommissions) {
+      if (row.status === COMMISSION_STATUS.REVERSED) continue
+      const key = (Number(row.level) === 2 ? 2 : 1) + ':' + row.buyerUid
+      commissionMap.set(key, round2((commissionMap.get(key) || 0) + round2(row.amount)))
+    }
     const rowOf = (binding, level) => {
       const child = userMap.get(binding.uid) || {}
       const access = accessMap.get(binding.uid) || {}
+      const pay = paidMap.get(binding.uid) || {}
       const expireAt = Number(access.expireAt) || 0
       const memberActive = expireAt > current
       const parent = level === 2 ? (userMap.get(binding.parentUid) || {}) : null
       return {
         uid: binding.uid,
+        userNo: userNoOf(binding.uid),
         nick: child.nick || child.nickName || '',
         level,
         parentUid: level === 2 ? binding.parentUid : '',
@@ -2806,23 +3051,84 @@ function createPromoteEngine(deps) {
         memberText: memberActive ? `会员至 ${dateText(expireAt).slice(0, 10)}` : '未开通会员',
         memberExpireAt: expireAt,
         boundAt: Number(binding.boundAt) || 0,
-        firstOrderAt: Number(binding.firstOrderAt) || 0
+        firstOrderAt: Number(binding.firstOrderAt) || 0,
+        paid: Number(pay.count) > 0,
+        paidCount: Number(pay.count) || 0,
+        paidAmount: round2(pay.amount),
+        paidAt: Number(pay.firstAt) || 0,
+        lastPaidAt: Number(pay.lastAt) || 0,
+        commission: round2(commissionMap.get(level + ':' + binding.uid) || 0)
       }
     }
     const level1 = level1Bindings.map((b) => rowOf(b, 1))
     const level2 = level2Bindings.map((b) => rowOf(b, 2))
+    /* 付款漏斗：下级总数 / 已付款人数 / 付款比例 / 付款金额 */
+    const statOf = (rows) => {
+      const paidRows = rows.filter((r) => r.paid)
+      return {
+        total: rows.length,
+        paid: paidRows.length,
+        rate: rows.length ? Math.round((paidRows.length / rows.length) * 1000) / 10 : 0,
+        paidAmount: round2(paidRows.reduce((sum, r) => sum + round2(r.paidAmount), 0)),
+        member: rows.filter((r) => r.member).length,
+        promoter: rows.filter((r) => r.promoterStatus === 'active').length
+      }
+    }
+    const funnel = {
+      level1: statOf(level1),
+      level2: statOf(level2),
+      total: statOf(level1.concat(level2))
+    }
     /* 两级收入按佣金台账统计：与推广名单口径一致，避免依赖用户余额字段的聚合口径 */
     let level1Earning = 0
     let level2Earning = 0
-    const ownCommissions = await repo.find('commissions', { uid }, { limit: 5000 })
+    const commissionStats = {
+      count: 0,
+      total: 0,
+      net: 0,
+      pending: 0,
+      available: 0,
+      withdrawn: 0,
+      reversed: 0,
+      level1Count: 0,
+      level2Count: 0
+    }
     for (const row of ownCommissions) {
-      if (row.status === COMMISSION_STATUS.REVERSED) continue
-      if (Number(row.level) === 2) level2Earning = round2(level2Earning + round2(row.amount))
-      else level1Earning = round2(level1Earning + round2(row.amount))
+      const gross = round2(row.amount)
+      if (row.status === COMMISSION_STATUS.REVERSED) {
+        commissionStats.reversed = round2(commissionStats.reversed + gross)
+        continue
+      }
+      commissionStats.count += 1
+      commissionStats.total = round2(commissionStats.total + gross)
+      commissionStats.net = round2(commissionStats.net + round2(row.netAmount))
+      if (row.status === COMMISSION_STATUS.PENDING) commissionStats.pending = round2(commissionStats.pending + gross)
+      if (row.status === COMMISSION_STATUS.AVAILABLE) commissionStats.available = round2(commissionStats.available + gross)
+      if (row.status === COMMISSION_STATUS.WITHDRAWN) commissionStats.withdrawn = round2(commissionStats.withdrawn + gross)
+      if (Number(row.level) === 2) {
+        level2Earning = round2(level2Earning + gross)
+        commissionStats.level2Count += 1
+      } else {
+        level1Earning = round2(level1Earning + gross)
+        commissionStats.level1Count += 1
+      }
+    }
+    /* 提现汇总：累计已打款 / 在处理中，与提现记录同口径 */
+    const withdrawalRows = await repo.find('promoterWithdrawals', { uid }, { limit: 5000 })
+    let withdrawnAmount = 0
+    let withdrawingAmount = 0
+    let withdrawnCount = 0
+    for (const w of withdrawalRows) {
+      if (w.status === WITHDRAW_STATUS.PAID) {
+        withdrawnAmount = round2(withdrawnAmount + round2(w.amount))
+        withdrawnCount += 1
+      }
+      if (isOccupyingWithdrawal(w.status)) withdrawingAmount = round2(withdrawingAmount + round2(w.amount))
     }
 
     return {
       uid,
+      userNo: userNoOf(uid),
       nick: user.nick || user.nickName || '',
       refCode: user.refCode || '',
       status: user.promoterStatus || 'none',
@@ -2837,9 +3143,23 @@ function createPromoteEngine(deps) {
       available: round2(user.promoterAvailable),
       withdrawn: round2(user.promoterWithdrawn),
       debt: round2(user.promoterDebt),
-      rateText: rateText(settings.commissionRate),
-      level2RateText: rateText(settings.level2Rate),
+      rateText: rateText(cs ? settings.csLevel1Rate : settings.commissionRate),
+      level2RateText: cs ? rateText(settings.level2Rate) : '',
+      promoteType: cs ? 'cs' : 'normal',
       counts: { level1: level1.length, level2: level2.length, total: level1.length + level2.length },
+      /* 付款漏斗：下级用户中有多少人付过款、付款比例、累计付款金额 */
+      funnel,
+      paidAmount: funnel.total.paidAmount,
+      paidUsers: funnel.total.paid,
+      paidRate: funnel.total.rate,
+      /* 佣金台账汇总与提现汇总，用户详情「推广」页直接展示 */
+      commissionStats,
+      withdrawStats: {
+        total: withdrawalRows.length,
+        withdrawn: withdrawnAmount,
+        withdrawing: withdrawingAmount,
+        paidCount: withdrawnCount
+      },
       /* 开通情况汇总：一级 / 二级分别有多少人已开通会员、已开通推广 */
       opened: {
         level1Member: level1.filter((r) => r.member).length,
@@ -2857,14 +3177,11 @@ function createPromoteEngine(deps) {
     const d = data || {}
     const query = {}
     if (d.status) query.status = str(d.status, { field: '状态', max: 16 })
-    /* 推广者检索支持用户ID / 昵称 / 推广码，中台输入框即这三类口径 */
+    /* 推广者检索支持用户ID（uid / userNo）/ 昵称 / 推广码，中台输入框即这三类口径 */
     const uidInput = str(d.uid || d.q, { field: '推广者', max: 64 })
     if (uidInput) {
-      const all = await repo.find('users', { promoterStatus: { $in: ['active', 'blocked'] } }, { limit: 5000 })
-      const kw = uidInput.toLowerCase()
-      const uids = all.filter((u) => String(u.id) === uidInput ||
-        String(u.nick || u.nickName || '').toLowerCase().includes(kw) ||
-        String(u.refCode || '').toUpperCase() === uidInput.toUpperCase()).map((u) => u.id)
+      const searched = await promoterUsersForSearch()
+      const uids = searched.users.filter((u) => promoterMatchesKeyword(u, uidInput)).map((u) => u.id)
       query.uid = uids.length ? { $in: uids } : uidInput
     }
     if (d.from || d.to) {
@@ -2877,6 +3194,13 @@ function createPromoteEngine(deps) {
     }
     const rows = await repo.find('commissions', query, { sort: { createdAt: -1 }, skip: p.skip, limit: p.limit })
     const total = await repo.count('commissions', query)
+    /* 佣金明细只有 uid：补昵称 / 用户ID，检索命中后管理端能直接核对是谁 */
+    const userMap = new Map()
+    const uids = Array.from(new Set(rows.map((row) => row.uid).filter(Boolean)))
+    if (uids.length) {
+      const users = await repo.find('users', { id: { $in: uids } }, { limit: 5000 })
+      for (const u of users) userMap.set(u.id, u)
+    }
     return {
       page: p.page,
       limit: p.limit,
@@ -2884,7 +3208,10 @@ function createPromoteEngine(deps) {
       items: rows.map((row) => ({
         id: row.id,
         uid: row.uid,
+        userNo: userNoOf(row.uid),
+        nick: (userMap.get(row.uid) && (userMap.get(row.uid).nick || userMap.get(row.uid).nickName)) || '',
         buyerUid: row.buyerUid,
+        level: Number(row.level) === 2 ? 2 : 1,
         paymentId: row.paymentId,
         transactionId: row.transactionId || '',
         planLabel: row.planLabel || '',
@@ -2926,14 +3253,11 @@ function createPromoteEngine(deps) {
     let rows
     let total
     if (keyword) {
-      const kw = keyword.toLowerCase()
-      const users = await repo.find('users', {}, { limit: 5000 })
-      const uids = users.filter((u) => String(u.id) === keyword ||
-        String(u.nick || u.nickName || '').toLowerCase().includes(kw)).map((u) => u.id)
+      const uids = await uidsByUserKeyword(keyword)
       const all = await repo.find('promoterWithdrawals', query, { sort: { applyAt: -1 }, limit: 5000 })
       const hit = all.filter((w) => String(w.id).indexOf(keyword) > -1 ||
         String(w.uid).indexOf(keyword) > -1 || String(w.payoutNo || '').indexOf(keyword) > -1 ||
-        uids.indexOf(w.uid) > -1)
+        uids.has(w.uid))
       total = hit.length
       rows = hit.slice(p.skip, p.skip + p.limit)
     } else {
@@ -2943,9 +3267,11 @@ function createPromoteEngine(deps) {
     const items = []
     for (const row of rows) {
       const user = await repo.get('users', row.uid)
+      const bank = bankViewOf(row, user, { full: true })
       items.push({
         id: row.id,
         uid: row.uid,
+        userNo: userNoOf(row.uid),
         nick: (user && (user.nick || user.nickName)) || '',
         amount: round2(row.amount),
         fee: round2(row.fee),
@@ -2964,6 +3290,11 @@ function createPromoteEngine(deps) {
         applyAt: Number(row.applyAt),
         paidAt: Number(row.paidAt) || 0,
         voucherUrl: row.voucherUrl || '',
+        bankHolder: bank.bankHolder,
+        bankName: bank.bankName,
+        bankAccount: bank.bankAccount,
+        bankAccountMasked: bank.bankAccountMasked,
+        bankReady: bank.bankReady,
         checkedBy: row.checkedBy || '',
         note: row.note || '',
         reviewedBy: row.reviewedBy || '',
@@ -3041,7 +3372,11 @@ function createPromoteEngine(deps) {
       payoutTimeout,
       reconcileDiff,
       commissionRate: settings.commissionRate,
+      csLevel1Rate: settings.csLevel1Rate,
+      level2Rate: settings.level2Rate,
       rateText: rateText(settings.commissionRate),
+      csLevel1RateText: rateText(settings.csLevel1Rate),
+      level2RateText: rateText(settings.level2Rate),
       payoutMode: 'manual',
       profitSharingEnabled: false,
       payDay: 0,
@@ -3066,14 +3401,15 @@ function createPromoteEngine(deps) {
       next[key] = n
     }
     num('commissionRate', PROMOTE_RATE_MIN, PROMOTE_RATE_MAX)
+    num('csLevel1Rate', PROMOTE_RATE_MIN, PROMOTE_RATE_MAX)
     num('level2Rate', PROMOTE_RATE_MIN, PROMOTE_RATE_MAX)
     num('rateMin', PROMOTE_RATE_MIN, PROMOTE_RATE_MAX)
     num('rateMax', PROMOTE_RATE_MIN, PROMOTE_RATE_MAX)
     num('feeRate', 0, 0.2)
-    num('minWithdraw', 1, 20000)
+    num('minWithdraw', 0.01, 20000)
     num('maxWithdraw', 1, 50000)
     num('dailyMaxWithdraw', 1, 100000)
-    num('dailyMaxCount', 1, 10)
+    num('monthlyMaxCount', 1, 12)
     num('freezeDay', 1, 28)
     num('manualDualCheckThreshold', 1, 100000)
     num('payoutTimeoutHours', 1, 168)
@@ -3088,12 +3424,18 @@ function createPromoteEngine(deps) {
     if (next.level2Rate < next.rateMin || next.level2Rate > next.rateMax) {
       throw new AppError(CODES.VALIDATION, '二级佣金比例必须在最低 / 最高比例区间内')
     }
+    if (next.csLevel1Rate < next.rateMin || next.csLevel1Rate > next.rateMax) {
+      throw new AppError(CODES.VALIDATION, '客服绑定用户一级佣金比例必须在最低 / 最高比例区间内')
+    }
     /* 分账比例 × 95% 不得超过微信限制（两级分别校验） */
     if (round2(next.commissionRate * (1 - Number(next.feeRate))) > next.maxSplitRatio + 1e-9) {
       throw new AppError(CODES.VALIDATION, '佣金比例 × 95% 不得超过微信分账比例上限')
     }
     if (round2(next.level2Rate * (1 - Number(next.feeRate))) > next.maxSplitRatio + 1e-9) {
       throw new AppError(CODES.VALIDATION, '二级佣金比例 × 95% 不得超过微信分账比例上限')
+    }
+    if (round2(next.csLevel1Rate * (1 - Number(next.feeRate))) > next.maxSplitRatio + 1e-9) {
+      throw new AppError(CODES.VALIDATION, '客服绑定用户一级佣金比例 × 95% 不得超过微信分账比例上限')
     }
     if (next.maxWithdraw < next.minWithdraw) throw new AppError(CODES.VALIDATION, '单笔上限不能低于单笔下限')
     if (d.taxEnabled !== undefined) next.taxEnabled = d.taxEnabled === true
@@ -3164,6 +3506,52 @@ function createPromoteEngine(deps) {
       at: current
     })
     return { uid, status, rejected }
+  }
+
+  /**
+   * 管理端手动开通推广：用户端开通需要本人签署协议，这里由运营 / 客服代开通。
+   * 只对「从未开通」的账号生效；已封禁的走解封（setPromoterStatus active），避免绕过封禁。
+   * 开通后立即生成推广码，分享任意页面即可绑定下级。
+   */
+  async function openPromoterByAdmin(data, actor) {
+    const d = data || {}
+    const uid = str(d.uid, { field: '用户', max: 80 })
+    if (!uid) throw new AppError(CODES.VALIDATION, '缺少用户')
+    const user = await repo.get('users', uid)
+    if (!user) throw new AppError(CODES.NOT_FOUND, '用户不存在')
+    if (user.status === '停用') throw new AppError(CODES.FORBIDDEN, '账号已停用，请先恢复账号再开通推广')
+    if (user.promoterStatus === 'blocked') throw new AppError(CODES.VALIDATION, '该用户推广已被封禁，请使用「解封」')
+    if (user.promoterStatus === 'active') {
+      return { uid, opened: false, reason: 'already', refCode: user.refCode || '', openedAt: Number(user.promoterOpenedAt || user.promoterSince) || 0 }
+    }
+    const openedAt = at()
+    const settings = await readSettings()
+    const refCode = await ensureRefCode(uid)
+    await repo.updateWhere('users', { id: uid }, {
+      promoterStatus: 'active',
+      promoterSince: Number(user.promoterSince) || openedAt,
+      promoterOpenedAt: openedAt,
+      promoterStatusReason: str(d.reason, { field: '开通原因', max: 200 }) || '管理端开通',
+      promoterStatusAt: openedAt,
+      refCode,
+      promoterDebt: round2(user.promoterDebt || 0),
+      updatedAt: openedAt
+    })
+    await appendAudit(repo, {
+      actorType: 'staff',
+      actorId: str(actor, { field: '操作人', max: 80 }) || 'system',
+      action: 'promote.open.admin',
+      target: uid,
+      reason: `管理端开通推广 · 平台比例 ${rateText(settings.commissionRate)} · 推广码 ${refCode}`,
+      at: openedAt
+    })
+    await notifyUser(
+      uid,
+      '推广已开通',
+      `平台已为你开通推广权限，推广码 ${refCode}。在「我的 · 推广中心」即可查看；分享任意页面给好友，好友打开并登录即自动绑定。`,
+      'promote'
+    )
+    return { uid, opened: true, refCode, openedAt }
   }
 
   /**
@@ -3439,7 +3827,9 @@ function createPromoteEngine(deps) {
     readSettings,
     /* 用户端 */
     bindOnLogin,
+    ensureRefCode,
     openPromoter,
+    saveBank,
     agreementInfo,
     summary,
     listCommissions,
@@ -3466,7 +3856,8 @@ function createPromoteEngine(deps) {
     adminWithdrawals,
     adminStats,
     saveSettings,
-    setPromoterStatus
+    setPromoterStatus,
+    openPromoterByAdmin
   }
 }
 
@@ -3476,6 +3867,7 @@ function createPromoteUserHandlers(deps) {
     'promote.summary': async (data, ctx) => engine.summary(ctx.openid),
     'promote.agreement': async () => engine.agreementInfo(),
     'promote.open': async (data, ctx) => engine.openPromoter(ctx.openid, data),
+    'promote.saveBank': async (data, ctx) => engine.saveBank(ctx.openid, data),
     'promote.bind': async (data, ctx) => engine.bindOnLogin(ctx.openid, data && data.ref, 'manual'),
     'promote.commissions': async (data, ctx) => engine.listCommissions(ctx.openid, data),
     'promote.withdrawals': async (data, ctx) => engine.listWithdrawals(ctx.openid, data),
@@ -3495,6 +3887,7 @@ function createPromoteAdminHandlers(deps) {
     'promote.settings': async () => engine.readSettings(),
     'promote.saveSettings': async (data, ctx) => engine.saveSettings(data, ctx.accountId),
     'promote.setStatus': async (data, ctx) => engine.setPromoterStatus(data, ctx.accountId),
+    'promote.openByAdmin': async (data, ctx) => engine.openPromoterByAdmin(data, ctx.accountId),
     'promote.withdrawApprove': async (data, ctx) => engine.withdrawApprove(data, ctx.accountId),
     'promote.withdrawReject': async (data, ctx) => engine.withdrawReject(data, ctx.accountId),
     'promote.payoutList': async (data) => engine.payoutList(data),
@@ -3525,7 +3918,7 @@ module.exports = {
   WITHDRAW_MIN,
   WITHDRAW_MAX,
   WITHDRAW_DAILY_MAX,
-  WITHDRAW_DAILY_COUNT,
+  WITHDRAW_MONTHLY_COUNT,
   COMMISSION_STATUS,
   WITHDRAW_STATUS,
   PAYOUT_ITEM_STATUS,

@@ -1006,6 +1006,46 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 .modal .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; }
 .modal .form-grid .full { grid-column: 1 / -1; }
 
+/* ============ 代采代售 · 平台修改委托（与小程序发布表单同款） ============ */
+.ag-sub { display: flex; align-items: baseline; gap: 8px; margin: 18px 0 8px; }
+.ag-sub .t { font-size: 13px; font-weight: 700; }
+.ag-sub .d { font-size: 11px; color: var(--muted-2); }
+.ag-chips { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px; }
+.ag-chip {
+  border: 1px solid var(--line-strong); background: #fff; color: var(--ink-2);
+  border-radius: 999px; padding: 5px 12px; font-size: 12px; line-height: 1.4;
+  cursor: pointer; font-family: inherit; transition: all .14s ease;
+}
+.ag-chip:hover { border-color: var(--brand); color: var(--brand); }
+.ag-chip.on { border-color: var(--brand); background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+.ag-dev-search { display: flex; gap: 8px; align-items: center; }
+.ag-dev-search input { flex: 1; }
+.ag-dev-results {
+  margin-top: 6px; max-height: 220px; overflow-y: auto;
+  border: 1px solid var(--line-strong); border-radius: 10px; background: #fff;
+}
+.ag-dev-result { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--line); }
+.ag-dev-result:last-child { border-bottom: 0; }
+.ag-dev-result:hover { background: var(--brand-soft); }
+.ag-dev-result .n { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.ag-dev-result .p { font-size: 11px; color: var(--muted-2); margin-top: 2px; }
+.ag-dev-empty { padding: 10px 12px; font-size: 11.5px; color: var(--muted-2); }
+.ag-dev-path { margin-top: 6px; font-size: 11.5px; color: var(--muted-2); }
+.ag-dev-path b { color: var(--ink-2); }
+.ag-cond-add { display: flex; gap: 8px; margin-top: 8px; }
+.ag-cond-add input { flex: 1; min-width: 0; }
+.ag-flow-row {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 8px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px;
+}
+.ag-flow-idx {
+  flex: 0 0 22px; height: 22px; border-radius: 50%; background: var(--bg);
+  display: grid; place-items: center; font-size: 11px; color: var(--muted-2); margin-top: 5px;
+}
+.ag-flow-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.ag-flow-acts { display: flex; gap: 4px; }
+.ag-flow-empty { font-size: 11.5px; color: var(--muted-2); padding: 4px 2px 8px; }
+
 /* 方案选择卡 */
 .plan-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
 .plan-card {
@@ -1059,6 +1099,21 @@ table.tbl { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 .risk-card .r-detail { font-size: 11.5px; color: var(--muted); margin-top: 6px; line-height: 1.6; }
 .risk-card .r-foot { display: flex; align-items: center; gap: 8px; margin-top: 9px; font-size: 11px; color: var(--muted-2); }
 .risk-card .r-foot .actions { margin-left: auto; display: flex; gap: 5px; }
+.risk-card .r-pick { width: 15px; height: 15px; accent-color: var(--brand); cursor: pointer; flex: none; }
+.risk-batch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  flex-wrap: wrap;
+}
+.risk-batch .risk-pick-all { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); cursor: pointer; }
+.risk-batch .risk-pick-all input { width: 15px; height: 15px; accent-color: var(--brand); cursor: pointer; }
+.risk-batch b { color: var(--brand); }
 
 /* 直聊监管 */
 .chat-layout { display: grid; grid-template-columns: 300px minmax(0,1fr); gap: 16px; min-height: 520px; }
@@ -1824,4 +1879,43 @@ tr.row-link:hover td { background: var(--bg); }
 }
 @media (max-width: 1080px) {
   .cf-page .cf-grid { grid-template-columns: 170px minmax(0, 1fr) minmax(230px, .8fr); }
+}
+
+/* 客服常用语：回复框上方常驻，全部展开换行展示，不需要横向滑动 */
+.quick-replies {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 2px;
+}
+.quick-replies .qr-label {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted-2);
+  letter-spacing: .04em;
+}
+.qr-chip {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink-2);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.qr-chip:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: #fff;
+}
+/* 常用语末尾的编辑入口：虚线区分，点击后可添加 / 删除当前阶段话术 */
+.qr-chip.qr-manage {
+  border-style: dashed;
+  border-color: var(--brand);
+  color: var(--brand);
 }

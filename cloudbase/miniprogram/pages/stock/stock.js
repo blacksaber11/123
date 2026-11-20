@@ -5,10 +5,11 @@ const { getUser } = require('../../utils/auth')
 const { request, uploadFile } = require('../../utils/request')
 const { ensureProfileReady, handleProfileError } = require('../../utils/profile-ready')
 const { normSearch, searchHit } = require('../../utils/model')
-const M = require('../../utils/mock')
+const catalog = require('../../utils/catalog')
 
-const DEVICE_TREE = M.DEVICE_TREE || {}
-const CATS = Object.keys(DEVICE_TREE)
+/* 设备目录以服务端为准：首次渲染先用本机缓存 / 内置目录，联网后在 refreshCatalog 替换 */
+let DEVICE_TREE = catalog.currentTree()
+let CATS = catalog.currentCats()
 const CONDS = stock.CONDS
 const FILTERS = [
   { key: 'all', label: '全部' },
@@ -155,10 +156,24 @@ Page({
     this.setData({ city: city, form: emptyForm(city) })
     this.refresh()
     this.syncCloud()
+    this.refreshCatalog()
   },
 
   onShow() {
     this.refresh()
+    /* 管理端增删型号后返回本页：目录内存缓存 60s 内不重复请求 */
+    this.refreshCatalog()
+  },
+
+  /* 型号目录以服务端为准：替换搜索索引，添加库存时的型号匹配立刻跟上 */
+  refreshCatalog() {
+    catalog.loadCatalog().then((res) => {
+      if (!res || !res.tree) return
+      DEVICE_TREE = res.tree
+      CATS = res.cats && res.cats.length ? res.cats : Object.keys(res.tree)
+      deviceFlat = null
+      if (this.data.devKw) this.setData({ devResults: matchDevices(this.data.devKw) })
+    }).catch(() => {})
   },
 
   /* 云端优先：与本地按 id 合并（以最近更新时间为准），避免离线保存的记录被覆盖；

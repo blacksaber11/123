@@ -10,9 +10,11 @@
  * 2. 现货盘：平台在售商品与用户粘贴的报价按「品类 + 型号 + 城市」聚合，
  *    买价取最高预算、卖价取最低报价；用户粘贴的报价视为卖方报价，24 小时有效。
  * 3. 资讯：官方资讯与用户投稿都发布即展示，不审核；违规时由平台下架并告知原因。
- * 4. 商机：已开通（99 元 / 月）且库存匹配的用户可领取需求 / 联系代采代售委托方。
- *    用户可以直接在标题、说明、备注、材料名称里填写手机号或微信号，平台不拦截、不删除；
- *    只有「公开主体」的发布内容会进入商机池。
+ * 4. 商机：普通发布（visibility=public）的内容自动进入匹配池，私密发布不进池；
+ *    所有用户默认参与匹配，非会员也能收到提醒并看到全部匹配条目的脱敏信息，
+ *    会员（99 元 / 月）可解锁联系方式并领取商机。
+ *    是否公开主体不再是进池 / 领取 / 提醒的门槛，只影响主体信息的脱敏展示与
+ *    「只看公开主体」筛选（商机展示设置 onlyOpenSubject）。
  */
 
 const { AppError, CODES } = require('./errors')
@@ -33,7 +35,11 @@ const { randomId, sha256Hex, decryptField, userNoOf } = require('./crypto')
 const { encryptFields, decryptFieldOf } = require('./secrets')
 const { assertNoPlaintextContactAllowingPhone } = require('./projection')
 const { appendAudit } = require('./audit')
+/* 浏览量口径与商品 / 求购一致：同一用户 30 分钟内只计一次 */
+const { windowStartOf, VIEW_DEDUPE_MS } = require('./insights')
 const { createPromoteEngine } = require('./promote')
+/* 用户黑名单：内容可见性与发布提醒按拉黑关系过滤 */
+const { isBlocked, blockedPeerIds } = require('./blocks')
 const { CS_STATUS, createCsEngine } = require('./cs')
 /* 咨询工单阶段机：成交 / 收款主链路据此推进客服标准流程 */
 const {
@@ -42,6 +48,7 @@ const {
   ticketStateOf,
   stageOf: consultStageOf,
   stageLabel: consultStageLabel,
+  stageIndex: consultStageIndex,
   advance: advanceConsultStage
 } = require('./consultflow')
 const {
@@ -55,6 +62,8 @@ const {
   CURRENCIES,
   DEFAULT_CURRENCY,
   LARGE_AMOUNT_THRESHOLD,
+  MEDIA_MAX_BYTES,
+  MEDIA_SIZE_TEXT,
   LEAD_STATUS,
   CONSULT_STAGE,
   TIERS,
@@ -95,13 +104,21 @@ async function consultLeadOfAgency(repo, agencyId) {
     if (locked) return locked
   }
   const claimUid = String((agency && agency.claimUid) || '')
-  const rows = await repo.find('leads', { targetType: 'agency', agencyId: id }, { limit: 200 })
+  const rows = (await repo.find('leads', { targetType: 'agency', agencyId: id }, { limit: 200 }))
+    /* 上架审核工单不是咨询工单，不能参与成交 / 收款 / 退款链路 */
+    .filter((row) => row.ticketKind !== 'audit')
   if (claimUid) {
     const hit = rows.find((row) => row.uid === claimUid)
     if (hit) return hit
   }
   const open = rows.find((row) => row.ticketState !== TICKET_STATE.INVALID && row.status !== LEAD_STATUS.CLOSED)
-  return open || rows[0] || null
+  if (open) return open
+  /* 工单已全部结束（例如退款冲正需要把 done / paid 回退）：
+     取阶段最靠后的一条，保证收款 / 退款能作用在真正走到收款环节的工单上 */
+  const sorted = rows
+    .filter((row) => row.ticketState !== TICKET_STATE.INVALID)
+    .sort((a, b) => consultStageIndex(b) - consultStageIndex(a))
+  return sorted[0] || rows[0] || null
 }
 
 /**
@@ -113,7 +130,7 @@ async function inheritedAgencyCs(repo, agencyId, at) {
   const id = String(agencyId || '')
   if (!id) return null
   const rows = await repo.find('leads', { targetType: 'agency', agencyId: id }, { limit: 200 })
-  const hit = rows.find((row) => row && row.assignedAccount &&
+  const hit = rows.find((row) => row && row.ticketKind !== 'audit' && row.assignedAccount &&
     row.ticketState !== TICKET_STATE.INVALID && row.status !== LEAD_STATUS.CLOSED)
   if (!hit) return null
   return {
@@ -125,6 +142,118 @@ async function inheritedAgencyCs(repo, agencyId, at) {
     csClaimedAt: Number(hit.csClaimedAt || hit.assignedAt) || at,
     csStatus: CS_STATUS.SERVING
   }
+}
+
+/**
+ * 委托上架审核工单：委托提交 / 重新提交后立即在工作台生成一条审核工单，
+ * 客服领取并核对委托内容，通过或驳回后工单自动收尾。
+ * 一条委托只保留一条审核工单，重新提交时回到待领取，历史记录继续累积在 stageHistory。
+ */
+async function ensureAgencyAuditTicket(repo, agency, at, options) {
+  const doc = agency || {}
+  if (!doc.id) return null
+  const opts = options || {}
+  const id = 'au' + sha256Hex(`agency-audit:${doc.id}`).slice(0, 24)
+  const summary = [doc.kind || '', doc.item || '', doc.city || ''].filter(Boolean).join(' · ')
+  const step = { stage: 'audit', at, by: '系统', note: opts.note || '等待平台审核上架' }
+  const existing = await repo.get('leads', id)
+  if (existing) {
+    const history = (Array.isArray(existing.stageHistory) ? existing.stageHistory : []).concat([step])
+    await repo.updateWhere('leads', { id }, {
+      status: LEAD_STATUS.PENDING,
+      ticketState: TICKET_STATE.TICKETED,
+      serviceStage: 'audit',
+      stageAt: at,
+      stageHistory: history.slice(-20),
+      auditResult: '',
+      auditNote: '',
+      auditBy: '',
+      auditAt: 0,
+      /* 重新进入待领取，避免旧客服不在线时卡住审核 */
+      assignedTo: '',
+      assignedAccount: '',
+      assignedAt: 0,
+      csStatus: CS_STATUS.WAITING,
+      csClaimedAt: 0,
+      csId: '',
+      csName: '',
+      agencySide: doc.side || existing.agencySide || '',
+      agencyTitle: doc.item || existing.agencyTitle || '',
+      formSummary: summary || existing.formSummary || '',
+      updatedAt: at
+    })
+    return id
+  }
+  await repo.insert('leads', {
+    id,
+    uid: doc.ownerId || '',
+    source: opts.source || '委托审核',
+    ticketKind: 'audit',
+    targetType: 'agency',
+    targetId: doc.id,
+    agencyId: doc.id,
+    agencySide: doc.side || '',
+    agencyTitle: doc.item || '',
+    formSummary: summary,
+    productId: '',
+    demandId: '',
+    compare: [],
+    matchPct: 100,
+    status: LEAD_STATUS.PENDING,
+    tier: TIERS.DEFAULT,
+    tierName: '',
+    assignedTo: '',
+    assignedAccount: '',
+    assignedAt: 0,
+    contactReleased: false,
+    csStatus: CS_STATUS.WAITING,
+    csClaimedAt: 0,
+    csId: '',
+    csName: '',
+    ticketState: TICKET_STATE.TICKETED,
+    serviceStage: 'audit',
+    stageAt: at,
+    stageVersion: 0,
+    stageHistory: [step],
+    auditResult: '',
+    auditNote: '',
+    auditBy: '',
+    auditAt: 0,
+    createdAt: at,
+    updatedAt: at
+  })
+  return id
+}
+
+/** 审核结论回写审核工单：通过 / 驳回后工单从工作台收尾，转为无效并留痕 */
+async function closeAgencyAuditTicket(repo, agencyId, decision, note, staff, at) {
+  const id = String(agencyId || '')
+  if (!id) return 0
+  const rows = await repo.find('leads', { targetType: 'agency', agencyId: id, ticketKind: 'audit' }, { limit: 20 })
+  let closed = 0
+  for (const row of rows) {
+    if (!row || ticketStateOf(row) === TICKET_STATE.INVALID || row.status === LEAD_STATUS.CLOSED) continue
+    const history = (Array.isArray(row.stageHistory) ? row.stageHistory : []).concat([{
+      stage: 'audit',
+      at,
+      by: staff || '平台',
+      note: decision === '通过' ? '审核通过，委托已上架' : '审核驳回' + (note ? '：' + note : '')
+    }])
+    const res = await repo.updateWhere('leads', { id: row.id, ticketState: row.ticketState || TICKET_STATE.TICKETED }, {
+      status: LEAD_STATUS.CLOSED,
+      ticketState: TICKET_STATE.INVALID,
+      auditResult: decision || '',
+      auditNote: note || '',
+      auditBy: staff || '',
+      auditAt: at,
+      csStatus: CS_STATUS.ENDED,
+      csEndedAt: at,
+      stageHistory: history.slice(-20),
+      updatedAt: at
+    })
+    if (res && res.count) closed += 1
+  }
+  return closed
 }
 
 /**
@@ -146,6 +275,104 @@ async function advanceConsultStageQuiet(repo, agencyId, from, to, options) {
     console.error('[consult] 阶段推进失败 ' + (err && err.message))
     return null
   }
+}
+
+/* 工单主流程顺序：不包含 deal_pending（升级前历史态），逐级补齐时直接跨过 */
+const CONSULT_MAIN_PATH = Object.freeze([
+  CONSULT_STAGE.COMMUNICATING,
+  CONSULT_STAGE.TERMS,
+  CONSULT_STAGE.CONTRACT,
+  CONSULT_STAGE.SIGNED,
+  CONSULT_STAGE.FEE,
+  CONSULT_STAGE.PAID,
+  CONSULT_STAGE.DONE
+])
+
+/**
+ * 把工单阶段逐级补齐到目标阶段。
+ * 平台在「委托管理」直接确认成交时，工单可能还停在沟通中 / 条件已确认 / 合同待审核，
+ * 一步跳到「服务费待支付」会被阶段白名单拒绝，工单就永久卡在旧阶段：
+ * 客服看不到「上传服务费凭证」，财务确认不到账，工单永远闭合不到完成。
+ * 这里沿主流程逐级推进，每一步仍走 advance 的白名单校验、阶段通知与审计。
+ */
+async function advanceConsultStageTo(repo, agencyId, target, options) {
+  const limit = CONSULT_MAIN_PATH.indexOf(target)
+  if (limit < 0) return null
+  let lead = await consultLeadOfAgency(repo, agencyId)
+  if (!lead) return null
+  for (let step = 0; step < CONSULT_MAIN_PATH.length; step += 1) {
+    const current = consultStageOf(lead)
+    if (current === target) return lead
+    const from = CONSULT_MAIN_PATH.indexOf(current)
+    /* 已终止 / 已完成 / 未知阶段：不强行往回拉，保持原状 */
+    if (from < 0 || from >= limit) return null
+    try {
+      lead = await advanceConsultStage(repo, lead, CONSULT_MAIN_PATH[from + 1], options)
+    } catch (err) {
+      console.error('[consult] 阶段补齐失败 ' + (err && err.message))
+      return null
+    }
+  }
+  return null
+}
+
+/**
+ * 关闭同一委托下除 keepLeadId 之外的全部对接工单。
+ * 委托锁定唯一对接方、或委托已成交后，其余对接方必须真正结束：
+ * 之前只改 status / ticketState 不改 serviceStage，前端按阶段判断会话是否结束，
+ * 已关闭的工单仍显示可以发消息；用户端也一直显示「服务中」。
+ */
+async function closeOtherAgencyLeads(repo, options) {
+  const o = options || {}
+  const agencyId = String(o.agencyId || '')
+  const keepId = String(o.keepLeadId || '')
+  if (!agencyId) return 0
+  const at = Number(o.at) || Date.now()
+  const by = String(o.by || '')
+  const note = String(o.note || AGENCY_LOCKED_CLOSE_NOTE)
+  const rows = await repo.find('leads', { targetType: 'agency', agencyId }, { limit: 500 })
+  let closed = 0
+  for (const row of rows) {
+    if (!row || row.id === keepId) continue
+    const stage = consultStageOf(row)
+    if (stage === CONSULT_STAGE.DONE || stage === CONSULT_STAGE.ABORTED) continue
+    /* 已经关闭过的工单只同步阶段，不再重复计入关闭数量 / 重复通知 */
+    const alreadyClosed = row.status === LEAD_STATUS.CLOSED
+    const history = Array.isArray(row.stageHistory) ? row.stageHistory.slice() : []
+    history.push({ stage: CONSULT_STAGE.ABORTED, at, by, note })
+    const res = await repo.updateWhere('leads', { id: row.id }, {
+      status: LEAD_STATUS.CLOSED,
+      csStatus: CS_STATUS.ENDED,
+      ticketState: TICKET_STATE.INVALID,
+      serviceStage: CONSULT_STAGE.ABORTED,
+      stageAt: at,
+      stageBy: by,
+      stageNote: note,
+      stageVersion: (Number(row.stageVersion) || 0) + 1,
+      stageHistory: history,
+      closeReason: note,
+      csEndedAt: at,
+      csEndedBy: by,
+      closedBy: by,
+      updatedAt: at
+    })
+    if (!res || !res.count) continue
+    if (alreadyClosed) continue
+    closed += 1
+    /* 其余对接方尚未审核的居间合同一并作废，避免停在「待审核」的孤儿合同 */
+    await repo.updateWhere('agencyContracts', { leadId: row.id, status: CONTRACT_STATUS.PENDING }, {
+      status: CONTRACT_STATUS.VOID,
+      reviewedBy: 'system',
+      reviewedByName: '系统',
+      reviewNote: note,
+      reviewedAt: at,
+      updatedAt: at
+    })
+    const claimId = 'bc' + sha256Hex(`${row.uid}:agency:${agencyId}`).slice(0, 24)
+    await repo.removeWhere('bizClaims', { id: claimId }, 1)
+    await notifyAgencySold(repo, row, at)
+  }
+  return closed
 }
 
 /**
@@ -231,8 +458,8 @@ function agencyFee(amount, rental, side) {
       deferredFee: true,
       rule: '100 万元以上：0.5%，上不封顶（成交后支付）',
       note: side === 'buy'
-        ? '提交采购意向函、委托授权书、联系人身份证，平台核验后上架；订单只对平台可见；成交后支付 0.5% 服务费'
-        : '提交营业执照、货源证明、委托授权书、联系人身份证，平台核验后上架；成交后支付 0.5% 服务费'
+        ? '提交采购意向函、验资证明、联系人身份证，委托授权书可选；平台核验后上架；订单只对平台可见；成交后支付 0.5% 服务费'
+        : '提交营业执照、物权证明、联系人身份证，委托授权书可选；平台核验后上架；成交后支付 0.5% 服务费'
     }
   }
 
@@ -362,6 +589,19 @@ function maskIdCard(id) {
 /** 机型归一化与匹配：与小程序端共用 shared/model.js，保证两端口径一致 */
 const { normModel, modelHit, modelMatch, modelCoreOf, capacityOf } = require('./model')
 
+/**
+ * 「同型号」比较：归一化后相等，或一方包含另一方。
+ * 允许「H200 141G SXM」命中「H200 141G SXM 整机（8 卡）」这种多带后缀的写法，
+ * 也允许「2288H V7」命中「FusionServer 2288H V7」这种多带品牌前缀的写法；
+ * 品牌归属本身不影响判断，调用方会同时忽略品牌维度。
+ */
+function modelSameHit(left, right) {
+  const a = normModel(left)
+  const b = normModel(right)
+  if (!a || !b) return false
+  return a === b || a.includes(b) || b.includes(a)
+}
+
 function normPlace(value) {
   const text = String(value == null ? '' : value).trim()
   return text === '不限' ? '' : text
@@ -377,6 +617,19 @@ function condFamily(value) {
   if (COND_ANY_VALUES.indexOf(s) >= 0) return ''
   if (s === '全新' || s === '新' || s === '未拆封') return 'new'
   return 'used'
+}
+
+/**
+ * 成色集合：需求常写成「全新 / 9 成新」这类多选，拆开后归并成集合，
+ * 双方有任一交集即视为成色相符（多选成色以前会被整体判成二手而漏匹配）
+ */
+function condFamilies(value) {
+  const out = []
+  String(value == null ? '' : value).split(/[\/、,，|]+/).forEach((part) => {
+    const fam = condFamily(part)
+    if (fam && out.indexOf(fam) < 0) out.push(fam)
+  })
+  return out
 }
 
 /** 起订量：未填按 1 处理，起订量永远不小于 1 */
@@ -430,11 +683,14 @@ function catalogSeriesOf(cat, model) {
  *
  * 维度取值：
  * - brand : any 不限品牌 / same 只接指定品牌
- * - model : series 同系列 / core 同核心型号 / exact 型号完全一致
+ * - model : series 同系列 / core 同核心型号 / same 同型号（不限品牌）/ exact 型号完全一致
+ *           「同型号」先按核心型号 + 容量比对，再补一层归一化文本的包含判断，
+ *           允许一方多带品牌前缀或「整机 / 8 卡」等后缀；同时忽略品牌维度，
+ *           适合「只要这个型号，哪家整机都行」的场景
  * - qty   : any 数量不限 / meet 达到起订量 / exceed 库存量需覆盖需求量
  * - cap   : any 容量不限 / same 容量相同 / fit 容量不低于需求（可接受容量更大的货）
  * - price : any 不限价格 / fit 报价不高于对方预算 / near 报价可上浮 10% 以内
- * - city  : any 不限地区 / same 只接同城
+ * - city  : any 不限地区 / same 只接同城 / pick 只接所选城市（可多选，不局限在本城市）
  * - cond  : any 不限成色 / same 成色族一致（全新只配全新，二手可配二手 / 拆机 / 翻新）
  * - tax   : any 不限税费 / same 税费口径至少一项相同（含税 / 专票等）
  * - supply: any 不限现货期货 / same 现货只配现货、期货只配期货
@@ -456,11 +712,11 @@ const BIZ_PREF_PRESETS = Object.freeze({
 const BIZ_PREF_DEFAULT = BIZ_PREF_PRESETS.standard
 const BIZ_PREF_ENUMS = Object.freeze({
   brand: ['any', 'same'],
-  model: ['series', 'core', 'exact'],
+  model: ['series', 'core', 'same', 'exact'],
   qty: ['any', 'meet', 'exceed'],
   cap: ['any', 'same', 'fit'],
   price: ['any', 'fit', 'near'],
-  city: ['any', 'same'],
+  city: ['any', 'same', 'pick'],
   cond: ['any', 'same'],
   tax: ['any', 'same'],
   supply: ['any', 'same']
@@ -471,6 +727,9 @@ const BIZ_PREF_DAYS = Object.freeze([3, 7, 30])
 const BIZ_PREF_DAYS_DEFAULT = 30
 /* 排序方式：最新发布 / 匹配度（我的库存可出数量多的在前）/ 商机数量（对方需求数量大的在前） */
 const BIZ_PREF_SORTS = Object.freeze(['latest', 'match', 'qty'])
+
+/* 指定城市最多选多少个：够覆盖常用业务城市，又不至于把设置面板塞满 */
+const BIZ_PREF_CITIES_MAX = 20
 
 function bizPrefPick(value, options, fallback) {
   const v = String(value == null ? '' : value).trim()
@@ -501,16 +760,34 @@ function normalizeBizPrefs(input) {
       }
     }
   }
+  /* 指定城市：与档位解耦保存，切回「只接同城 / 不限地区」后已选城市仍保留，
+     下次切回「指定城市」不用重新勾选；未选城市时按不限地区处理 */
+  out.cities = bizCitiesOf(src && src.cities)
   /* 时间范围与排序独立于提示档位：切档位不会把用户选的时间 / 排序重置 */
   const days = Math.floor(Number(src && src.days))
   out.days = BIZ_PREF_DAYS.indexOf(days) >= 0 ? days : (days >= 1 && days <= 90 ? days : BIZ_PREF_DAYS_DEFAULT)
   out.sort = bizPrefPick(src && src.sort, BIZ_PREF_SORTS, 'latest')
+  /* 只看公开主体：独立开关，与档位 / 城市 / 时间解耦，默认关闭 */
+  out.onlyOpenSubject = !!(src && src.onlyOpenSubject)
   return out
 }
 
 /** 城市归一：忽略「市」与空格，深圳 / 深圳市 视为同城；任一方未填视为不限制 */
 function cityCoreOf(value) {
   return String(value == null ? '' : value).trim().replace(/市$/, '').replace(/\s+/g, '')
+}
+
+/** 指定城市列表归一：兼容数组与逗号分隔文本，去「市」、去重、限量 */
+function bizCitiesOf(value) {
+  const raw = Array.isArray(value)
+    ? value
+    : (typeof value === 'string' ? value.split(/[,，、/|\s]+/) : [])
+  const out = []
+  raw.forEach((item) => {
+    const city = cityCoreOf(item).slice(0, 20)
+    if (city && out.indexOf(city) < 0 && out.length < BIZ_PREF_CITIES_MAX) out.push(city)
+  })
+  return out
 }
 
 /** 税费口径拆词：「含税 · 可开专票」→ ['含税', '可开专票'] */
@@ -575,7 +852,7 @@ function bizCapAllowed(level, needGb, stockGb) {
 function stockMatch(stocks, cat, model, brand, opts) {
   const need = opts || {}
   const needQty = Number(need.qty) || 0
-  const needCond = condFamily(need.cond)
+  const needConds = condFamilies(need.cond)
   const needSeries = String(need.series || '').trim() || catalogSeriesOf(cat, model)
   const needCap = model ? capacityOf(model) : ''
   const needCapGb = model ? capacityGbOf(model) : 0
@@ -585,12 +862,17 @@ function stockMatch(stocks, cat, model, brand, opts) {
   const needTaxTokens = taxTokensOf(need.tax)
   /* 提示力度：未设置时按「标准」档，保证与历史口径一致 */
   const pref = normalizeBizPrefs(need.pref)
+  /* 指定城市：只接所选城市的商机。默认对方城市取 need.city；
+     代售 / 反向商机等「对方城市存在库存行」的场景由调用方传 need.pickCity 指定 */
+  const pickCities = pref.city === 'pick' ? pref.cities : []
+  const otherCity = cityCoreOf(need.pickCity == null ? need.city : need.pickCity)
   const matched = []
   for (const stock of stocks || []) {
     /* 设备类型硬校验：有型号也不能跨品类命中 */
     if (cat && stock.cat && stock.cat !== cat) continue
-    /* 品牌档位：只接指定品牌时，双方都写了品牌才比对 */
-    if (pref.brand === 'same' && needBrand && stock.brand) {
+    /* 品牌档位：只接指定品牌时，双方都写了品牌才比对；
+       型号选「同型号（不限品牌）」时品牌不参与，避免被品牌维度误挡 */
+    if (pref.model !== 'same' && pref.brand === 'same' && needBrand && stock.brand) {
       if (String(stock.brand).trim().toLowerCase() !== needBrand) continue
     }
     if (model) {
@@ -606,6 +888,10 @@ function stockMatch(stocks, cat, model, brand, opts) {
       if (pref.model === 'exact') {
         /* 严格档：型号文本必须完全一致（忽略大小写与分隔符） */
         if (normModel(stock.model) !== normModel(model)) continue
+      } else if (pref.model === 'same') {
+        /* 同型号（不限品牌）：先按核心型号 + 容量比对，再补一层「文本一致 / 互相包含」，
+           品牌已在上面跳过，所以「H200 141G SXM」能命中「超微 ... H200 8 卡整机」 */
+        if (!modelMatch(stock.model, model) && !modelSameHit(stock.model, model)) continue
       } else if (pref.model === 'series') {
         /* 宽松档：同核心型号或同系列即可，但同系列也不能跨容量（96G ≠ 72G） */
         if (!modelMatch(stock.model, model) && !(seriesHit && capOk)) continue
@@ -618,12 +904,18 @@ function stockMatch(stocks, cat, model, brand, opts) {
       /* 设备类型与型号都没填，无法判断是否匹配，直接跳过 */
       continue
     }
-    /* 成色档位：只接同成色时，双方都填了才比对 */
-    if (pref.cond === 'same' && needCond && stock.cond && condFamily(stock.cond) !== needCond) continue
-    /* 城市档位：只接同城时，深圳 / 深圳市 视为同城；任一方没填都放行 */
+    /* 成色档位：只接同成色时，双方都填了才比对；多选成色取交集 */
+    if (pref.cond === 'same' && needConds.length && stock.cond) {
+      const stockConds = condFamilies(stock.cond)
+      if (stockConds.length && !needConds.some((c) => stockConds.indexOf(c) >= 0)) continue
+    }
+    /* 城市档位：只接同城时，深圳 / 深圳市 视为同城；指定城市时对方城市需在所选列表内；
+       任一方没填都放行；选了「指定城市」但一个城市都没选时按不限地区处理 */
     if (pref.city === 'same' && needCity) {
       const stockCity = cityCoreOf(stock.city)
       if (stockCity && stockCity !== needCity) continue
+    } else if (pickCities.length && otherCity && pickCities.indexOf(otherCity) < 0) {
+      continue
     }
     /* 价格档位：我的报价 vs 对方预算，任一方没写价格都放行 */
     if (!bizPriceAllowed(pref.price, need.price, need.priceMax, stock.price)) continue
@@ -664,7 +956,7 @@ function stockMatch(stocks, cat, model, brand, opts) {
   }
 }
 
-/** 公开主体集合：只有「公开主体」才会收到 / 发出商机提醒，保证商机里对接双方都公开 */
+/** 公开主体集合：仅用于「只看公开主体」筛选与主体展示口径，不再是提醒门槛 */
 async function openSubjectSet(repo, ids) {
   const list = Array.from(new Set((ids || []).map((id) => String(id || '')).filter(Boolean)))
   const set = new Set()
@@ -682,12 +974,13 @@ async function openSubjectSet(repo, ids) {
  * 给发布者与匹配方各发一条站内信（同一条内容只发一次，重复保存不重复打扰）。
  *
  * 口径：
- * 1. 只有公开主体的发布内容才进入商机池，也只有公开主体的会员才会收到提醒；
- * 2. 每个匹配到的会员各收到一条（B/C/D 都有货就分别提醒 B/C/D）；
+ * 1. 普通发布（visibility=public）自动进池并提醒，私密发布不进池、不提醒；是否公开主体不再是门槛；
+ * 2. 所有匹配用户都收到提醒：会员文案「可在商机页查看」，非会员文案「开通商机会员即可查看」；
  * 3. 需求发布方只在「商机池里有对应商品」时才收到汇总提醒；对方仅有库存、没在商机池
  *    发布对应商品时，只提醒库存方本人，绝不把库存方告知需求方，也不拿库存当商机派给需求方；
- * 4. 商机被领取时不发提醒，只有对方主动发起对话才会产生聊天消息；
- * 5. 站内信 id 由「场景 + 内容 id + 收件人」确定，重复发布 / 领取不会重复打扰。
+ * 4. 接收方开启「只看公开主体」时，发布方主体未公开则不打扰该接收方；
+ * 5. 商机被领取时不发提醒，只有对方主动发起对话才会产生聊天消息；
+ * 6. 站内信 id 由「场景 + 内容 id + 收件人」确定，重复发布 / 领取不会重复打扰。
  */
 async function notifyNewBizMatch(repo, subscribe, options) {
   const opts = options || {}
@@ -696,43 +989,52 @@ async function notifyNewBizMatch(repo, subscribe, options) {
   const at = Number(opts.at) || Date.now()
   const publisher = String((doc && doc.ownerId) || '')
   if (!repo || !doc || !doc.id || !publisher) return { matched: 0, notified: 0 }
+  /* 私密发布不进匹配池，也不发任何提醒 */
+  if (doc.visibility === VISIBILITIES.PRIVATE) return { matched: 0, notified: 0 }
 
   const openPublishers = await openSubjectSet(repo, [publisher])
-  if (!openPublishers.has(publisher)) return { matched: 0, notified: 0 }
-  /* 只有开通了商机会员的发布者才需要汇总提醒 */
+  const publisherOpen = openPublishers.has(publisher)
   const publisherAccess = accessView(await repo.get('bizAccess', publisher), at)
+  const publisherPref = normalizeBizPrefs(await repo.get('bizPrefs', publisher))
 
   const title = String(doc.title || doc.model || '商机')
   /* 新需求：匹配「商机池里的在售商品」+「本人库存」；新货源：匹配商机池里的求购需求。
      库存行打标 __bizSource=stock：只用于提醒库存方本人，不参与需求发布方的汇总。 */
   let rows = []
   if (kind === 'demand') {
-    const products = await repo.find('products', {
+    const products = await scanForMatch(repo, 'products', {
       status: '在售',
       visibility: { $ne: VISIBILITIES.PRIVATE },
-      bizPool: true,
       deleted: { $ne: true }
-    }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 200 })
-    const stocks = await repo.find('stocks', { status: '在售', deleted: { $ne: true } }, { limit: 200 })
+    }, { sort: { field: 'createdAt', dir: 'desc' }, max: 1000 })
+    const stocks = await scanForMatch(repo, 'stocks', { status: '在售', deleted: { $ne: true } }, { max: 1000 })
     rows = products.map((row) => Object.assign({}, row, { __bizSource: 'product' }))
       .concat(stocks.map((row) => Object.assign({}, row, { __bizSource: 'stock' })))
   } else {
-    rows = await repo.find('demands', {
+    rows = await scanForMatch(repo, 'demands', {
       status: '求购中',
       visibility: { $ne: VISIBILITIES.PRIVATE },
-      bizPool: true,
       deleted: { $ne: true }
-    }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 200 })
+    }, { sort: { field: 'createdAt', dir: 'desc' }, max: 1000 })
   }
 
   const candidates = (rows || []).filter((row) => row.ownerId && row.ownerId !== publisher)
   if (!candidates.length) return { matched: 0, notified: 0 }
   const openOwners = await openSubjectSet(repo, candidates.map((row) => row.ownerId))
+  /* 停用账号不再接收任何商机提醒 */
+  const ownerIds = Array.from(new Set(candidates.map((row) => row.ownerId)))
+  const disabledOwners = new Set((await repo.find('users', {
+    id: { $in: ownerIds },
+    status: '停用'
+  }, { limit: ownerIds.length })).map((row) => row.id))
+  /* 拉黑：接收方拉黑过发布方时，不再推送对方的新发布（内容本身也已不可见） */
+  const blockedRecipients = new Set((await repo.find('userBlocks', {
+    peerUid: publisher
+  }, { limit: 500 })).map((row) => row.uid))
 
   /* 按对方主体聚合：一个会员有多条库存 / 需求也只提醒一次 */
   const byOwner = new Map()
   for (const row of candidates) {
-    if (!openOwners.has(row.ownerId)) continue
     if (!byOwner.has(row.ownerId)) byOwner.set(row.ownerId, [])
     byOwner.get(row.ownerId).push(row)
   }
@@ -740,11 +1042,14 @@ async function notifyNewBizMatch(repo, subscribe, options) {
   let matchedOwners = 0
   /* 仅统计「商机池商品」命中的会员：需求发布方的汇总提醒只认这一种来源 */
   let matchedProductOwners = 0
+  /* 公开主体口径的计数：发布方开启「只看公开主体」时用于汇总 */
+  let matchedOpenOwners = 0
+  let matchedOpenProductOwners = 0
   let notified = 0
   for (const [ownerId, ownerRows] of byOwner) {
-    /* 没开通商机会员的会员看不到商机详情，不做无效提醒 */
+    if (disabledOwners.has(ownerId) || blockedRecipients.has(ownerId)) continue
+    /* 会员 / 非会员都提醒：会员可直接查看，非会员文案引导开通 */
     const ownerAccess = accessView(await repo.get('bizAccess', ownerId), at)
-    if (!ownerAccess.unlocked) continue
     const prefRow = await repo.get('bizPrefs', ownerId)
     const pref = normalizeBizPrefs(prefRow)
     let hit = false
@@ -776,23 +1081,38 @@ async function notifyNewBizMatch(repo, subscribe, options) {
     if (!hit) continue
     matchedOwners += 1
     if (hitProduct) matchedProductOwners += 1
+    const ownerIsOpen = openOwners.has(ownerId)
+    if (ownerIsOpen) {
+      matchedOpenOwners += 1
+      if (hitProduct) matchedOpenProductOwners += 1
+    }
+    /* 提醒跟随接收方筛选：只看公开主体时，发布方未公开就不打扰 */
+    if (pref.onlyOpenSubject && !publisherOpen) continue
+    /* 命中来源决定文案：商机池商品写「发布的货源」，本人库存才写「库存」 */
+    const sourceText = hitProduct ? '与你发布的货源匹配' : '与你的库存匹配'
     const body = kind === 'demand'
-      ? `「${title}」与你的库存匹配，可在商机页查看`
-      : `「${title}」与你的求购需求匹配，可在商机页查看`
+      ? `「${title}」${sourceText}，${ownerAccess.unlocked ? '可在商机页查看' : '开通商机会员即可查看'}`
+      : `「${title}」与你的求购需求匹配，${ownerAccess.unlocked ? '可在商机页查看' : '开通商机会员即可查看'}`
     const sent = await pushBizPublishNotice(repo, subscribe, {
       uid: ownerId,
       key: `${kind}:${doc.id}`,
-      title: '有新的商机可查看',
+      title: ownerAccess.unlocked ? '有新的商机可查看' : '有新的商机匹配，开通会员查看',
       body,
+      /* 订阅消息模板字段上限 20 字：单独给短文案，避免长正文被硬截成半句 */
+      subscribeBody: kind === 'demand'
+        ? (ownerAccess.unlocked ? '有货源与你匹配，可在商机页查看' : '有货源匹配，开通会员查看')
+        : (ownerAccess.unlocked ? '有求购与你匹配，可在商机页查看' : '有求购匹配，开通会员查看'),
       targetId: doc.id,
       at
     })
     if (sent) notified += 1
   }
 
-  /* 发布者汇总：新需求只统计「商机池商品」匹配，对方仅有库存时不打扰需求方；
-     新货源统计求购需求匹配。未开通会员时文案引导开通，会员直接进商机页查看 */
-  const publisherMatches = kind === 'demand' ? matchedProductOwners : matchedOwners
+  /* 发布者汇总：按发布方自己的「只看公开主体」口径统计；
+     非会员也发，文案引导开通；新需求只统计商机池商品匹配，库存不打扰需求方 */
+  const publisherMatches = kind === 'demand'
+    ? (publisherPref.onlyOpenSubject ? matchedOpenProductOwners : matchedProductOwners)
+    : (publisherPref.onlyOpenSubject ? matchedOpenOwners : matchedOwners)
   if (publisherMatches > 0) {
     const verb = kind === 'demand' ? '家货源' : '位买家'
     const summary = publisherAccess.unlocked
@@ -808,6 +1128,87 @@ async function notifyNewBizMatch(repo, subscribe, options) {
     })
   }
   return { matched: matchedOwners, notified, productMatched: matchedProductOwners }
+}
+
+/**
+ * 发布回执：统计刚落库的内容当前能匹配上多少条对方内容。
+ * 口径与「发布即提醒」一致：私密发布不进池、不计；只算在售货源 / 求购中需求，且排除本人。
+ * 用于发布成功后立刻告诉用户「已有 N 条求购与你匹配」，让「上传一次就够了」可被感知。
+ */
+async function countBizMatches(repo, options) {
+  const opts = options || {}
+  const doc = opts.doc
+  const kind = opts.kind === 'product' ? 'product' : 'demand'
+  if (!repo || !doc || !doc.id) return 0
+  if (doc.visibility === VISIBILITIES.PRIVATE) return 0
+  const publisher = String(doc.ownerId || '')
+  const pref = normalizeBizPrefs(await repo.get('bizPrefs', publisher))
+  let rows = []
+  if (kind === 'product') {
+    const demands = await scanForMatch(repo, 'demands', {
+      status: '求购中',
+      visibility: { $ne: VISIBILITIES.PRIVATE },
+      deleted: { $ne: true }
+    }, { sort: { field: 'createdAt', dir: 'desc' }, max: 1000 })
+    rows = demands
+  } else {
+    const products = await scanForMatch(repo, 'products', {
+      status: '在售',
+      visibility: { $ne: VISIBILITIES.PRIVATE },
+      deleted: { $ne: true }
+    }, { sort: { field: 'createdAt', dir: 'desc' }, max: 1000 })
+    const stocks = await scanForMatch(repo, 'stocks', { status: '在售', deleted: { $ne: true } }, { max: 1000 })
+    rows = products.concat(stocks)
+  }
+  let count = 0
+  for (const row of rows) {
+    if (!row.ownerId || row.ownerId === publisher) continue
+    /* 方向与「发布即提醒」一致：发布方永远是库存行（stock），对方内容才是需求行（need），
+       否则起订量 / 数量会反过来算，回执会虚高 */
+    const hit = kind === 'product'
+      ? stockMatch([doc], row.cat, row.model, row.brand, {
+        qty: row.qty,
+        price: row.budget,
+        priceMax: row.budgetMax,
+        cond: row.cond,
+        city: row.city,
+        tax: row.tax,
+        supply: row.supply,
+        series: row.series,
+        pref
+      }).ok
+      : stockMatch([row], doc.cat, doc.model, doc.brand, {
+        qty: doc.qty,
+        price: doc.budget,
+        priceMax: doc.budgetMax,
+        cond: doc.cond,
+        city: doc.city,
+        tax: doc.tax,
+        supply: doc.supply,
+        series: doc.series,
+        pref
+      }).ok
+    if (hit) count += 1
+  }
+  return count
+}
+
+/**
+ * 分页扫全量在架内容：发布提醒只取最新 200 条，会让更早发布的老货源 / 老需求
+ * 永久匹配不到新商机；这里按页拉取，在上限内全部参与匹配。
+ */
+async function scanForMatch(repo, collection, query, opts) {
+  const o = opts || {}
+  const PAGE = 200
+  const MAX = Math.min(2000, Math.max(PAGE, Number(o.max) || 1000))
+  const out = []
+  for (let skip = 0; skip < MAX; skip += PAGE) {
+    const rows = await repo.find(collection, query, { sort: o.sort, limit: PAGE, skip })
+    if (!rows || !rows.length) break
+    for (const row of rows) out.push(row)
+    if (rows.length < PAGE) break
+  }
+  return out.slice(0, MAX)
 }
 
 /** 商机提醒幂等写入：同一条内容对同一个人只发一次站内信 + 一次微信订阅提醒 */
@@ -845,7 +1246,8 @@ async function pushBizPublishNotice(repo, subscribe, options) {
       await subscribe.biz(uid, {
         title: opts.title || '有新的商机可查看',
         body: opts.body || '',
-        page: 'pages/biz/biz',
+        /* 带上内容 id：点订阅消息直接定位到这条商机，而不是只落到商机首页 */
+        page: opts.targetId ? 'pages/biz/biz?id=' + encodeURIComponent(String(opts.targetId)) : 'pages/biz/biz',
         at: Number(opts.at) || Date.now()
       })
     } catch (err) {
@@ -944,27 +1346,23 @@ function normalizeAgencyInput(data, profileExposure) {
 
   const media = normalizeMedia(data.media)
 
-  /* 委托授权书与被委托人身份证一律必传；企业再加营业执照；
-     1000 万元及以上按委托方向补采购意向函 / 货源证明 */
+  /* 验资（代采）/ 物权证明（代售）与联系人身份证一律必传；企业再加营业执照；
+     委托授权书作为补充材料选填；1000 万元及以上代采补采购意向函 */
   const required = [
-    { kind: 'authorization', label: '委托授权书' },
-    { kind: 'idcard', label: '被委托人身份证' }
+    { kind: 'proof', label: side === 'buy' ? '验资证明' : '物权证明' },
+    { kind: 'idcard', label: '联系人身份证' }
   ].concat(subjectType === 'company' ? [{ kind: 'license', label: '营业执照' }] : [])
-  if (largeAmount) {
-    required.push(side === 'buy'
-      ? { kind: 'loi', label: '采购意向函' }
-      : { kind: 'proof', label: '货源证明' })
-  }
+  if (largeAmount && side === 'buy') required.push({ kind: 'loi', label: '采购意向函' })
   const got = new Set(media.map((m) => m.kind))
   const missing = required.filter((m) => !got.has(m.kind)).map((m) => m.label)
   if (missing.length) {
     throw new AppError(CODES.VALIDATION, `请补齐必传材料：${missing.join('、')}`)
   }
-  /* 授权书联系人电话必填；与预留手机号是否一致只做标记，交给客服审核时核验，不拦截提交 */
+  /* 委托授权书选填：授权书上的联系人信息由客服审核时核验，
+     联系人手机号已在主体信息中填写，不再单独要求授权书电话 */
   const authPhoneRaw = str(data.authPhone, { field: '委托授权书上的联系人电话', max: 32 })
-  if (!authPhoneRaw) throw new AppError(CODES.VALIDATION, '请填写委托授权书上的联系人电话')
-  const authPhone = normalizeContactPhone(authPhoneRaw)
-  const authPhoneMatched = authPhone === phone
+  const authPhone = authPhoneRaw ? normalizeContactPhone(authPhoneRaw) : ''
+  const authPhoneMatched = !!authPhone && authPhone === phone
 
   /* 发布渠道同样不开放选择：公开委托由平台同时用于普通展示与商机匹配，
      保密委托只留在平台侧 */
@@ -992,10 +1390,9 @@ function normalizeAgencyInput(data, profileExposure) {
     deferredFee,
     exposure,
     visibility,
-    /* 进入商机池：公开内容才进池，发布方可选择仅普通 / 仅商机 / 二者都发。
-       代采 / 代售由平台代为对接、不下发主体联系方式，因此不要求主体必须公开 */
+    /* 进入商机池：普通发布即进池，私密发布不进池；代采 / 代售由平台代为对接，不要求主体公开 */
     channel,
-    bizPool: visibility === VISIBILITIES.PUBLIC && channel !== PUBLISH_CHANNELS.NORMAL,
+    bizPool: visibility !== VISIBILITIES.PRIVATE,
     currency,
     currencySymbol: cur.symbol,
     currencyLabel: cur.label,
@@ -1296,7 +1693,9 @@ async function confirmAgencyDeal(repo, options) {
   if (doc.status === AGENCY_STATUS.CLOSED) throw new AppError(CODES.CONFLICT, '委托已关闭，不能确认成交')
   const dealAmount = round2(Number(o.amount) || Number(doc.dealAmount) || 0)
   if (!(dealAmount > 0)) throw new AppError(CODES.VALIDATION, '请先填写成交金额')
-  const allowed = [AGENCY_STATUS.APPROVED, AGENCY_STATUS.ACTIVE, AGENCY_STATUS.LOCKED, AGENCY_STATUS.DEAL_PENDING, AGENCY_STATUS.DEALT]
+  /* 成交只能由工单流程进入：委托必须已锁定唯一对接方（合同归档后）。
+     待确认成交（DEAL_PENDING）仅用于兼容升级前停在旧阶段的历史数据。 */
+  const allowed = [AGENCY_STATUS.LOCKED, AGENCY_STATUS.DEAL_PENDING, AGENCY_STATUS.DEALT]
   if (allowed.indexOf(doc.status) < 0) {
     throw new AppError(CODES.CONFLICT, `委托当前为「${AGENCY_STATUS_TEXT[doc.status] || doc.status}」，不能确认成交`)
   }
@@ -1362,7 +1761,9 @@ async function confirmAgencyDeal(repo, options) {
       createdAt: at
     })
   }
-  /* 工单同步进入「服务费待支付」；免收服务费时直接视为已到账，不产生佣金 */
+  /* 工单同步进入「服务费待支付」：工单可能还停在沟通中 / 条件已确认 / 合同待审核，
+     一次跳到 fee 会被阶段白名单拒绝并永久卡住，这里按主流程逐级补齐 */
+  const dealLead = await consultLeadOfAgency(repo, id)
   const stepOpts = {
     at,
     by: operator,
@@ -1370,8 +1771,17 @@ async function confirmAgencyDeal(repo, options) {
     note: `平台确认成交，成交金额 ¥${dealAmount}`,
     extra: { dealAmount }
   }
-  await advanceConsultStageQuiet(repo, id, CONSULT_STAGE.SIGNED, CONSULT_STAGE.FEE, stepOpts)
-  await advanceConsultStageQuiet(repo, id, CONSULT_STAGE.DEAL_PENDING, CONSULT_STAGE.FEE, stepOpts)
+  await advanceConsultStageTo(repo, id, CONSULT_STAGE.FEE, stepOpts)
+  /* 同一委托只保留成交这一家：其余对接工单、待审核合同与领取记录一并收口 */
+  if (dealLead && dealLead.id) {
+    await closeOtherAgencyLeads(repo, {
+      agencyId: id,
+      keepLeadId: dealLead.id,
+      at,
+      by: operator,
+      note: '委托已成交，本次对接结束'
+    })
+  }
   if (round2(Number(fresh.serviceFee) || 0) <= 0) {
     await advanceConsultStageQuiet(repo, id, CONSULT_STAGE.FEE, CONSULT_STAGE.PAID, {
       at,
@@ -1465,35 +1875,13 @@ async function lockAgencyForContract(repo, options) {
   }
 
   /* 其余对接方：工单关闭并置为无效，领取记录同步清理，并通知用户「商品已售出」 */
-  const others = await repo.find('leads', { targetType: 'agency', agencyId }, { limit: 500 })
-  let closedOthers = 0
-  for (const row of others) {
-    if (!row || row.id === lead.id || row.status === LEAD_STATUS.CLOSED) continue
-    const closed = await repo.updateWhere('leads', { id: row.id }, {
-      status: LEAD_STATUS.CLOSED,
-      csStatus: CS_STATUS.ENDED,
-      ticketState: TICKET_STATE.INVALID,
-      closeReason: AGENCY_LOCKED_CLOSE_NOTE,
-      stageNote: AGENCY_LOCKED_CLOSE_NOTE,
-      csEndedAt: at,
-      closedBy: String(o.by || ''),
-      updatedAt: at
-    })
-    if (!closed || !closed.count) continue
-    closedOthers += 1
-    /* 其余对接方尚未审核的居间合同一并作废，避免停在「待审核」的孤儿合同 */
-    await repo.updateWhere('agencyContracts', { leadId: row.id, status: CONTRACT_STATUS.PENDING }, {
-      status: CONTRACT_STATUS.VOID,
-      reviewedBy: 'system',
-      reviewedByName: '系统',
-      reviewNote: AGENCY_LOCKED_CLOSE_NOTE,
-      reviewedAt: at,
-      updatedAt: at
-    })
-    const claimId = 'bc' + sha256Hex(`${row.uid}:agency:${agencyId}`).slice(0, 24)
-    await repo.removeWhere('bizClaims', { id: claimId }, 1)
-    await notifyAgencySold(repo, row, at)
-  }
+  const closedOthers = await closeOtherAgencyLeads(repo, {
+    agencyId,
+    keepLeadId: String(lead.id || ''),
+    at,
+    by: String(o.by || ''),
+    note: AGENCY_LOCKED_CLOSE_NOTE
+  })
   return { locked: true, claimUid: uid, closedOthers }
 }
 
@@ -1833,6 +2221,8 @@ function boardItems({ products, agencies, demands, quotes, now, limit }) {
   /* 平台在售商品：无论是否代采，价格都作为货盘参考（租赁按月计价，不能与买卖价混算） */
   for (const doc of listOf(products)) {
     if (doc.deleted || doc.status !== '在售') continue
+    /* 私密发布不进入公开行情盘 */
+    if (doc.visibility === VISIBILITIES.PRIVATE) continue
     if (doc.rental === true || doc.tradeMode === TRADE_MODES.RENT) continue
     /* 现场沟通没有金额可参考，但仍计入在售数量 */
     const price = doc.priceMode === 'nego' ? 0 : Number(doc.price) || 0
@@ -1879,6 +2269,8 @@ function boardItems({ products, agencies, demands, quotes, now, limit }) {
   for (const doc of listOf(demands)) {
     if (doc.deleted) continue
     if (doc.status !== DEMAND_STATUS.OPEN) continue
+    /* 私密发布不进入公开行情盘 */
+    if (doc.visibility === VISIBILITIES.PRIVATE) continue
     /* 租赁需求的预算是月租，与整机买卖价不同口径 */
     if (doc.tradeMode === TRADE_MODES.LEASE || doc.tradeMode === TRADE_MODES.RENT) continue
     /* 仅商机池的需求不进入公开现货盘 */
@@ -1944,7 +2336,7 @@ const NEWS_OFFICIAL_CATS = Object.freeze(['平台公告', '行情解读', '行�
 const NEWS_USER_CAT = '用户发布'
 
 /* 资讯定时发布：官方稿先存「待发布」，到点由服务端批量上线，不需要人工守点 */
-const DEFAULT_NEWS_SLOTS = Object.freeze(['09:00', '15:00', '20:00'])
+const DEFAULT_NEWS_SLOTS = Object.freeze(['11:00', '15:00', '21:00'])
 const NEWS_SLOT_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 
 function normalizeSlots(raw) {
@@ -1957,7 +2349,7 @@ function normalizeSlots(raw) {
   return list.slice(0, 6)
 }
 
-/** 读取自动发布配置：时间段 + 开关，未配置时用默认 09:00 / 15:00 / 20:00 */
+/** 读取自动发布配置：时间段 + 开关，未配置时用默认 11:00 / 15:00 / 21:00 */
 async function newsScheduleOf(repo) {
   try {
     const row = await repo.get('settings', 'news_schedule')
@@ -2026,6 +2418,59 @@ function findBannedWord(text) {
   return ''
 }
 
+/* 资讯媒体（朋友圈式）：图片最多 9 张、视频最多 1 段，大小与服务端上传接口同口径 */
+const NEWS_MEDIA_LIMIT = Object.freeze({ image: 9, video: 1 })
+const NEWS_MEDIA_TYPES = Object.freeze({
+  'image/jpeg': 'image',
+  'image/jpg': 'image',
+  'image/png': 'image',
+  'image/webp': 'image',
+  'image/gif': 'image',
+  'video/mp4': 'video',
+  'video/quicktime': 'video',
+  'video/x-m4v': 'video'
+})
+
+/** 资讯媒体元信息校验：只收名称 / 类型 / 大小 / 上传地址，二进制由 /api/upload 落盘 */
+function normalizeNewsMedia(input) {
+  if (input == null || input === '') return []
+  if (!Array.isArray(input)) throw new AppError(CODES.VALIDATION, '媒体列表格式不合法')
+  const groups = { image: 0, video: 0 }
+  const out = []
+  for (const item of input) {
+    const type = String((item && item.type) || '').toLowerCase()
+    const kind = NEWS_MEDIA_TYPES[type]
+    if (!kind) throw new AppError(CODES.VALIDATION, '不支持的图片 / 视频格式')
+    const ref = fileRef(item && item.fileId)
+    if (!ref) throw new AppError(CODES.VALIDATION, '媒体文件未上传成功，请重新选择')
+    if (groups[kind] >= NEWS_MEDIA_LIMIT[kind]) {
+      throw new AppError(CODES.VALIDATION, kind === 'video' ? '最多上传 1 段视频' : '最多上传 9 张图片')
+    }
+    const size = Number(item && item.size)
+    if (!Number.isFinite(size) || size <= 0) throw new AppError(CODES.VALIDATION, '文件大小不合法')
+    if (size > MEDIA_MAX_BYTES[kind]) {
+      throw new AppError(CODES.VALIDATION, MEDIA_SIZE_TEXT[kind] || '文件大小超出限制')
+    }
+    const name = String((item && item.name) || '').replace(/[\\/:*?"<>|\r\n]/g, '').slice(0, 30) ||
+      (kind === 'video' ? '视频' : '图片')
+    groups[kind]++
+    out.push({ name, type, size: Math.floor(size), kind, fileId: ref })
+  }
+  return out
+}
+
+/** 媒体对外输出：过滤掉没有地址的脏数据，前端据此直接渲染九宫格 / 视频 */
+function newsMediaView(input) {
+  const list = Array.isArray(input) ? input : []
+  return list.filter((m) => m && m.fileId).map((m) => ({
+    name: m.name || '',
+    type: m.type || '',
+    size: Number(m.size) || 0,
+    kind: m.kind === 'video' ? 'video' : 'image',
+    fileId: m.fileId
+  }))
+}
+
 function normalizeNewsInput(data, official) {
   const title = str(data.title, { field: '标题', required: true, min: 4, max: 60 })
   const content = str(data.content, { field: '正文', required: true, min: 10, max: 2000 })
@@ -2040,6 +2485,7 @@ function normalizeNewsInput(data, official) {
   return {
     title,
     content,
+    media: normalizeNewsMedia(data.media),
     city,
     cat,
     visibility,
@@ -2050,6 +2496,7 @@ function normalizeNewsInput(data, official) {
 function newsView(doc, at) {
   const d = doc || {}
   const isPrivate = d.visibility === VISIBILITIES.PRIVATE
+  const media = newsMediaView(d.media)
   const base = {
     id: d.id,
     official: isPrivate ? false : d.official === true,
@@ -2057,6 +2504,10 @@ function newsView(doc, at) {
     title: d.title || '',
     summary: d.summary || '',
     city: d.city || '',
+    media,
+    mediaCount: media.length,
+    /* 正文超过摘要长度时，信息流展示「全文」入口，与摘要一起构成朋友圈式预览 */
+    hasFull: String(d.content || '').length > String(d.summary || '').length,
     published: relTime(d.publishedAt || d.createdAt, at || Date.now()),
     publishedAt: Number(d.publishedAt || d.createdAt) || 0,
     views: Number(d.views) || 0,
@@ -2192,6 +2643,9 @@ const BIZ_STATUS = Object.freeze({
   EXPIRED: '已到期',
   STOPPED: '已停用'
 })
+/* 新用户 7 天体验：每人限一次，权益与付费会员一致，到期不自动续费 */
+const TRIAL_DAYS = 7
+const TRIAL_PLAN_LABEL = '7 天体验'
 /* 收款流水：企业微信 / 微信 / 对公等线下收款统一登记，确认后计入财务口径 */
 const PAYMENT_STATUS = Object.freeze({
   PENDING: '待确认',
@@ -2215,6 +2669,8 @@ function accessView(access, now) {
   const a = access || null
   const expireAt = Number(a && a.expireAt) || 0
   const status = bizStatusOf(a, now)
+  /* 7 天体验：每人限一次，未开通 / 已到期且从未用过时才可申请 */
+  const trialUsed = !!(a && a.trialUsed)
   return {
     status,
     unlocked: status === BIZ_STATUS.ACTIVE,
@@ -2223,7 +2679,10 @@ function accessView(access, now) {
     expireText: expireAt ? `${dateText(expireAt)} 到期` : '未开通',
     daysLeft: expireAt ? Math.max(0, Math.ceil((expireAt - now) / DAY_MS)) : 0,
     appliedAt: Number(a && a.appliedAt) || 0,
-    appliedText: a && a.appliedAt ? dateText(a.appliedAt) : ''
+    appliedText: a && a.appliedAt ? dateText(a.appliedAt) : '',
+    trialUsed,
+    trialDays: TRIAL_DAYS,
+    trialAvailable: !trialUsed && (status === '未开通' || status === BIZ_STATUS.EXPIRED)
   }
 }
 
@@ -2282,12 +2741,12 @@ function createMarketUserHandlers(deps) {
     }
   }
 
-  /** 商机池主体信息：按主体 id 集合共享，避免每个会员各扫一遍 profiles */
+  /** 商机池主体信息：按主体 id 集合读取，是否公开主体在调用侧按需筛选 / 脱敏 */
   async function sharedPoolProfiles(ownerIds) {
     const ids = Array.from(new Set((ownerIds || []).filter(Boolean)))
     if (!ids.length) return new Map()
-    const name = 'profiles:' + sha256Hex(ids.slice().sort().join(',')).slice(0, 16)
-    const rows = await sharedPool(name, 30, async () => Array.from((await poolProfiles(ids)).values()))
+    /* 不使用跨请求缓存：主体公开范围变化后，商机列表 / 角标必须立即跟随 */
+    const rows = Array.from((await poolProfiles(ids)).values())
     return new Map(rows.map((row) => [row.uid || row.id, row]))
   }
 
@@ -2299,26 +2758,15 @@ function createMarketUserHandlers(deps) {
     return user
   }
 
-  /** 站内信：委托成交等节点回执给用户，小程序「消息」可见 */
-  async function sendUserNotice(uid, payload, at) {
-    if (!uid) return
-    await repo.insert('outbox', {
-      id: randomId('M'),
-      type: 'system.notice',
-      payload: Object.assign({
-        uid,
-        channel: 'system',
-        from: 'system',
-        reason: '',
-        targetType: 'agency',
-        targetId: ''
-      }, payload),
-      status: 'pending',
-      createdAt: at
-    })
-    if (subscribe) {
-      await subscribe.system(uid, { title: payload.title, body: payload.body, at }).catch(() => {})
-    }
+  /**
+   * 社交功能总开关（评论 / 私信 / 对话）：管理端「媒体 → 社交功能」统一控制，默认关闭。
+   * 关闭后评论列表 / 计数 / 我的评论 / 未读角标一律不再下发，发表接口直接拒绝。
+   * 已落库的评论保留，重新开启后恢复展示。旧配置没有 socialEnabled 时按 chatEnabled 判断。
+   */
+  async function commentsEnabled() {
+    const doc = (await repo.get('settings', 'site')) || {}
+    if (doc.socialEnabled !== undefined) return doc.socialEnabled === true
+    return doc.chatEnabled === true
   }
 
   /**
@@ -2358,9 +2806,8 @@ function createMarketUserHandlers(deps) {
   }
 
   /**
-   * 商机池主体口径：只有「已公开主体信息」的发布者，其商品 / 需求才进入别人的商机池。
-   * 个人信息为「不公开主体」或从未填写时，发布内容只走普通浏览，不参与商机匹配，
-   * 避免匿名主体被推到同行面前造成骚扰。
+   * 商机池主体信息：按主体 id 集合共享，避免每个会员各扫一遍 profiles。
+   * 不再按「是否公开主体」过滤：匿名主体也进池，仅影响展示脱敏与 onlyOpenSubject 筛选。
    */
   async function poolProfiles(ownerIds) {
     const ids = Array.from(new Set((ownerIds || []).filter(Boolean)))
@@ -2368,9 +2815,6 @@ function createMarketUserHandlers(deps) {
     if (!ids.length) return map
     const rows = await repo.find('profiles', { uid: { $in: ids } }, { limit: ids.length })
     for (const row of rows) {
-      const exposure = String((row && row.exposure) || '').trim()
-      /* 历史 matched 视同 hidden：只有明确「公开主体」才进商机池 */
-      if (exposure !== EXPOSURES.OPEN) continue
       map.set(row.uid || row.id, row)
     }
     return map
@@ -2487,6 +2931,8 @@ function createMarketUserHandlers(deps) {
       contactVisible: o.contactVisible === true,
       canClaim: o.canClaim === true,
       org: o.org || '',
+      /* 发布者主页跳转键：匿名主体也可打开主页，敏感字段由主页侧脱敏 */
+      ownerKey: o.ownerKey || '',
       contact: o.contact || '',
       phone: o.phone || '',
       claimCount: claim.claimCount,
@@ -2561,6 +3007,8 @@ function createMarketUserHandlers(deps) {
       contactVisible: o.contactVisible === true,
       canClaim: o.canClaim === true,
       org: o.org || '',
+      /* 发布者主页跳转键：匿名主体也可打开主页，敏感字段由主页侧脱敏 */
+      ownerKey: o.ownerKey || '',
       contact: o.contact || '',
       phone: o.phone || '',
       claimCount: claim.claimCount,
@@ -2670,6 +3118,8 @@ function createMarketUserHandlers(deps) {
       consultText: o.consulted ? '已提交 · 待平台核实' : '联系平台',
       /* 代采 / 代售一律以平台身份对外，任何入口都不回传委托方主体信息 */
       org: o.org || '平台',
+      /* 代采代售由平台对接，不提供委托方主页入口 */
+      ownerKey: '',
       contact: o.contact || '',
       phone: o.phone || '',
       claimCount: claim.claimCount,
@@ -2827,6 +3277,12 @@ function createMarketUserHandlers(deps) {
         }, patch)
         if (!res || !res.count) throw new AppError(CODES.CONFLICT, '委托状态已变化，请刷新后重试')
         const fresh = (await repo.get('agencies', resubmit.id)) || doc
+        /* 重新提交同样生成审核工单，工作台继续跟进 */
+        try {
+          await ensureAgencyAuditTicket(repo, fresh, at, { note: '用户重新提交委托，等待审核' })
+        } catch (err) {
+          console.error('[agency] 审核工单生成失败：' + (err && err.message))
+        }
         return Object.assign(agencyOwnerView(fresh, at), {
           payAmount: 0,
           deferredFee: input.deferredFee,
@@ -2845,6 +3301,12 @@ function createMarketUserHandlers(deps) {
       if (activeAfter > AGENCY_ACTIVE_LIMIT) {
         await repo.removeWhere('agencies', { id, ownerId: uid, status: AGENCY_STATUS.REVIEW })
         throw new AppError(CODES.CONFLICT, `同时进行的委托最多 ${AGENCY_ACTIVE_LIMIT} 条，请先完成或关闭已有委托`)
+      }
+      /* 通过审核前的委托统一在工作台生成审核工单，由客服领取处理 */
+      try {
+        await ensureAgencyAuditTicket(repo, doc, at)
+      } catch (err) {
+        console.error('[agency] 审核工单生成失败：' + (err && err.message))
       }
       return Object.assign(agencyOwnerView(doc, at), {
         payAmount: 0,
@@ -2911,6 +3373,12 @@ function createMarketUserHandlers(deps) {
       })
       if (!res || !res.count) throw new AppError(CODES.CONFLICT, '委托状态已变化，请刷新后重试')
       const doc = await repo.get('agencies', id)
+      /* 修改单同样需要审核，在工作台生成 / 重置审核工单 */
+      try {
+        await ensureAgencyAuditTicket(repo, doc, at, { note: '用户提交委托修改，等待审核' })
+      } catch (err) {
+        console.error('[agency] 审核工单生成失败：' + (err && err.message))
+      }
       return agencyOwnerView(doc, at)
     },
 
@@ -3465,27 +3933,64 @@ function createMarketUserHandlers(deps) {
     },
 
     /** 资讯列表：官方 + 已通过的用户投稿；精选 = 官方 */
-    'news.list': async (data) => {
+    'news.list': async (data, ctx) => {
       const at = now()
+      /* 评论关闭时不查也不下发任何评论数据 */
+      const commentOn = await commentsEnabled()
       const scope = enumOf(data.scope || 'all', ['all', 'city', 'pick'], '资讯范围')
       const query = { status: NEWS_STATUS.PUBLISHED, deleted: { $ne: true } }
       if (scope === 'pick') query.official = true
       if (scope === 'city') {
         const city = str(data.city, { field: '城市', max: 20 })
-        if (!city) return { items: [], scope, city: '' }
+        if (!city) return { items: [], scope, city: '', commentEnabled: commentOn }
         query.city = city
       }
       const rows = await repo.find('news', query, {
         sort: { field: 'publishedAt', dir: 'desc' },
         limit: 50
       })
+      /* 拉黑：拉黑者看不到被拉黑者发布的资讯（官方资讯 uid 为空，不受影响） */
+      const uid = ctx && ctx.openid
+      const blockedAuthors = await blockedPeerIds(repo, uid)
+      const visibleRows = blockedAuthors.size
+        ? rows.filter((row) => !blockedAuthors.has(String(row.uid || '')))
+        : rows
+      /* 朋友圈式信息流：列表直接带点赞 / 评论数与「我是否已赞」，卡片上不用再单独请求 */
+      const ids = visibleRows.map((row) => row.id)
+      let likeRows = []
+      let commentRows = []
+      let mineLikes = []
+      if (ids.length) {
+        const [likes, comments, mine] = await Promise.all([
+          repo.find('newsLikes', { newsId: { $in: ids }, deleted: { $ne: true } }, { limit: 5000 }),
+          commentOn
+            ? repo.find('newsComments', { newsId: { $in: ids }, deleted: { $ne: true } }, { limit: 5000 })
+            : Promise.resolve([]),
+          uid
+            ? repo.find('newsLikes', { uid, newsId: { $in: ids }, deleted: { $ne: true } }, { limit: 200 })
+            : Promise.resolve([])
+        ])
+        likeRows = likes
+        commentRows = comments
+        mineLikes = mine
+      }
+      const likeCount = {}
+      const commentCount = {}
+      const likedMap = {}
+      likeRows.forEach((row) => { likeCount[row.newsId] = (likeCount[row.newsId] || 0) + 1 })
+      commentRows.forEach((row) => { commentCount[row.newsId] = (commentCount[row.newsId] || 0) + 1 })
+      mineLikes.forEach((row) => { likedMap[row.newsId] = true })
       return {
-        items: rows.map((row) => Object.assign(newsView(row), {
+        items: visibleRows.map((row) => Object.assign(newsView(row), {
           published: relTime(row.publishedAt || row.createdAt, at),
+          likes: likeCount[row.id] || 0,
+          liked: likedMap[row.id] === true,
+          commentCount: commentOn ? (commentCount[row.id] || 0) : 0,
           /* 作者主页入口：与 news.detail / owner.home 同口径；私密与官方资讯不下发 */
           authorKey: row.visibility === VISIBILITIES.PRIVATE || row.official === true || !row.uid ? '' : authorKeyOf(row.uid)
         })),
-        scope
+        scope,
+        commentEnabled: commentOn
       }
     },
 
@@ -3512,6 +4017,7 @@ function createMarketUserHandlers(deps) {
         title: input.title,
         summary: input.summary,
         content: input.content,
+        media: input.media,
         city: input.city,
         author: maskName(user.nick || '用户'),
         status: NEWS_STATUS.PUBLISHED,
@@ -3562,19 +4068,39 @@ function createMarketUserHandlers(deps) {
       if (!row || row.deleted === true || row.status !== NEWS_STATUS.PUBLISHED) {
         throw new AppError(CODES.NOT_FOUND, '资讯不存在或已下架')
       }
-      const views = (Number(row.views) || 0) + 1
-      try {
-        await repo.updateWhere('news', { id }, { views })
-      } catch (viewErr) {
-        /* 浏览量只用于展示，写入失败不影响阅读 */
-      }
       const at = now()
       const uid = ctx && ctx.openid
+      /* 拉黑：拉黑者打开被拉黑者的资讯按不存在处理 */
+      if (uid && row.uid && await isBlocked(repo, uid, row.uid)) {
+        throw new AppError(CODES.NOT_FOUND, '资讯不存在或已下架')
+      }
+      /* 真实浏览量：作者本人浏览不计数；同一用户 30 分钟内重复打开只计一次，
+         保证列表与详情展示的是同一个计数（不会再出现每次打开都 +1 的假增长） */
+      let views = Number(row.views) || 0
+      if (row.uid !== uid) {
+        try {
+          const bucket = windowStartOf(at, VIEW_DEDUPE_MS)
+          const hit = await repo.incrCounter(`view:news:${id}:${uid || 'anon'}:${bucket}`, bucket)
+          if (hit === 1) {
+            views += 1
+            await repo.updateWhere('news', { id }, { views })
+            /* 资讯列表缓存全站共享（30 秒），浏览量变化后立即失效，
+               否则返回列表时仍会读到旧计数，与详情差 1 */
+            if (cacheLayer && typeof cacheLayer.bump === 'function') {
+              await cacheLayer.bump('news')
+            }
+          }
+        } catch (viewErr) {
+          /* 浏览量只用于展示，写入失败不影响阅读 */
+        }
+      }
       const like = uid ? await repo.get('newsLikes', newsLikeId(uid, id)) : null
       const liked = !!(like && like.deleted !== true)
+      /* 评论关闭时计数固定为 0，客户端也不再显示任何评论入口 */
+      const commentOn = await commentsEnabled()
       const [likes, commentCount] = await Promise.all([
         repo.count('newsLikes', { newsId: id, deleted: { $ne: true } }),
-        repo.count('newsComments', { newsId: id, deleted: { $ne: true } })
+        commentOn ? repo.count('newsComments', { newsId: id, deleted: { $ne: true } }) : Promise.resolve(0)
       ])
       const isPrivate = row.visibility === VISIBILITIES.PRIVATE
       return Object.assign(newsView(Object.assign({}, row, { views }), at), {
@@ -3584,7 +4110,8 @@ function createMarketUserHandlers(deps) {
         authorKey: isPrivate || row.official === true || !row.uid ? '' : authorKeyOf(row.uid),
         likes,
         liked,
-        commentCount
+        commentCount,
+        commentEnabled: commentOn
       })
     },
 
@@ -3625,6 +4152,9 @@ function createMarketUserHandlers(deps) {
       const limit = Math.min(50, Math.max(1, Number(data.limit) || 20))
       const at = now()
       const uid = ctx && ctx.openid
+      /* 评论关闭：列表一律空返回，不暴露任何历史评论 */
+      const commentOn = await commentsEnabled()
+      if (!commentOn) return { items: [], total: 0, page, hasMore: false, enabled: false }
       const roots = await repo.find('newsComments', {
         newsId,
         parentId: '',
@@ -3659,6 +4189,8 @@ function createMarketUserHandlers(deps) {
     'news.comment.add': async (data, ctx) => {
       const uid = ctx.openid
       const user = await mustUser(ctx)
+      /* 评论关闭：直接拒绝，客户端本就不展示入口 */
+      if (!(await commentsEnabled())) throw new AppError(CODES.FORBIDDEN, '评论功能已关闭')
       const newsId = str(data.id || data.newsId, { field: '资讯', required: true, max: 64 })
       const content = maskSensitiveText(str(data.content, {
         field: '评论内容', required: true, min: 1, max: NEWS_COMMENT_MAX
@@ -3724,6 +4256,8 @@ function createMarketUserHandlers(deps) {
     'news.comment.mine': async (data, ctx) => {
       const uid = ctx.openid
       await mustUser(ctx)
+      /* 评论关闭：我的评论 / 收到的回复一律不下发 */
+      if (!(await commentsEnabled())) return { items: [], unread: 0, readAt: 0, enabled: false }
       const at = now()
       const my = await repo.find('newsComments', { uid, deleted: { $ne: true } }, {
         sort: { field: 'createdAt', dir: 'desc' }, limit: 50
@@ -3789,9 +4323,11 @@ function createMarketUserHandlers(deps) {
     'news.badge': async (data, ctx) => {
       const uid = ctx.openid
       await mustUser(ctx)
+      /* 评论关闭：不再下发未读回复角标 */
+      if (!(await commentsEnabled())) return { replies: 0, enabled: false }
       const read = await repo.get('commentReads', uid)
       const readAt = Number(read && read.readAt) || 0
-      return { replies: await unreadReplyCount(repo, uid, readAt) }
+      return { replies: await unreadReplyCount(repo, uid, readAt), enabled: true }
     },
 
     /** 删除自己投稿的资讯：软删除，不再出现在资讯圈与我的投稿 */
@@ -3829,6 +4365,65 @@ function createMarketUserHandlers(deps) {
       return accessView(access, now())
     },
 
+    /**
+     * 7 天体验：每人限一次，未开通 / 已到期且从未用过时可直接开通。
+     * 体验权益与付费会员一致，不生成订单、不参与佣金，到期不自动续费。
+     */
+    'biz.trial': async (data, ctx) => {
+      const uid = ctx.openid
+      await mustUser(ctx)
+      const at = now()
+      const existing = await ownAccess(uid)
+      const current = accessView(existing, at)
+      if (current.unlocked) throw new AppError(CODES.VALIDATION, '会员仍在有效期内，到期后可再使用 7 天体验')
+      if (current.trialUsed) throw new AppError(CODES.VALIDATION, '7 天体验已使用过，请开通会员')
+      if (current.status === BIZ_STATUS.STOPPED) throw new AppError(CODES.FORBIDDEN, '会员功能已停用，请联系平台客服')
+      if (current.status === BIZ_STATUS.PENDING) throw new AppError(CODES.VALIDATION, '开通申请正在处理中，请稍后再试')
+      const expireAt = at + TRIAL_DAYS * DAY_MS
+      const patch = {
+        status: BIZ_STATUS.ACTIVE,
+        plan: 0,
+        planKey: 'trial',
+        planLabel: TRIAL_PLAN_LABEL,
+        days: TRIAL_DAYS,
+        expireAt,
+        trialUsed: true,
+        trialAt: at,
+        staff: '用户自助',
+        note: '7 天体验（每人限一次）',
+        updatedAt: at
+      }
+      if (existing) {
+        await repo.updateWhere('bizAccess', { id: uid }, patch)
+      } else {
+        await repo.insert('bizAccess', Object.assign({ id: uid, uid, appliedAt: at }, patch))
+      }
+      await appendAudit(repo, {
+        actorType: 'user',
+        actorId: uid,
+        action: 'biz.trial',
+        target: uid,
+        reason: '开通 7 天体验',
+        result: 'allow',
+        at
+      })
+      const view = accessView(Object.assign({}, existing || {}, patch), at)
+      view.planKey = 'trial'
+      view.planLabel = TRIAL_PLAN_LABEL
+      /* 回执：告知体验截止时间，避免到期后才发现权限失效 */
+      try {
+        await notifyUser(uid, {
+          title: '7 天体验已开通',
+          body: `7 天体验已生效，有效期至 ${view.expireText || '--'}。体验期内可领取商机并查看联系方式，到期后需开通会员才能继续使用。`,
+          targetType: 'biz',
+          targetId: uid
+        })
+      } catch (notifyErr) {
+        /* 体验已生效：回执失败不回滚 */
+      }
+      return view
+    },
+
     /** 会员四档套餐：价格 / 天数取管理端设置，未配置用默认值 */
     'biz.plans': async (data, ctx) => {
       const uid = ctx.openid
@@ -3862,6 +4457,23 @@ function createMarketUserHandlers(deps) {
       /* 提示力度：决定商机检索的严格程度，未设置时按标准档 */
       const prefRow = await repo.get('bizPrefs', uid)
       const prefs = normalizeBizPrefs(prefRow)
+      /* 上次查看时间：本次进入时「此后新增」的商机只在这一次置顶，下次进入即并入正常排序 */
+      const lastSeenAt = Number(prefRow && prefRow.seenAt) || 0
+      /* 会员打开商机列表即视为「已读」：记录 seenAt，首页角标只统计此后新增的商机。
+         未开通用户打开的是开通引导，不写 seenAt，角标继续提示，直到开通后查看才清零。 */
+      if (unlocked && data && data.markSeen === true) {
+        const patch = { seenAt: at, updatedAt: at }
+        const hit = await repo.updateWhere('bizPrefs', { id: uid }, patch)
+        if (!hit || !hit.count) {
+          const doc = Object.assign({ id: uid, uid }, prefs, patch)
+          try {
+            await repo.insert('bizPrefs', doc)
+          } catch (err) {
+            if (!err || err.code !== CODES.CONFLICT) throw err
+            await repo.updateWhere('bizPrefs', { id: uid }, patch)
+          }
+        }
+      }
       const claims = await ownClaims(uid)
       /* 用户标记「不满足」的商机：保留在列表的「不满足」分类里，但不再计入可领取与角标 */
       const markRows = await repo.find('bizMarks', { uid, marked: true }, { limit: 500 })
@@ -3882,33 +4494,37 @@ function createMarketUserHandlers(deps) {
         if (row.targetId && row.status !== LEAD_STATUS.CLOSED) consultMap[row.targetId] = row.status
       })
 
-      const demandRows = await sharedPool('open-demands', 20, () => repo.find('demands', {
+      /* 拉黑：商机池是共享缓存，只能取出后按浏览者过滤被拉黑者的求购 / 委托 / 货源 */
+      const blockedOwners = await blockedPeerIds(repo, uid)
+      const visibleToMe = (rows) => (blockedOwners.size
+        ? rows.filter((row) => !blockedOwners.has(String(row.ownerId || '')))
+        : rows)
+
+      const demandRows = visibleToMe(await sharedPool('open-demands', 20, () => repo.find('demands', {
         status: '求购中',
         visibility: { $ne: VISIBILITIES.PRIVATE },
-        /* 只有明确选择「仅商机 / 二者都发」的需求进入匹配；普通发布与历史数据一律不入池 */
-        bizPool: true,
+        /* 普通发布即进池：不再看 bizPool / channel，历史 public+bizPool=false 也纳入 */
         deleted: { $ne: true }
-      }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 50 }))
+      }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 50 })))
 
       /* 代采 / 代售委托：公开的进入商机池，所有匹配会员都能看到完整委托内容，
          由平台统一对外（不透出委托方主体），不做「领取后才可见」 */
-      const agencyRows = await sharedPool('open-agencies', 20, () => repo.find('agencies', {
+      const agencyRows = visibleToMe(await sharedPool('open-agencies', 20, () => repo.find('agencies', {
         status: AGENCY_STATUS.ACTIVE,
         visibility: { $ne: VISIBILITIES.PRIVATE },
         bizPool: { $ne: false },
         expiresAt: { $gte: at },
         deleted: { $ne: true }
-      }, { sort: { field: 'confirmedAt', dir: 'desc' }, limit: 50 }))
+      }, { sort: { field: 'confirmedAt', dir: 'desc' }, limit: 50 })))
 
-      /* 反向商机货源：只取进入商机池的在售商品，且不能是自己的 */
+      /* 反向商机货源：取普通发布的在售商品（私密除外），且不能是自己的 */
       const productRows = myDemands.length
-        ? await sharedPool('pool-products', 20, () => repo.find('products', {
+        ? visibleToMe(await sharedPool('pool-products', 20, () => repo.find('products', {
           status: '在售',
           visibility: { $ne: VISIBILITIES.PRIVATE },
-          /* 只有明确选择「仅商机 / 二者都发」的货源进入匹配 */
-          bizPool: true,
+          /* 普通发布即进池：历史 public+bizPool=false 也纳入 */
           deleted: { $ne: true }
-        }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 100 }))
+        }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 100 })))
         : []
       const supplyProducts = productRows.filter((p) => p.ownerId !== uid)
 
@@ -3927,7 +4543,7 @@ function createMarketUserHandlers(deps) {
         return counts
       })
 
-      /* 商机池主体口径：发布者主体信息必须已公开（非「不公开主体」），内容才进入匹配。
+      /* 商机池主体口径：所有普通发布者都进池，是否公开主体只影响展示脱敏与筛选。
          未开通时也查一次，保证角标 / 条数与会员看到的完全一致；
          解锁后才解密主体名称用于展示 */
       const ownerIds = Array.from(new Set(
@@ -3936,28 +4552,42 @@ function createMarketUserHandlers(deps) {
       ))
       const poolProfileMap = await sharedPoolProfiles(ownerIds)
       const profileByUid = {}
-      if (unlocked) {
-        for (const p of poolProfileMap.values()) {
-          if (!p.subjectCipher && !p.subject) continue
-          let subject = ''
+      for (const p of poolProfileMap.values()) {
+        const profileUid = p.uid || p.id
+        let subject = ''
+        if (unlocked && (p.subjectCipher || p.subject)) {
           try {
             subject = p.subjectCipher
-              ? decryptFieldOf({ keys, collection: 'profiles', field: 'subject', recordId: p.uid || p.id, cipher: p.subjectCipher })
+              ? decryptFieldOf({ keys, collection: 'profiles', field: 'subject', recordId: profileUid, cipher: p.subjectCipher })
               : p.subject
           } catch (err) {
             subject = ''
           }
-          profileByUid[p.uid || p.id] = { subject, subjectType: p.subjectType, exposure: p.exposure }
         }
+        profileByUid[profileUid] = { subject, subjectType: p.subjectType, exposure: p.exposure }
       }
+      /* 是否公开主体：只用于 onlyOpenSubject 筛选与主体展示口径 */
+      const isOpenOwner = (ownerId) => {
+        const p = profileByUid[ownerId]
+        return !!(p && p.exposure === EXPOSURES.OPEN)
+      }
+      /* 主体展示：会员 + 公开主体给完整主体；非会员公开主体给脱敏主体；
+         未公开主体统一用昵称脱敏 / 匿名用户，绝不留空 */
+      const orgOf = (ownerId, nickname) => {
+        const p = profileByUid[ownerId]
+        const subject = String((p && p.subject) || '').trim()
+        if (p && p.exposure === EXPOSURES.OPEN && subject) {
+          return unlocked ? subject : maskSubject(subject, p.subjectType)
+        }
+        return maskName(String(nickname || '')) || '匿名用户'
+      }
+      let hiddenCount = 0
 
       const demandItems = []
       const agencyItems = []
       const supplyItems = []
       for (const demand of demandRows) {
         if (demand.ownerId === uid) continue
-        /* 发布者主体未公开：不进入别人的商机池 */
-        if (!poolProfileMap.has(demand.ownerId)) continue
         const match = stockMatch(stocks, demand.cat, demand.model, demand.brand, {
           qty: demand.qty,
           price: demand.budget,
@@ -3971,6 +4601,11 @@ function createMarketUserHandlers(deps) {
         })
         /* 只展示我的库存能对上的需求，其余商机不出现 */
         if (!match.ok) continue
+        /* 只看公开主体：未公开主体的匹配对象不展示，单独计数给前端提示 */
+        if (prefs.onlyOpenSubject && !isOpenOwner(demand.ownerId)) {
+          hiddenCount += 1
+          continue
+        }
         const claimed = claims.has(`demand:${demand.id}`)
         const unsatisfied = markSet.has(`demand:${demand.id}`)
         const claimCount = claimCountMap[`demand:${demand.id}`] || 0
@@ -3979,13 +4614,10 @@ function createMarketUserHandlers(deps) {
         const readable = claimed && unlocked && match.ok
         const contact = readable ? await contactOfUser(demand.ownerId) : null
         const owner = contact ? null : await repo.get('users', demand.ownerId)
-        const pubProfile = profileByUid[demand.ownerId]
-        const publicOrg = pubProfile && pubProfile.exposure !== EXPOSURES.HIDDEN
-          ? maskSubject(pubProfile.subject, pubProfile.subjectType)
-          : ''
-        /* 已开通会员在列表里就下发完整主体（商机池只收公开主体），未开通只给脱敏主体；
-           联系方式仍然要领取后才给 */
-        const fullOrg = unlocked ? String((pubProfile && pubProfile.subject) || '').trim() : ''
+        /* 会员 + 公开主体给完整主体；其余按脱敏主体 / 昵称兜底，绝不留空 */
+        const displayOrg = contact
+          ? contact.org
+          : orgOf(demand.ownerId, owner && owner.nick)
         demandItems.push(demandViewOf(demand, {
           now: at,
           matched: true,
@@ -4002,9 +4634,8 @@ function createMarketUserHandlers(deps) {
           contactVisible: !!contact,
           canClaim: unlocked && !claimed && !unsatisfied,
           unsatisfied,
-          org: contact
-            ? contact.org
-            : (fullOrg || publicOrg || maskName((owner && owner.nick) || '') || '匿名用户'),
+          org: displayOrg,
+          ownerKey: authorKeyOf(demand.ownerId),
           contact: contact
             ? contact.name
             : claimed
@@ -4045,6 +4676,8 @@ function createMarketUserHandlers(deps) {
               tax: demand.tax,
               supply: demand.supply,
               series: demand.series,
+              /* 代售委托是对方货盘：指定城市按委托所在城市过滤 */
+              pickCity: agency.city,
               pref: prefs
             })
             if (hit.ok) {
@@ -4099,8 +4732,6 @@ function createMarketUserHandlers(deps) {
       /* 反向商机：别人的货源命中了我已发布的需求。
          同一个货源只生成一条商机，按我的需求数量 / 城市 / 成色判断是否满足 */
       for (const product of supplyProducts) {
-        /* 货主主体未公开：不进入别人的商机池 */
-        if (!poolProfileMap.has(product.ownerId)) continue
         let hit = null
         for (const demand of myDemands) {
           const match = stockMatch([product], demand.cat, demand.model, demand.brand, {
@@ -4112,6 +4743,8 @@ function createMarketUserHandlers(deps) {
             tax: demand.tax,
             supply: demand.supply,
             series: demand.series,
+            /* 反向商机的对方城市在货源上：指定城市按货源地过滤 */
+            pickCity: product.city,
             pref: prefs
           })
           if (match.ok) {
@@ -4120,17 +4753,19 @@ function createMarketUserHandlers(deps) {
           }
         }
         if (!hit) continue
+        /* 只看公开主体：未公开主体的货主不展示，单独计数给前端提示 */
+        if (prefs.onlyOpenSubject && !isOpenOwner(product.ownerId)) {
+          hiddenCount += 1
+          continue
+        }
         const claimed = claims.has(`supply:${product.id}`)
         const unsatisfied = markSet.has(`supply:${product.id}`)
         const claimCount = claimCountMap[`supply:${product.id}`] || 0
         const contact = claimed && unlocked ? await contactOfUser(product.ownerId) : null
         const owner = contact ? null : await repo.get('users', product.ownerId)
-        const pubProfile = profileByUid[product.ownerId]
-        const publicOrg = pubProfile && pubProfile.exposure !== EXPOSURES.HIDDEN
-          ? maskSubject(pubProfile.subject, pubProfile.subjectType)
-          : ''
-        /* 已开通会员看到完整货主主体，未开通只给脱敏主体 */
-        const fullOrg = unlocked ? String((pubProfile && pubProfile.subject) || '').trim() : ''
+        const displayOrg = contact
+          ? contact.org
+          : orgOf(product.ownerId, owner && owner.nick)
         const demandTitle = hit.demand.title || hit.demand.model || '我的求购'
         supplyItems.push(supplyViewOf(product, {
           now: at,
@@ -4147,9 +4782,8 @@ function createMarketUserHandlers(deps) {
           contactVisible: !!contact,
           canClaim: unlocked && !claimed && !unsatisfied,
           unsatisfied,
-          org: contact
-            ? contact.org
-            : (fullOrg || publicOrg || maskName((owner && owner.nick) || '') || '匿名用户'),
+          org: displayOrg,
+          ownerKey: authorKeyOf(product.ownerId),
           contact: contact
             ? contact.name
             : claimed
@@ -4192,6 +4826,7 @@ function createMarketUserHandlers(deps) {
               contactVisible: !!contact,
               canClaim: false,
               org: contact ? contact.org : '',
+              ownerKey: authorKeyOf(demand.ownerId),
               contact: contact ? contact.name : '已领取',
               phone: contact ? contact.phone : ''
             }))
@@ -4210,6 +4845,7 @@ function createMarketUserHandlers(deps) {
               contactVisible: !!contact,
               canClaim: false,
               org: contact ? contact.org : '',
+              ownerKey: authorKeyOf(product.ownerId),
               contact: contact ? contact.name : '已领取',
               phone: contact ? contact.phone : ''
             }))
@@ -4236,8 +4872,7 @@ function createMarketUserHandlers(deps) {
         freshItems.map((item) => String(item.matchModel || '').trim()).filter(Boolean)
       )).slice(0, 50)
       const plans = await resolvePlans(repo)
-      /* 未开通商机会员：型号 / 数量 / 价格与脱敏主体可见，让用户判断是不是真实商机；
-         联系方式、必须条件与领取能力仍锁定（org 本身已是 maskSubject 脱敏结果） */
+      /* 未开通商机会员：同样返回全部匹配条目的脱敏版本（org 已脱敏，联系方式 / 必须条件仍锁定） */
       const lockedItems = !unlocked
         ? visibleItems.map((item) => Object.assign({}, item, {
           org: item.org || '匿名用户',
@@ -4256,12 +4891,16 @@ function createMarketUserHandlers(deps) {
         items: unlocked ? visibleItems : lockedItems,
         locked: !unlocked,
         matchedCount: freshItems.length,
+        /* 被 onlyOpenSubject 筛掉的条数：前端展示「另有 N 条被筛选隐藏」 */
+        hiddenCount,
         matchModels: unlocked ? matchModels : [],
         stockCount: stocks.length,
         demandCount: myDemands.length,
         plans,
         planKey: view.planKey || 'month',
         prefs,
+        /* 上次查看时间：前端据此把本次新增的商机临时置顶并标「新」，退出后不再保留 */
+        lastSeenAt: unlocked ? lastSeenAt : 0,
         prefPresets: ['loose', 'standard', 'strict'].map((key) => Object.assign({}, BIZ_PREF_PRESETS[key])),
         hint: unlocked ? '' : '开通商机后可查看联系方式并领取商机'
       })
@@ -4277,8 +4916,16 @@ function createMarketUserHandlers(deps) {
       const at = now()
       if (data && data.save === true) {
         const next = normalizeBizPrefs(data)
-        const doc = Object.assign({ id: uid, uid }, next, { updatedAt: at })
         const existing = await repo.get('bizPrefs', uid)
+        /* 只看公开主体是独立开关：切换档位 / 城市时未显式传值则保留原设置 */
+        if (data.onlyOpenSubject === undefined) {
+          next.onlyOpenSubject = !!(existing && existing.onlyOpenSubject)
+        }
+        /* 保存提示力度不能把「已读时间」清掉，否则改一次设置角标会重新亮起 */
+        const doc = Object.assign({ id: uid, uid }, next, {
+          seenAt: Number(existing && existing.seenAt) || 0,
+          updatedAt: at
+        })
         if (existing) {
           await repo.updateWhere('bizPrefs', { id: uid }, doc)
         } else {
@@ -4316,9 +4963,15 @@ function createMarketUserHandlers(deps) {
       const stocks = await ownStocks(uid)
       const prefRow = await repo.get('bizPrefs', uid)
       const prefs = normalizeBizPrefs(prefRow)
+      /* 会员查看过商机后（seenAt）只统计之后新增的商机，实现「看过即清零」；
+         未开通用户不按 seenAt 过滤，角标继续提示以便引导开通 */
+      const seenAt = access.unlocked ? (Number(prefRow && prefRow.seenAt) || 0) : 0
       /* 与商机列表同一时间口径：只统计显示时间范围内的商机 */
       const since = at - (Number(prefs.days) || BIZ_PREF_DAYS_DEFAULT) * DAY_MS
-      const inWindow = (item) => (Number(item.at) || 0) >= since
+      const inWindow = (item) => {
+        const t = Number(item.at) || 0
+        return t >= since && t > seenAt
+      }
       const claims = await ownClaims(uid)
       /* 标记「不满足」的商机不再计入角标提醒，但仍在商机列表里可查看 */
       const markRows = await repo.find('bizMarks', { uid, marked: true }, { limit: 500 })
@@ -4331,18 +4984,21 @@ function createMarketUserHandlers(deps) {
         ? await sharedPool('open-demands', 20, () => repo.find('demands', {
           status: '求购中',
           visibility: { $ne: VISIBILITIES.PRIVATE },
-          bizPool: true,
           deleted: { $ne: true }
         }, { limit: 50 }))
         : []
       const demandOwners = await sharedPoolProfiles(demandRows.map((d) => d.ownerId))
+      const isOpenOwner = (ownerId) => {
+        const p = demandOwners.get(ownerId)
+        return !!(p && p.exposure === EXPOSURES.OPEN)
+      }
       demandRows.forEach((demand) => {
         if (demand.ownerId === uid) return
         /* 已领取 / 已标记不满足的商机不再计入角标 */
         if (claims.has(`demand:${demand.id}`)) return
         if (markSet.has(`demand:${demand.id}`)) return
-        /* 发布者主体未公开：不计入商机角标 */
-        if (!demandOwners.has(demand.ownerId)) return
+        /* 只看公开主体：未公开主体的商机不计入角标，与列表筛选保持一致 */
+        if (prefs.onlyOpenSubject && !isOpenOwner(demand.ownerId)) return
         /* 超出显示时间范围：不计入角标 */
         if (!inWindow({ at: demand.createdAt })) return
         const match = stockMatch(stocks, demand.cat, demand.model, demand.brand, {
@@ -4365,7 +5021,7 @@ function createMarketUserHandlers(deps) {
         deleted: { $ne: true }
       }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 50 })
       const myDemands = myDemandsAll.filter((row) =>
-        row && row.visibility !== VISIBILITIES.PRIVATE && row.bizPool === true)
+        row && row.visibility !== VISIBILITIES.PRIVATE)
       if (stocks.length || myDemandsAll.length) {
         const agencyRows = await sharedPool('open-agencies', 20, () => repo.find('agencies', {
           status: AGENCY_STATUS.ACTIVE,
@@ -4405,6 +5061,8 @@ function createMarketUserHandlers(deps) {
                 tax: demand.tax,
                 supply: demand.supply,
                 series: demand.series,
+                /* 代售委托是对方货盘：指定城市按委托所在城市过滤 */
+                pickCity: agency.city,
                 pref: prefs
               })
               if (hit.ok) { match = hit; break }
@@ -4427,15 +5085,18 @@ function createMarketUserHandlers(deps) {
         const productRows = await sharedPool('pool-products', 20, () => repo.find('products', {
           status: '在售',
           visibility: { $ne: VISIBILITIES.PRIVATE },
-          bizPool: true,
           deleted: { $ne: true }
         }, { limit: 100 }))
         const productOwners = await sharedPoolProfiles(productRows.map((p) => p.ownerId))
+        const isOpenProductOwner = (ownerId) => {
+          const p = productOwners.get(ownerId)
+          return !!(p && p.exposure === EXPOSURES.OPEN)
+        }
         productRows.forEach((product) => {
           if (product.ownerId === uid) return
           if (claims.has(`supply:${product.id}`)) return
           if (markSet.has(`supply:${product.id}`)) return
-          if (!productOwners.has(product.ownerId)) return
+          if (prefs.onlyOpenSubject && !isOpenProductOwner(product.ownerId)) return
           if (!inWindow({ at: product.createdAt })) return
           const hit = myDemands.some((demand) => stockMatch([product], demand.cat, demand.model, demand.brand, {
             qty: demand.qty,
@@ -4446,6 +5107,8 @@ function createMarketUserHandlers(deps) {
             tax: demand.tax,
             supply: demand.supply,
             series: demand.series,
+            /* 反向商机的对方城市在货源上：指定城市按货源地过滤 */
+            pickCity: product.city,
             pref: prefs
           }).ok)
           if (hit) count += 1
@@ -4538,12 +5201,7 @@ function createMarketUserHandlers(deps) {
           throw new AppError(CODES.NOT_FOUND, '该需求为保密发布，不提供联系方式，请直接在需求详情页对话')
         }
         if (demand.status !== '求购中') throw new AppError(CODES.CONFLICT, '该需求已停止领取')
-        if (demand.bizPool !== true) throw new AppError(CODES.NOT_FOUND, '该需求未进入商机池')
         if (demand.ownerId === uid) throw new AppError(CODES.VALIDATION, '不能领取自己发布的需求')
-        /* 发布者主体未公开：内容不进商机池，也不允许绕过列表直接领取 */
-        if (!(await poolProfiles([demand.ownerId])).size) {
-          throw new AppError(CODES.FORBIDDEN, '该商机发布者未公开主体信息，暂不可领取')
-        }
         const match = stockMatch(stocks, demand.cat, demand.model, demand.brand, {
           qty: demand.qty,
           price: demand.budget,
@@ -4568,17 +5226,11 @@ function createMarketUserHandlers(deps) {
         if (product.visibility === VISIBILITIES.PRIVATE) {
           throw new AppError(CODES.NOT_FOUND, '该货源为保密发布，不提供联系方式')
         }
-        if (product.bizPool !== true) throw new AppError(CODES.NOT_FOUND, '该货源未进入商机池')
         if (product.ownerId === uid) throw new AppError(CODES.VALIDATION, '不能领取自己发布的货源')
-        /* 货主主体未公开：货源不进商机池 */
-        if (!(await poolProfiles([product.ownerId])).size) {
-          throw new AppError(CODES.FORBIDDEN, '该货源发布者未公开主体信息，暂不可领取')
-        }
         const myDemands = await repo.find('demands', {
           ownerId: uid,
           status: '求购中',
           visibility: { $ne: VISIBILITIES.PRIVATE },
-          bizPool: true,
           deleted: { $ne: true }
         }, { limit: 50 })
         const hit = myDemands.some((demand) => stockMatch([product], demand.cat, demand.model, demand.brand, {
@@ -4590,6 +5242,8 @@ function createMarketUserHandlers(deps) {
           tax: demand.tax,
           supply: demand.supply,
           series: demand.series,
+          /* 反向商机的对方城市在货源上：指定城市按货源地过滤 */
+          pickCity: product.city,
           pref: prefs
         }).ok)
         if (!hit) throw new AppError(CODES.FORBIDDEN, '该货源与我的需求不匹配，无法领取')
@@ -4640,6 +5294,8 @@ function createMarketUserHandlers(deps) {
               tax: demand.tax,
               supply: demand.supply,
               series: demand.series,
+              /* 代售委托是对方货盘：指定城市按委托所在城市过滤 */
+              pickCity: agency.city,
               pref: prefs
             })
             if (hit.ok) { match = hit; break }
@@ -4668,10 +5324,7 @@ function createMarketUserHandlers(deps) {
         title = `${agency.kind} ${agency.item}`
       }
 
-      /* 领取即对接：领取方也必须是公开主体，保证商机里对接双方都公开（委托分支已在上方拦截） */
-      if (!(await poolProfiles([uid])).size) {
-        throw new AppError(CODES.FORBIDDEN, '请先在「我的-资料」中公开主体信息，再领取商机')
-      }
+      /* 领取不再要求领取方公开主体：匿名主体同样可以领取，主体信息仅在展示时脱敏 */
 
       /* 发布者的必须条件：领取时逐项确认，服务端复核，避免绕过前端直接领到不满足条件的商机。
          放在写领取记录之前，确认失败不会留下脏数据 */
@@ -4858,6 +5511,44 @@ function createMarketUserHandlers(deps) {
     },
 
     /**
+     * 已领取商机的联系方式：只读接口，不消耗每日领取次数。
+     * 没有领取记录时不下发联系方式，避免绕过领取直接拿号。
+     */
+    'biz.contact': async (data, ctx) => {
+      const uid = ctx.openid
+      const targetType = enumOf(
+        data.targetType || (data.demandId ? 'demand' : (data.supplyId ? 'supply' : 'agency')),
+        ['demand', 'agency', 'supply'],
+        '商机类型'
+      )
+      const targetIdKey = targetType === 'demand' ? 'demandId' : (targetType === 'supply' ? 'supplyId' : 'agencyId')
+      const targetId = str(data[targetIdKey], {
+        field: '商机标识',
+        required: true,
+        max: 64
+      })
+      const claimId = 'bc' + sha256Hex(`${uid}:${targetType}:${targetId}`).slice(0, 24)
+      const claim = await repo.get('bizClaims', claimId)
+      if (!claim) return { claimed: false, contact: null }
+
+      let contact = null
+      if (targetType === 'demand') {
+        const demand = await repo.get('demands', targetId)
+        if (demand && !demand.deleted && demand.ownerId !== uid) contact = await contactOfUser(demand.ownerId)
+      } else if (targetType === 'supply') {
+        const product = await repo.get('products', targetId)
+        if (product && !product.deleted && product.ownerId !== uid) contact = await contactOfUser(product.ownerId)
+      } else {
+        /* 委托方主体不对外下发：领取后统一显示为平台 */
+        contact = { org: '平台', name: '平台代为对接', phone: '' }
+      }
+      return {
+        claimed: true,
+        contact: contact ? { org: contact.org, name: contact.name, phone: contact.phone } : null
+      }
+    },
+
+    /**
      * 标记 / 取消「不满足」：商机仍保留在列表里，
      * 但不进「可领取」分组、不再计入首页角标提醒。
      */
@@ -5002,10 +5693,7 @@ function createMarketUserHandlers(deps) {
       if (!accessView(access, at).unlocked) {
         throw new AppError(CODES.FORBIDDEN, '商机权限未开通或已到期，请先开通商机')
       }
-      /* 咨询对接同样要求公开主体：保证商机里对接双方都是公开主体 */
-      if (!(await poolProfiles([uid])).size) {
-        throw new AppError(CODES.FORBIDDEN, '请先在「我的-资料」中公开主体信息，再在商机里咨询接单')
-      }
+      /* 咨询对接不再要求公开主体：会员校验通过即可，主体信息仅在展示时脱敏 */
 
       const stocks = await ownStocks(uid)
       const prefs = normalizeBizPrefs(await repo.get('bizPrefs', uid))
@@ -5040,6 +5728,8 @@ function createMarketUserHandlers(deps) {
             tax: demand.tax,
             supply: demand.supply,
             series: demand.series,
+            /* 代售委托是对方货盘：指定城市按委托所在城市过滤 */
+            pickCity: agency.city,
             pref: prefs
           })
           if (hit.ok) {
@@ -5168,6 +5858,12 @@ function createMarketUserHandlers(deps) {
             intakeBody: consultBody,
             intakeMedia: consultMedia,
             intakeAt: at,
+            /* 上一轮结束痕迹清空：否则用户端仍显示服务已结束 / 一直带着旧的结束时间 */
+            csEndedAt: 0,
+            csEndedBy: '',
+            csEndedByName: '',
+            closeReason: '',
+            closedAt: 0,
             updatedAt: at
           }
           await repo.updateWhere('leads', { id: leadId }, reopen)
@@ -5600,10 +6296,10 @@ function createMarketAdminHandlers(deps) {
       : (plan ? plan.days : intOf(BIZ_PLAN.days, '开通天数', 1, 3650))
     const user = await repo.get('users', uid)
     if (!user) throw new AppError(CODES.NOT_FOUND, '用户不存在')
-    const paymentId = str(data.paymentId, { field: '收款单', max: 64 }) || ''
+    const externalPaymentId = str(data.paymentId, { field: '收款单', max: 64 }) || ''
     /* 同一收款单只开通一次：并发确认 / 重复点击时直接回放上次结果 */
-    if (paymentId) {
-      const done = await repo.find('bizOrders', { paymentId }, { limit: 1 })
+    if (externalPaymentId) {
+      const done = await repo.find('bizOrders', { paymentId: externalPaymentId }, { limit: 1 })
       if (done.length) {
         const access = await repo.get('bizAccess', uid)
         const view = accessView(access, now())
@@ -5653,8 +6349,12 @@ function createMarketAdminHandlers(deps) {
       await repo.insert('bizAccess', Object.assign({ appliedAt: at }, patch))
     }
     /* 会员订单流水：开通 / 续费 / 人工调整都留痕，便于财务对账与用户会员记录 */
+    const orderId = randomId('BO')
+    /* 手动开通没有微信收款单号：生成 MANUAL-<订单号> 作为收款流水号，
+       让营收、推广佣金、客服提成与在线支付共用同一套台账与幂等口径 */
+    const paymentId = externalPaymentId || ('MANUAL-' + orderId)
     const order = {
-      id: randomId('BO'),
+      id: orderId,
       uid,
       nick: user.nick || '',
       planKey: patch.planKey,
@@ -5666,14 +6366,22 @@ function createMarketAdminHandlers(deps) {
       startAt: base,
       expireAt,
       method: str(data.method, { field: '收款方式', max: 30 }) || '企业微信收款',
-      paymentId,
+      /* 支付渠道：wxpay / apple / manual（手动开通）；Apple 收入在财务中心单独出表 */
+      channel: externalPaymentId
+        ? (String(data.channel || '').toLowerCase() === 'apple' || String(data.channel || '').toLowerCase() === 'ios'
+          ? 'apple'
+          : 'wxpay')
+        : 'manual',
+      /* 订单只记真实微信收款单号；手动开通的流水号落在 payments，避免会员记录出现伪单号 */
+      paymentId: externalPaymentId,
       operator: staff,
       accountId: (ctx && ctx.accountId) || '',
       note,
       createdAt: at
     }
     await repo.insert('bizOrders', order)
-    /* 真实微信支付单：同一 OutTradeNo 同步一条收款单，财务流水与用户退款申请都认 payments */
+    /* 收款单：在线支付按 OutTradeNo 同步；手动开通也落一条收款流水，
+       财务现金流、营收与用户退款申请统一认 payments */
     if (paymentId) {
       const paid = await repo.find('payments', { paymentId }, { limit: 1 })
       if (!paid.length) {
@@ -5688,16 +6396,16 @@ function createMarketAdminHandlers(deps) {
           amount: original,
           discount: Math.max(0, Math.round((original - amount) * 100) / 100),
           received: amount,
-          method: str(data.method, { field: '收款方式', max: 30 }) || '微信支付',
-          /* 支付渠道：wxpay（微信支付）/ apple（iOS 虚拟支付），退款推送按渠道区分回执文案 */
-          channel: str(data.channel || '', { field: '支付渠道', max: 20 }) || '',
+          method: str(data.method, { field: '收款方式', max: 30 }) || (externalPaymentId ? '微信支付' : '企业微信收款'),
+          /* 支付渠道：wxpay / apple / manual（手动开通）；manual 不扣支付通道费 */
+          channel: externalPaymentId ? (str(data.channel || '', { field: '支付渠道', max: 20 }) || '') : 'manual',
           status: PAYMENT_STATUS.CONFIRMED,
           paidAt: at,
           confirmedAt: at,
           confirmedBy: '系统自动',
           orderId: order.id,
           paymentId,
-          outTradeNo: paymentId,
+          outTradeNo: externalPaymentId,
           operator: staff,
           accountId: (ctx && ctx.accountId) || '',
           note,
@@ -5713,30 +6421,18 @@ function createMarketAdminHandlers(deps) {
         await promoteEngine.createPaymentCommissions({
           buyerUid: uid,
           paymentId,
-          /* 微信支付交易号：用于人工分账出款后按单检索 / 对账，虚拟支付与 iOS 为空 */
-          transactionId: str(data.transactionId || data.transaction_id || '', { field: '微信支付交易号', max: 64 }) || '',
+          /* 微信支付交易号：用于人工分账出款后按单检索 / 对账，手动 / 虚拟支付与 iOS 为空 */
+          transactionId: externalPaymentId
+            ? (str(data.transactionId || data.transaction_id || '', { field: '微信支付交易号', max: 64 }) || '')
+            : '',
           amount,
-          channel: str(data.channel || '', { field: '支付渠道', max: 20 }) || '',
+          channel: externalPaymentId ? (str(data.channel || '', { field: '支付渠道', max: 20 }) || '') : 'manual',
           planLabel: patch.planLabel,
           at
         })
       } catch (promoteErr) {
         /* 会员已生效：计佣失败不阻断开通，由对账补偿 */
         console.error('[promote] 计佣失败 ' + (promoteErr && promoteErr.message))
-      }
-      /* 客服提成：付款人是某客服绑定用户的直接下级时自动计提，幂等靠 paymentId */
-      try {
-        await csEngine.recordMemberPayment({
-          payerUid: uid,
-          paymentId,
-          amount,
-          planLabel: patch.planLabel,
-          orderId: order.id,
-          paidAt: at
-        })
-      } catch (csErr) {
-        /* 会员已生效：提成失败不阻断开通，由对账补偿 */
-        console.error('[cs] 计提成失败 ' + (csErr && csErr.message))
       }
     }
     await audit(ctx, 'biz.grant', uid, `开通 / 续费 ${patch.planLabel} · ${days} 天 · 实收 ${amount} 元 · ${staff}`)
@@ -5834,7 +6530,9 @@ function createMarketAdminHandlers(deps) {
         ? enumOf(data.sort, ['created_desc', 'created_asc', 'amount_desc', 'deadline_asc', 'updated_desc'], '排序')
         : 'created_desc'
       /* 一次取全量咨询单，工单状态筛选与排序都不受当前分页限制 */
-      const consultLeads = await repo.find('leads', { targetType: 'agency' }, { limit: 100000 })
+      const consultLeads = (await repo.find('leads', { targetType: 'agency' }, { limit: 100000 }))
+        /* 上架审核工单不是咨询工单，不参与「N 人咨询 / 工单状态」口径 */
+        .filter((lead) => lead.ticketKind !== 'audit')
       /* 同一委托可能关联多条咨询单（历史重复提交 / 其他用户也咨询过）：
          优先取已推进阶段的真实工单，其次取仍未结束的，最后才按更新时间兜底，
          避免一条后建的「已关闭」干扰单把已完成的工单覆盖成终止 */
@@ -5917,6 +6615,8 @@ function createMarketAdminHandlers(deps) {
         const view = agencyStaffView(row, at)
         const lead = consultMap[row.id]
         if (lead) {
+          /* 管理端「去工单中心登记成交」直接跳到对应工单 */
+          view.consultLeadId = lead.id
           view.consultStage = consultStageOf(lead)
           view.consultStageLabel = consultStageLabel(view.consultStage)
           view.consultState = consultStateOf(lead)
@@ -6070,7 +6770,11 @@ function createMarketAdminHandlers(deps) {
             updatedAt: at
           }
       }
-      const res = await repo.updateWhere('agencies', { id, status: AGENCY_STATUS.REVIEW }, patch)
+      /* 待确认（PENDING）是升级前的旧状态，展示上并入「待审核」，审核入口同样允许 */
+      const res = await repo.updateWhere('agencies', {
+        id,
+        status: { $in: [AGENCY_STATUS.REVIEW, AGENCY_STATUS.PENDING] }
+      }, patch)
       if (!res || !res.count) throw new AppError(CODES.CONFLICT, '工单状态已变化，仅「待审核」可审核')
       await audit(ctx, 'agency.review', id, `${decision}${isEdit ? '（委托修改）' : ''}${note ? ' · ' + note : ''} · ${staff}`)
       const doc = await repo.get('agencies', id)
@@ -6107,6 +6811,12 @@ function createMarketAdminHandlers(deps) {
             })
         }
       } catch (err) { /* 回执失败不影响主流程 */ }
+      /* 审核结论回写工作台的审核工单：通过 / 驳回后工单自动收尾 */
+      try {
+        await closeAgencyAuditTicket(repo, id, decision, note, staff, at)
+      } catch (err) {
+        console.error('[agency] 审核工单收尾失败：' + (err && err.message))
+      }
       return agencyStaffView(doc, at)
     },
 
@@ -6176,32 +6886,23 @@ function createMarketAdminHandlers(deps) {
     },
 
     /**
-     * 平台收尾：登记成交或关闭。
-     * 「确认成交」由平台（管理员 / 客服）直接完成：写入成交金额、生成后付费服务费账单并通知委托方；
-     * 委托方只需按账单支付服务费，服务费到账后由客服在工单点「确认完成」，委托与工单同时归档。
+     * 平台收尾：关闭委托。
+     * 成交不再从这里直接确认：代采 / 代售必须先在工单中心完成「确定唯一对接方 → 居间合同归档」，
+     * 再由客服登记成交（consult.proposeDeal）。本接口只保留关闭，避免跳过合同与收款流程。
      */
     'agency.close': async (data, ctx) => {
       const role = await roleOf(ctx)
-      if (role !== 'admin') throw new AppError(CODES.FORBIDDEN, '仅管理员可关闭 / 确认成交')
+      /* 关闭委托属于代采代售日常运营：客服与管理员都可操作（RBAC 已限定动作白名单） */
+      if (role !== 'admin' && role !== 'cs') throw new AppError(CODES.FORBIDDEN, '无权限关闭委托')
       const id = str(data.id, { field: '委托标识', required: true, max: 64 })
-      const dealt = data.dealt === true
       const reason = str(data.reason, { field: '关闭原因', max: 100 })
       const at = now()
       const staff = await staffLabel(ctx)
-      if (dealt) {
-        const dealAmount = Math.max(0, Math.round((Number(data.dealAmount) || 0) * 100) / 100)
-        if (!(dealAmount > 0)) throw new AppError(CODES.VALIDATION, '请先填写成交金额')
-        await confirmAgencyDeal(repo, {
-          agencyId: id,
-          amount: dealAmount,
-          at,
-          staff,
-          staffId: (ctx.session && ctx.session.accountId) || '',
-          actorType: 'admin'
-        })
-        await audit(ctx, 'agency.close', id, `确认成交 · ${dealAmount}`)
-        const doc = await repo.get('agencies', id)
-        return agencyStaffView(doc, at)
+      if (data.dealt === true) {
+        throw new AppError(
+          CODES.CONFLICT,
+          '代采代售不能直接确认成交，请在工单中心完成「确定对接方 → 合同归档 → 登记成交」'
+        )
       }
       const res = await repo.updateWhere('agencies', {
         id,
@@ -6236,7 +6937,8 @@ function createMarketAdminHandlers(deps) {
      */
     'agency.complete': async (data, ctx) => {
       const role = await roleOf(ctx)
-      if (role !== 'admin') throw new AppError(CODES.FORBIDDEN, '仅管理员可确认完成')
+      /* 确认完成是委托收尾动作：服务费到账后由客服或管理员归档 */
+      if (role !== 'admin' && role !== 'cs') throw new AppError(CODES.FORBIDDEN, '无权限确认完成')
       const id = str(data.id, { field: '委托标识', required: true, max: 64 })
       const at = now()
       const doc = await repo.get('agencies', id)
@@ -6269,7 +6971,8 @@ function createMarketAdminHandlers(deps) {
     },
 
     /**
-     * 平台直接修改代采代售商品：平台拥有对已发布委托的编辑权，改完立即生效并通知委托方。
+     * 平台编辑代采代售委托：与小程序发布表单同口径，覆盖委托类型 / 交易方式 / 设备 / 数量 /
+     * 币种 / 价格 / 截止时间 / 租期 / 城市 / 说明 / 流程与条件，委托方主体信息与证明材料不在编辑范围。
      * 若该委托正处于「修改待审核」（editPending），改动合并进待审内容，审核通过时一并生效。
      */
     'agency.update': async (data, ctx) => {
@@ -6279,28 +6982,80 @@ function createMarketAdminHandlers(deps) {
       if (![AGENCY_STATUS.PENDING, AGENCY_STATUS.REVIEW, AGENCY_STATUS.APPROVED, AGENCY_STATUS.ACTIVE].includes(doc.status)) {
         throw new AppError(CODES.CONFLICT, '已结束的委托不可修改')
       }
-      const item = str(data.item, { field: '设备名称', required: true, min: 2, max: 60 })
-      const qty = Number(data.qty)
-      if (!Number.isInteger(qty) || qty < 1 || qty > 9999) {
-        throw new AppError(CODES.VALIDATION, '数量需为 1 - 9999 的整数')
+      /* 委托类型 / 交易方式 / 金额决定服务费口径，账单一旦生成就不再允许调整 */
+      const feeLocked = !!doc.feeStatus && doc.feeStatus !== 'unbilled'
+      const side = enumOf(data.side || doc.side || 'buy', ['buy', 'sell'], '委托类型')
+      const sideModes = side === 'buy'
+        ? [TRADE_MODES.BUY, TRADE_MODES.LEASE]
+        : [TRADE_MODES.SELL, TRADE_MODES.RENT]
+      const fallbackMode = side === 'buy' ? TRADE_MODES.BUY : TRADE_MODES.SELL
+      const mode = enumOf(data.mode || doc.mode || fallbackMode, sideModes, '交易方式')
+      const rental = mode === TRADE_MODES.LEASE || mode === TRADE_MODES.RENT
+      const term = rental ? enumOf(data.term || doc.term, RENT_TERMS, '租期') : ''
+      const currency = enumOf(data.currency || doc.currency || DEFAULT_CURRENCY,
+        CURRENCIES.map((c) => c.code), '币种')
+      const cur = CURRENCIES.find((c) => c.code === currency) || CURRENCIES[0]
+      const item = str(data.item, { field: '设备型号', required: true, min: 2, max: 100 })
+      const cat = str(data.cat === undefined ? (doc.itemCat || '') : data.cat, { field: '设备品类', max: 20 })
+      const city = str(data.city === undefined ? (doc.city || '') : data.city, { field: '所在城市', max: 20 })
+      const qty = intOf(data.qty, '数量', 1, 100000)
+      const price = intOf(data.price, '单价', 1, 999999999)
+      const detail = str(data.detail === undefined ? (doc.detail || '') : data.detail, { field: '补充说明', max: 500 })
+      /* 与小程序发布口径一致：流程步骤按「名称：说明」拼接，最多 10 条、单条 120 字 */
+      const flow = arrayOfStrings(data.flow === undefined ? doc.flow : data.flow, { field: '交易流程', max: 10, itemMax: 120 })
+      const must = arrayOfStrings(data.must === undefined ? doc.must : data.must, { field: '必要条件', max: 10, itemMax: 120 })
+      const nego = arrayOfStrings(data.nego === undefined ? doc.nego : data.nego, { field: '可协商条件', max: 10, itemMax: 120 })
+      const deadlineInfo = parseAgencyDeadline(data.deadline || doc.deadline, now())
+      if (feeLocked && (side !== doc.side || mode !== doc.mode || (rental ? term : '') !== (doc.term || '') ||
+        currency !== (doc.currency || DEFAULT_CURRENCY) || qty !== Number(doc.qty) ||
+        price !== Number(doc.price) || deadlineInfo.deadline !== doc.deadline)) {
+        throw new AppError(CODES.CONFLICT, '服务费账单已生成，委托类型、交易方式、价格与截止时间不可再修改')
       }
-      const price = Number(data.price)
-      if (!Number.isFinite(price) || price < 0 || price > 99999999) {
-        throw new AppError(CODES.VALIDATION, '价格需为 0 - 99999999 之间的数字')
+      const amount = round2(qty * price)
+      const fee = agencyFee(amount, rental, side)
+      const largeAmount = fee.largeAmount === true
+      /* 大额代采强制保密：与发布口径一致，其余情况沿用原可见范围，避免平台编辑把私密委托公开 */
+      const visibility = (side === 'buy' && largeAmount) ? VISIBILITIES.PRIVATE : (doc.visibility || VISIBILITIES.PUBLIC)
+      const exposure = (side === 'buy' && largeAmount) ? EXPOSURES.HIDDEN : (doc.exposure || EXPOSURES.HIDDEN)
+      const channel = visibility === VISIBILITIES.PUBLIC ? PUBLISH_CHANNELS.BOTH : PUBLISH_CHANNELS.NORMAL
+      const fields = {
+        side,
+        kind: side === 'buy' ? '代采' : '代售',
+        mode,
+        rental,
+        term,
+        item,
+        itemCat: cat,
+        city,
+        qty,
+        price,
+        amount,
+        currency,
+        currencySymbol: cur.symbol,
+        currencyLabel: cur.label,
+        serviceFee: fee.fee,
+        feeRule: fee.rule,
+        feeNote: '成交后支付',
+        largeAmount,
+        deferredFee: fee.deferredFee === true,
+        visibility,
+        exposure,
+        channel,
+        bizPool: visibility !== VISIBILITIES.PRIVATE,
+        deadline: deadlineInfo.deadline,
+        deadlineAt: deadlineInfo.deadlineAt,
+        detail,
+        flow,
+        must,
+        nego
       }
-      const city = str(data.city, { field: '所在地', max: 20 })
-      const detail = str(data.detail, { field: '详细说明', max: 2000 })
-      const flow = arrayOfStrings(data.flow, { field: '交易流程', max: 8, itemMax: 40 })
-      const must = arrayOfStrings(data.must, { field: '必备条件', max: 8, itemMax: 40 })
-      const nego = arrayOfStrings(data.nego, { field: '可协商项', max: 8, itemMax: 40 })
-      const fields = { item, qty, price, city, detail, flow, must, nego }
       const at = now()
       const staff = await staffLabel(ctx)
-      const patch = Object.assign({}, fields, { amount: round2(qty * price), staff, updatedAt: at })
+      const patch = Object.assign({}, fields, { staff, updatedAt: at })
       if (doc.editPending === true) patch.pendingEdit = Object.assign({}, doc.pendingEdit || {}, fields)
       const res = await repo.updateWhere('agencies', { id }, patch)
       if (!res || !res.count) throw new AppError(CODES.CONFLICT, '委托状态已变化，请刷新后重试')
-      await audit(ctx, 'agency.update', id, `平台修改：${item}`)
+      await audit(ctx, 'agency.update', id, `平台修改：${fields.kind} · ${item}`)
       const next = await repo.get('agencies', id)
       try {
         await notifyUser(doc.ownerId, {
@@ -6430,6 +7185,16 @@ function createMarketAdminHandlers(deps) {
       const agency = await repo.get('agencies', id)
       if (!agency || agency.deleted === true) throw new AppError(CODES.NOT_FOUND, '委托不存在或已删除')
       if (String(agency.ownerId || '') !== uid) throw new AppError(CODES.FORBIDDEN, '该用户不是本委托的发布人')
+      /* 咨询单已被他人领取时，其他人不能再给该用户发消息（管理员也需先转单接手） */
+      const leads = await repo.find('leads', { uid, targetType: 'agency', targetId: id }, {
+        sort: { field: 'updatedAt', dir: 'desc' },
+        limit: 1
+      })
+      const lead = leads[0] || null
+      const me = (ctx.session && ctx.session.accountId) || ''
+      if (lead && lead.assignedAccount && lead.assignedAccount !== me) {
+        throw new AppError(CODES.FORBIDDEN, '该咨询已由 ' + (lead.csName || lead.assignedTo || '其他客服') + ' 领取，领取或转单后才能回复')
+      }
       const staff = await staffLabel(ctx)
       const at = now()
       const toUser = {
@@ -6449,6 +7214,8 @@ function createMarketAdminHandlers(deps) {
           staffName: staff,
           targetType: 'agency',
           targetId: id,
+          /* 有咨询单时归入该咨询的会话流，消息中心按同一会话展示 */
+          threadId: lead ? lead.id : '',
           targetTitle: agency.item || ''
         },
         status: 'done',
@@ -6489,7 +7256,7 @@ function createMarketAdminHandlers(deps) {
 
     'news.create': async (data, ctx) => {
       const role = await roleOf(ctx)
-      if (role !== 'admin') throw new AppError(CODES.FORBIDDEN, '仅管理员可发布官方资讯')
+      if (role !== 'admin' && role !== 'cs') throw new AppError(CODES.FORBIDDEN, '仅管理员或客服可发布资讯')
       const input = normalizeNewsInput(data, true)
       /* 官方资讯统一口径：正文 1000–1300 字，定时发布也按这个标准 */
       if (input.content.length < 1000 || input.content.length > 1300) {
@@ -6506,6 +7273,7 @@ function createMarketAdminHandlers(deps) {
         title: input.title,
         summary: input.summary,
         content: input.content,
+        media: input.media,
         city: input.city,
         author: '平台运营',
         status: scheduled ? NEWS_STATUS.SCHEDULED : NEWS_STATUS.PUBLISHED,
@@ -6556,7 +7324,7 @@ function createMarketAdminHandlers(deps) {
 
     'news.offline': async (data, ctx) => {
       const role = await roleOf(ctx)
-      if (role !== 'admin') throw new AppError(CODES.FORBIDDEN, '仅管理员可下架资讯')
+      if (role !== 'admin' && role !== 'cs') throw new AppError(CODES.FORBIDDEN, '仅管理员或客服可下架资讯')
       const id = str(data.id, { field: '资讯标识', required: true, max: 64 })
       const reason = str(data.reason, { field: '下架原因', max: 100 })
       if (!reason) throw new AppError(CODES.VALIDATION, '下架必须填写原因，并会同步通知投稿人')
@@ -6585,7 +7353,7 @@ function createMarketAdminHandlers(deps) {
     /* 待发布稿立即上线：不必等到下一个时间点 */
     'news.publish': async (data, ctx) => {
       const role = await roleOf(ctx)
-      if (role !== 'admin') throw new AppError(CODES.FORBIDDEN, '仅管理员可发布官方资讯')
+      if (role !== 'admin' && role !== 'cs') throw new AppError(CODES.FORBIDDEN, '仅管理员或客服可发布资讯')
       const id = str(data.id, { field: '资讯标识', required: true, max: 64 })
       const at = now()
       const res = await repo.updateWhere('news', { id, status: NEWS_STATUS.SCHEDULED }, {
@@ -6934,6 +7702,7 @@ function createMarketAdminHandlers(deps) {
         agencyId: row.agencyId || '',
         note: row.note || '',
         voucher: row.voucher || '',
+        manual: !!row.manual,
         createdAt: Number(row.createdAt) || 0
       }))
       return {
@@ -6952,6 +7721,85 @@ function createMarketAdminHandlers(deps) {
         bizTypes: PAYMENT_BIZ_TYPES,
         methods: PAYMENT_METHODS,
         at
+      }
+    },
+
+    /** 财务修改入账备注 / 凭证：金额与状态不动，只补说明与回单，全部留痕 */
+    'payment.updateNote': async (data, ctx) => {
+      const id = str(data.id, { field: '收款单', required: true, max: 64 })
+      const row = await repo.get('payments', id)
+      if (!row) throw new AppError(CODES.NOT_FOUND, '收款单不存在')
+      const note = String(data.note == null ? '' : data.note).trim()
+      if (note.length > 200) throw new AppError(CODES.VALIDATION, '备注最多 200 字')
+      const voucher = String(data.voucher == null ? '' : data.voucher).trim()
+      if (voucher && !/^(https?:\/\/|\/)/.test(voucher)) throw new AppError(CODES.VALIDATION, '凭证地址不合法')
+      const at = now()
+      const staff = await staffLabel(ctx)
+      await repo.updateWhere('payments', { id }, {
+        note,
+        voucher,
+        noteUpdatedAt: at,
+        noteUpdatedBy: staff,
+        updatedAt: at
+      })
+      await audit(ctx, 'payment.updateNote', id, `${row.bizType || '收款'} · ${staff}`)
+      return { id, note, voucher, updatedAt: at }
+    },
+
+    /** 财务补录线下收入：固定「其他」类型、直接记已确认，补齐微信之外的收款口径 */
+    'payment.manual': async (data, ctx) => {
+      const uid = str(data.uid, { field: '用户标识', required: true, max: 64 })
+      const user = await repo.get('users', uid)
+      if (!user) throw new AppError(CODES.NOT_FOUND, '用户不存在')
+      const amount = Number(data.amount)
+      if (!Number.isFinite(amount) || amount <= 0) throw new AppError(CODES.VALIDATION, '入账金额需大于 0')
+      if (amount > 1000000) throw new AppError(CODES.VALIDATION, '单笔补录金额不能超过 100 万元')
+      const method = data.method ? enumOf(data.method, PAYMENT_METHODS, '收款方式') : '对公转账'
+      const note = str(data.note, { field: '入账说明', required: true, max: 200 })
+      const voucher = String(data.voucher || '').trim()
+      if (voucher && !/^(https?:\/\/|\/)/.test(voucher)) throw new AppError(CODES.VALIDATION, '凭证地址不合法')
+      const at = now()
+      const paidAt = Number(data.paidAt) || at
+      const staff = await staffLabel(ctx)
+      const id = randomId('PF')
+      await repo.insert('payments', {
+        id,
+        paymentId: '',
+        uid,
+        nick: user.nick || '',
+        bizType: '其他',
+        planKey: '',
+        planLabel: '',
+        days: 0,
+        amount: Math.round(amount * 100) / 100,
+        discount: 0,
+        received: Math.round(amount * 100) / 100,
+        method,
+        status: PAYMENT_STATUS.CONFIRMED,
+        paidAt,
+        confirmedAt: at,
+        confirmedBy: staff,
+        operator: staff,
+        orderId: '',
+        agencyId: '',
+        note,
+        voucher,
+        manual: true,
+        createdAt: at,
+        updatedAt: at
+      })
+      await audit(ctx, 'payment.manual', id, `${uid} · ${amount} 元 · ${method} · ${staff}`)
+      return {
+        id,
+        uid,
+        amount: Math.round(amount * 100) / 100,
+        method,
+        note,
+        voucher,
+        status: PAYMENT_STATUS.CONFIRMED,
+        manual: true,
+        paidAt,
+        paidText: dateText(paidAt)
       }
     },
 
@@ -7245,22 +8093,143 @@ function createMarketAdminHandlers(deps) {
       return { id, status: decision, paymentId: doc.paymentId, paymentStatus: decision === REFUND_STATUS.APPROVED ? PAYMENT_STATUS.REFUNDED : payment.status }
     },
 
-    /** 财务汇总：营收、付费用户、续费率、套餐结构、近 6 个月趋势 */
+    /** 佣金台账：客服委托佣金 / 推广者佣金两类，统一按月筛选查询 */
+    'finance.commissions': async (data) => {
+      const at = now()
+      const page = normalizePaging(data)
+      const month = str(data.month, { field: '月份', max: 7 }) || ''
+      if (month && !/^\d{4}-\d{2}$/.test(month)) throw new AppError(CODES.VALIDATION, '月份格式应为 YYYY-MM')
+      const type = data.type ? enumOf(data.type, ['客服委托', '推广佣金'], '佣金类型') : ''
+      const keyword = str(data.keyword, { field: '关键词', max: 40 }).toLowerCase()
+      const monthOf = (ms) => {
+        const d = new Date(Number(ms) + 8 * 3600 * 1000)
+        return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
+      }
+      const [csAgency, promoter] = await Promise.all([
+        repo.find('csAgencyCommissions', {}, { limit: 20000 }),
+        repo.find('commissions', {}, { limit: 20000 })
+      ])
+      const rows = []
+      for (const row of csAgency) {
+        rows.push({
+          id: row.id,
+          type: '客服委托',
+          staff: row.csId,
+          staffName: row.csName || row.csId,
+          uid: row.leadId || row.agencyId,
+          userLabel: row.item || row.contractNo || row.agencyId,
+          bizLabel: row.side === 'sell' ? '代售服务费' : '代采服务费',
+          base: Number(row.feeAmount) || 0,
+          rate: Number(row.rate) || 0,
+          amount: Math.round(((Number(row.commission) || 0) - (Number(row.reversedCommission) || 0)) * 100) / 100,
+          status: Number(row.reversedCommission) > 0 ? '部分冲正' : (row.status || '已计提'),
+          rateSource: row.rateSource || '',
+          paidAt: Number(row.paidAt) || 0,
+          month: monthOf(row.paidAt),
+          note: row.contractNo || ''
+        })
+      }
+      for (const row of promoter) {
+        rows.push({
+          id: row.id,
+          type: '推广佣金',
+          staff: row.promoterUid,
+          staffName: row.promoterUid,
+          uid: row.payerUid,
+          userLabel: row.payerUid,
+          bizLabel: '会员续费',
+          base: Number(row.base) || 0,
+          rate: Number(row.rate) || 0,
+          amount: row.status === '已冲正' ? 0 : (Number(row.netAmount) || 0),
+          status: row.status || '',
+          rateSource: row.level === 2 ? '二级' : '一级',
+          paidAt: Number(row.paidAt) || 0,
+          month: monthOf(row.paidAt),
+          note: ''
+        })
+      }
+      let list = rows
+      if (month) list = list.filter((row) => row.month === month)
+      if (type) list = list.filter((row) => row.type === type)
+      if (keyword) {
+        list = list.filter((row) => [row.staffName, row.staff, row.userLabel, row.uid, row.bizLabel, row.note]
+          .some((v) => String(v || '').toLowerCase().includes(keyword)))
+      }
+      list.sort((a, b) => b.paidAt - a.paidAt)
+      const totals = { all: 0, 客服委托: 0, 推广佣金: 0, count: list.length }
+      for (const row of list) {
+        totals[type || row.type] += row.amount
+        totals.all += row.amount
+      }
+      const paged = list.slice((page.page - 1) * page.limit, page.page * page.limit).map((row) => Object.assign({}, row, {
+        paidText: row.paidAt ? dateText(row.paidAt) : '',
+        rateText: (Math.round(row.rate * 10000) / 100) + '%'
+      }))
+      return {
+        items: paged,
+        total: list.length,
+        page: page.page,
+        limit: page.limit,
+        totals: {
+          all: Math.round(totals.all * 100) / 100,
+          csAgency: Math.round(totals['客服委托'] * 100) / 100,
+          promoter: Math.round(totals['推广佣金'] * 100) / 100,
+          count: totals.count
+        },
+        types: ['客服委托', '推广佣金'],
+        at
+      }
+    },
+
+    /** 财务汇总：营收、付费用户、续费率、套餐结构、近 6 个月趋势与现金流台账 */
     'finance.summary': async () => {
       const at = now()
-      /* payments 仅用于待确认统计；营收只统计微信端调起的支付，手动开通与线下登记不计营收 */
+      /* 营收口径：所有实收金额 > 0 的会员订单，含微信支付与手动开通 / 线下登记收款；
+         payments 用于现金流台账与待确认统计，实收 0 的赠送单不计营收 */
       const payments = await repo.find('payments', {}, { sort: { field: 'paidAt', dir: 'desc' }, limit: 20000 })
       const orders = await repo.find('bizOrders', {}, { sort: { field: 'createdAt', dir: 'desc' }, limit: 20000 })
       const accesses = await repo.find('bizAccess', {}, { limit: 20000 })
-      const paidOrders = orders.filter((o) => o.method === '微信支付')
-      const revenueRows = paidOrders.map((o) => ({
+      const revenueOrders = orders.filter((o) => Number(o.amount) > 0)
+      /* 委托服务费收入：财务确认到账的代采 / 代售 / 租赁服务费账单，与会员营收一并计入总营收；
+         这类账单没有支付渠道字段，按人工确认 / 线下到账归入 manual */
+      const feeRows = payments
+        .filter((row) => row.status === PAYMENT_STATUS.CONFIRMED && PAYMENT_FEE_TYPES.indexOf(row.bizType) > -1)
+        .map((row) => {
+          const c = String(row.channel || '').toLowerCase()
+          return {
+            at: Number(row.confirmedAt) || Number(row.paidAt) || Number(row.createdAt) || 0,
+            amount: Number(row.received) || Number(row.amount) || 0,
+            uid: row.uid || '',
+            bizType: row.bizType,
+            planKey: '',
+            channel: c === 'apple' || c === 'ios' ? 'apple' : (c === 'wxpay' ? 'wxpay' : 'manual')
+          }
+        })
+      /* 渠道归一：历史订单没有 channel 字段，先回查同一收款单的渠道；
+         仍取不到时按在线支付（微信）处理。Apple 内购单独出表，手动开通 / 线下登记归 manual */
+      const channelByPayment = new Map()
+      for (const row of payments) {
+        if (row && row.paymentId) channelByPayment.set(String(row.paymentId), String(row.channel || '').toLowerCase())
+      }
+      const channelOf = (o) => {
+        const c = String((o && o.channel) || channelByPayment.get(String((o && o.paymentId) || '')) || '').toLowerCase()
+        if (c === 'apple' || c === 'ios') return 'apple'
+        if (c === 'manual') return 'manual'
+        return 'wxpay'
+      }
+      const wechatOrders = orders.filter((o) => channelOf(o) === 'wxpay')
+      const revenueRows = revenueOrders.map((o) => ({
         at: Number(o.createdAt) || 0,
         amount: Number(o.amount) || 0,
         uid: o.uid,
         bizType: '会员续费',
-        planKey: o.planKey || ''
+        planKey: o.planKey || '',
+        channel: channelOf(o)
       }))
-      const revenue = revenueRows.reduce((sum, row) => sum + row.amount, 0)
+      const memberRevenue = revenueRows.reduce((sum, row) => sum + row.amount, 0)
+      const serviceFeeRevenue = feeRows.reduce((sum, row) => sum + row.amount, 0)
+      const allRevenueRows = revenueRows.concat(feeRows)
+      const revenue = memberRevenue + serviceFeeRevenue
       const payers = new Set(revenueRows.map((row) => row.uid).filter(Boolean))
       const orderCountByUid = {}
       for (const row of revenueRows) {
@@ -7275,7 +8244,7 @@ function createMarketAdminHandlers(deps) {
         return status === BIZ_STATUS.ACTIVE && left > 0 && left <= 7 * DAY_MS
       }).length
       const byBizType = {}
-      for (const row of revenueRows) {
+      for (const row of allRevenueRows) {
         const key = row.bizType || '其他'
         if (!byBizType[key]) byBizType[key] = { count: 0, amount: 0 }
         byBizType[key].count += 1
@@ -7290,9 +8259,18 @@ function createMarketAdminHandlers(deps) {
         byPlan[key].count += 1
         byPlan[key].amount += row.amount
       }
-      for (const order of paidOrders) {
+      for (const order of revenueOrders) {
         const key = order.planKey || 'custom'
         if (byPlan[key]) byPlan[key].days += Number(order.days) || 0
+      }
+      /* 渠道营收：Apple 内购单独成表，手动开通 / 线下登记单列，微信支付为默认渠道 */
+      const CHANNEL_LABELS = { wxpay: '微信支付', apple: 'Apple 内购', manual: '手动开通 / 线下' }
+      const byChannel = {}
+      for (const row of allRevenueRows) {
+        const key = row.channel || 'wxpay'
+        if (!byChannel[key]) byChannel[key] = { key, label: CHANNEL_LABELS[key] || key, count: 0, amount: 0 }
+        byChannel[key].count += 1
+        byChannel[key].amount += row.amount
       }
       /* 近 6 个月营收趋势 */
       const months = []
@@ -7300,28 +8278,34 @@ function createMarketAdminHandlers(deps) {
       for (let i = 5; i >= 0; i -= 1) {
         const m = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - i, 1))
         const key = `${m.getUTCFullYear()}-${String(m.getUTCMonth() + 1).padStart(2, '0')}`
-        months.push({ month: key, revenue: 0, orders: 0 })
+        months.push({ month: key, revenue: 0, fee: 0, orders: 0, apple: 0 })
       }
       const monthMap = {}
       for (const row of months) monthMap[row.month] = row
-      for (const row of revenueRows) {
+      for (const row of allRevenueRows) {
         const rd = new Date(row.at + 8 * 60 * 60 * 1000)
         const key = `${rd.getUTCFullYear()}-${String(rd.getUTCMonth() + 1).padStart(2, '0')}`
         if (monthMap[key]) {
           monthMap[key].revenue += row.amount
           monthMap[key].orders += 1
+          if (PAYMENT_FEE_TYPES.indexOf(row.bizType) > -1) monthMap[key].fee += row.amount
+          if (row.channel === 'apple') monthMap[key].apple += row.amount
         }
       }
-      for (const row of months) row.revenue = Math.round(row.revenue * 100) / 100
+      for (const row of months) {
+        row.revenue = Math.round(row.revenue * 100) / 100
+        row.fee = Math.round(row.fee * 100) / 100
+        row.apple = Math.round(row.apple * 100) / 100
+      }
       const startOfToday = at - ((at + 8 * 3600 * 1000) % DAY_MS)
-      const revenueOf = (since) => revenueRows.filter((row) => row.at >= since).reduce((sum, row) => sum + row.amount, 0)
+      const revenueOf = (since) => allRevenueRows.filter((row) => row.at >= since).reduce((sum, row) => sum + row.amount, 0)
       /* 用户消费画像：累计消费 / 近 30 天消费 / 消费次数，供财务中心「单个用户」视图 */
       const allUsers = await repo.find('users', {}, { limit: 20000 })
       const userOf = new Map(allUsers.map((u) => [u.id, u]))
       const allLeads = await repo.find('leads', {}, { limit: 20000 })
       const matchedCount = allLeads.filter((row) => row.status === LEAD_STATUS.MATCHED || row.status === LEAD_STATUS.DEALT).length
       const spendByUid = {}
-      for (const row of revenueRows) {
+      for (const row of allRevenueRows) {
         if (!row.uid) continue
         const item = spendByUid[row.uid] || { uid: row.uid, total: 0, last30: 0, count: 0, lastAt: 0 }
         item.total += row.amount
@@ -7344,9 +8328,9 @@ function createMarketAdminHandlers(deps) {
             lastText: dateText(row.lastAt)
           }
         })
-      /* 每周对账：只核对微信支付订单，线下登记 / 手动开通不计营收 */
+      /* 每周对账：只核对微信支付渠道；Apple 内购走 Apple 账单、手动 / 线下无微信账单可核，不纳入对账范围 */
       const weekFrom = at - 7 * DAY_MS
-      const weekOrders = paidOrders.filter((row) => Number(row.createdAt) >= weekFrom)
+      const weekOrders = wechatOrders.filter((row) => Number(row.createdAt) >= weekFrom)
       const sumBy = (rows, field) => Math.round(rows.reduce((sum, row) => sum + (Number(row[field]) || 0), 0) * 100) / 100
       const recon = {
         since: weekFrom,
@@ -7354,17 +8338,159 @@ function createMarketAdminHandlers(deps) {
         wechatAmount: sumBy(weekOrders, 'amount')
       }
       recon.total = recon.wechatAmount
+
+      /* ============ 现金流 / 提现 / 佣金：财务中心三段台账 ============ */
+      const money = (v) => Math.round((Number(v) || 0) * 100) / 100
+      const monthOf = (ms) => {
+        const d = new Date(Number(ms) + 8 * 3600 * 1000)
+        return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
+      }
+      const thisMonth = monthOf(at)
+      /* 收款：以 payments 实际入账为准，退款单冲减，避免「只看微信订单」导致线下收入缺失 */
+      const incomeRows = payments.filter((row) => row.status === PAYMENT_STATUS.CONFIRMED).map((row) => ({
+        at: Number(row.paidAt) || Number(row.createdAt) || 0,
+        amount: money(row.received),
+        uid: row.uid || '',
+        bizType: row.bizType || '其他',
+        method: row.method || '',
+        note: row.note || ''
+      }))
+      const refundRows = payments.filter((row) => row.status === PAYMENT_STATUS.REFUNDED).map((row) => ({
+        at: Number(row.refundedAt) || Number(row.paidAt) || Number(row.createdAt) || 0,
+        amount: money(row.received || row.amount),
+        uid: row.uid || '',
+        bizType: row.bizType || '其他',
+        method: row.method || ''
+      }))
+      const incomeTotal = money(incomeRows.reduce((s, r) => s + r.amount, 0))
+      const refundTotal = money(refundRows.reduce((s, r) => s + r.amount, 0))
+      const incomeMonth = money(incomeRows.filter((r) => monthOf(r.at) === thisMonth).reduce((s, r) => s + r.amount, 0))
+      const refundMonth = money(refundRows.filter((r) => monthOf(r.at) === thisMonth).reduce((s, r) => s + r.amount, 0))
+
+      /* 提现：全量提现单按状态汇总，已到账才是真实现金流出 */
+      const withdrawals = await repo.find('promoterWithdrawals', {}, {
+        sort: { field: 'createdAt', dir: 'desc' }, limit: 20000
+      })
+      const pickW = (list) => withdrawals.filter((row) => list.indexOf(row.status) > -1)
+      const paidW = pickW(['已到账'])
+      const pendingW = pickW(['待审核', '待打款', '打款中'])
+      const failedW = pickW(['打款失败'])
+      const paidTotal = money(paidW.reduce((s, row) => s + (Number(row.payoutAmount) || Number(row.amount) || 0), 0))
+      const paidMonth = money(paidW.filter((row) => monthOf(row.paidAt || row.updatedAt) === thisMonth)
+        .reduce((s, row) => s + (Number(row.payoutAmount) || Number(row.amount) || 0), 0))
+      const pendingTotal = money(pendingW.reduce((s, row) => s + (Number(row.amount) || 0), 0))
+      const failedTotal = money(failedW.reduce((s, row) => s + (Number(row.amount) || 0), 0))
+
+      /* 佣金：客服委托佣金 + 推广者佣金，统一进工资 / 佣金台账；客服不设会员提成 */
+      const [csAgencyRows, promoterRows] = await Promise.all([
+        repo.find('csAgencyCommissions', {}, { limit: 20000 }),
+        repo.find('commissions', {}, { limit: 20000 })
+      ])
+      const csAgencyTotal = money(csAgencyRows.reduce((s, row) =>
+        s + (Number(row.commission) || 0) - (Number(row.reversedCommission) || 0), 0))
+      const csAgencyMonth = money(csAgencyRows.filter((row) => monthOf(row.paidAt) === thisMonth)
+        .reduce((s, row) => s + (Number(row.commission) || 0), 0) -
+        csAgencyRows.filter((row) => Number(row.reversedAt) > 0 && monthOf(row.reversedAt) === thisMonth)
+          .reduce((s, row) => s + (Number(row.reversedCommission) || 0), 0))
+      const promoterLive = promoterRows.filter((row) => row.status !== '已冲正')
+      const promoterTotal = money(promoterLive.reduce((s, row) => s + (Number(row.netAmount) || 0), 0))
+      const promoterMonth = money(promoterLive.filter((row) => monthOf(row.paidAt) === thisMonth)
+        .reduce((s, row) => s + (Number(row.netAmount) || 0), 0))
+      const staffSalaryTotal = csAgencyTotal
+      const staffSalaryMonth = csAgencyMonth
+      const commissionTotal = money(staffSalaryTotal + promoterTotal)
+
+      const cash = {
+        at,
+        incomeTotal,
+        refundTotal,
+        netIncome: money(incomeTotal - refundTotal),
+        incomeMonth,
+        refundMonth,
+        withdrawPaid: paidTotal,
+        withdrawPaidMonth: paidMonth,
+        withdrawPending: pendingTotal,
+        withdrawPendingCount: pendingW.length,
+        withdrawFailed: failedTotal,
+        withdrawFailedCount: failedW.length,
+        withdrawCount: withdrawals.length,
+        balance: money(incomeTotal - refundTotal - paidTotal),
+        balanceMonth: money(incomeMonth - refundMonth - paidMonth),
+        commissionTotal,
+        commissionMonth: money(staffSalaryMonth + promoterMonth),
+        staffSalaryTotal,
+        staffSalaryMonth,
+        promoterCommissionTotal: promoterTotal,
+        promoterCommissionMonth: promoterMonth,
+        csAgencyTotal,
+        csAgencyMonth
+      }
+      /* 近 6 个月趋势追加提现与佣金口径 */
+      for (const row of months) {
+        row.withdraw = 0
+        row.commission = 0
+      }
+      for (const row of paidW) {
+        const key = monthOf(row.paidAt || row.updatedAt)
+        if (monthMap[key]) {
+          monthMap[key].withdraw += Number(row.payoutAmount) || Number(row.amount) || 0
+        }
+      }
+      for (const row of csAgencyRows) {
+        const key = monthOf(row.paidAt)
+        if (monthMap[key]) monthMap[key].commission += Number(row.commission) || 0
+      }
+      for (const row of promoterLive) {
+        const key = monthOf(row.paidAt)
+        if (monthMap[key]) monthMap[key].commission += Number(row.netAmount) || 0
+      }
+      for (const row of months) {
+        row.withdraw = money(row.withdraw)
+        row.commission = money(row.commission)
+      }
+      /* 统一最近流水：收款（入）与提现（出）按时间合并 */
+      const recentCash = incomeRows.map((row) => ({
+        kind: '收款',
+        direction: 'in',
+        at: row.at,
+        uid: row.uid,
+        nick: maskName((userOf.get(row.uid) || {}).nick || '') || maskIdentity(row.uid || ''),
+        label: row.bizType,
+        amount: row.amount,
+        paidText: dateText(row.at),
+        method: row.method
+      })).concat(paidW.map((row) => ({
+        kind: '提现',
+        direction: 'out',
+        at: Number(row.paidAt) || Number(row.updatedAt) || Number(row.createdAt) || 0,
+        uid: row.uid,
+        nick: maskName((userOf.get(row.uid) || {}).nick || '') || maskIdentity(row.uid || ''),
+        label: '推广佣金提现',
+        amount: money(Number(row.payoutAmount) || Number(row.amount) || 0),
+        paidText: dateText(row.paidAt || row.updatedAt || row.createdAt),
+        method: '银行卡'
+      }))).sort((a, b) => b.at - a.at).slice(0, 12)
+
+      const channelAmount = (key) => Math.round(((byChannel[key] && byChannel[key].amount) || 0) * 100) / 100
       return {
         at,
         totals: {
+          /* 总营收 = 会员开通收入 + 委托服务费收入（代采 / 代售 / 租赁），两类都计入收入 */
           revenue: Math.round(revenue * 100) / 100,
+          memberRevenue: Math.round(memberRevenue * 100) / 100,
+          serviceFeeRevenue: Math.round(serviceFeeRevenue * 100) / 100,
           today: Math.round(revenueOf(startOfToday) * 100) / 100,
           last7: Math.round(revenueOf(at - 7 * DAY_MS) * 100) / 100,
           last30: Math.round(revenueOf(at - 30 * DAY_MS) * 100) / 100,
+          /* 分渠道营收：Apple 内购单独出表 */
+          wechatRevenue: channelAmount('wxpay'),
+          appleRevenue: channelAmount('apple'),
+          manualRevenue: channelAmount('manual'),
           orders: revenueRows.length,
+          feeOrders: feeRows.length,
           payers: payers.size,
           repeatPayers,
-          arpu: payers.size ? Math.round((revenue / payers.size) * 100) / 100 : 0,
+          arpu: payers.size ? Math.round((memberRevenue / payers.size) * 100) / 100 : 0,
           renewalRate: payers.size ? Math.round((repeatPayers / payers.size) * 100) : 0,
           totalUsers: allUsers.length,
           /* 付费率：有成功收款记录的用户 / 全部用户 */
@@ -7381,6 +8507,13 @@ function createMarketAdminHandlers(deps) {
           count: byBizType[key].count,
           amount: Math.round(byBizType[key].amount * 100) / 100
         })).sort((a, b) => b.amount - a.amount),
+        /* 渠道表：固定顺序 微信支付 → Apple 内购 → 手动 / 线下 */
+        byChannel: ['wxpay', 'apple', 'manual'].filter((key) => byChannel[key]).map((key) => ({
+          key,
+          label: byChannel[key].label,
+          count: byChannel[key].count,
+          amount: Math.round(byChannel[key].amount * 100) / 100
+        })),
         recon,
         byPlan: Object.values(byPlan).map((row) => ({
           key: row.key,
@@ -7390,8 +8523,10 @@ function createMarketAdminHandlers(deps) {
           days: row.days
         })).sort((a, b) => b.amount - a.amount),
         months,
+        cash,
+        recentCash,
         topSpenders,
-        recent: paidOrders.slice(0, 10).map((row) => {
+        recent: revenueOrders.slice(0, 10).map((row) => {
           const user = userOf.get(row.uid)
           return {
             id: row.id,
@@ -7500,6 +8635,7 @@ module.exports = {
   stockMatch,
   normalizeBizPrefs,
   notifyNewBizMatch,
+  countBizMatches,
   boardItems,
   agencyOwnerView,
   agencyStaffView,

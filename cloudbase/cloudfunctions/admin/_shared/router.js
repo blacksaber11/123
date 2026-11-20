@@ -53,6 +53,24 @@ function seenRecently(uid, kind, refId, at) {
   return false
 }
 
+/**
+ * 未登录也可调用的用户端只读动作。
+ * 小程序冷启动时首屏渲染早于静默登录完成，首页横幅 / 公开站点配置必须在登录前就能读到，
+ * 否则首屏会缺失横幅，且要等用户切页触发 onShow 才会补拉。
+ * 这些动作不读取 openid，返回体不含任何个人数据，可安全匿名访问。
+ */
+const PUBLIC_USER_ACTIONS = Object.freeze({
+  'site.get': true,
+  'meta.options': true,
+  /* 资讯是公开内容：首屏冷启动早于静默登录完成，若要求登录，
+     列表会直接落到「资讯加载失败」空态（微信审核实测驳回原因）。
+     两个接口匿名时只返回公开字段，点赞 / 评论状态按未登录处理。 */
+  'news.list': true,
+  'news.detail': true,
+  /* 粘贴识别：纯文本解析、不读写任何用户数据，匿名可用（未登录先识别，登录后再发布） */
+  'parse.publish': true
+})
+
 /** 需要限流的动作：固定窗口 + 计数键 */
 const RATE_RULES = {
   'admin.login': {
@@ -63,10 +81,16 @@ const RATE_RULES = {
     limit: RATE_LIMITS.consult,
     key: (data, ctx) => 'consult:' + String(ctx.openid)
   },
-  /* 直接开聊：同样受咨询限流约束，避免绕过限流批量搭会话 */
+  /* 粘贴识别：匿名可用的纯计算接口，按 openid / IP 限速，避免被脚本反复调用 */
+  'parse.publish': {
+    limit: RATE_LIMITS.browse,
+    key: (data, ctx) => 'parse:' + String(ctx.openid || ctx.ip || 'anonymous')
+  },
+  /* 发起对话：与「咨询」分开口径，回看已领取商机的会话不会挤占咨询额度，
+     仍保留小时级上限，避免被批量搭会话刷爆 */
   'chat.open': {
-    limit: RATE_LIMITS.consult,
-    key: (data, ctx) => 'consult:' + String(ctx.openid)
+    limit: RATE_LIMITS.chatOpen,
+    key: (data, ctx) => 'chatOpen:' + String(ctx.openid)
   },
   /* 货主主页：读接口，按账号限速 */
   'owner.home': {
@@ -101,6 +125,11 @@ const RATE_RULES = {
   'biz.claim': {
     limit: RATE_LIMITS.bizClaim,
     key: (data, ctx) => 'bizClaim:' + String(ctx.openid)
+  },
+  /* 已领取商机的联系方式：只读回看，不占每日领取次数，按浏览档限速 */
+  'biz.contact': {
+    limit: RATE_LIMITS.browse,
+    key: (data, ctx) => 'browse:' + String(ctx.openid)
   },
   /* 标记「不满足」：与领取同档限速，避免被脚本刷跨用户标记 */
   'biz.mark': {
@@ -186,10 +215,12 @@ const CACHE_RULES = Object.freeze({
     'product.detail': { group: 'products', ttl: 60 },
     'demand.list': { group: 'demands', ttl: 30 },
     'demand.detail': { group: 'demands', ttl: 60 },
-    /* 资讯列表与浏览者身份无关：全站共用一份缓存，避免每个用户各打一遍数据库 */
-    'news.list': { group: 'news', ttl: 30, shared: true },
+    /* 资讯列表按浏览者缓存：黑名单会过滤被拉黑作者的资讯，不能全站共用 */
+    'news.list': { group: 'news', ttl: 30 },
     'biz.badge': { group: 'biz', ttl: 30 },
     'catalog.list': { group: 'catalog', ttl: 300 },
+    /* 用户端型号目录与浏览者身份无关：全站共用一份，管理端增删型号后按 catalog 分组失效 */
+    'catalog.tree': { group: 'catalog', ttl: 300, shared: true },
     'setting.get': { group: 'settings', ttl: 300 },
     'stats.overview': { group: 'stats', ttl: 60 },
     'insights.market': { group: 'insights', ttl: 60 }
@@ -217,6 +248,7 @@ const INVALIDATE_MAP = Object.freeze({
   'product.update': ['products', 'stats', 'biz', 'insights'],
   'product.review': ['products', 'stats', 'biz', 'insights'],
   'product.setStatus': ['products', 'stats', 'biz', 'insights'],
+  'product.transfer': ['products', 'stats', 'biz', 'insights'],
   'product.offline': ['products', 'stats', 'biz', 'insights'],
   'product.online': ['products', 'stats', 'biz', 'insights'],
   'product.delete': ['products', 'stats', 'biz', 'insights'],
@@ -232,6 +264,7 @@ const INVALIDATE_MAP = Object.freeze({
   'demand.close': ['demands', 'stats', 'biz', 'insights'],
   'demand.reopen': ['demands', 'stats', 'biz', 'insights'],
   'demand.delete': ['demands', 'stats', 'biz', 'insights'],
+  'demand.transfer': ['demands', 'stats', 'biz', 'insights'],
   /* 委托 / 代采代售 */
   'agency.submit': ['agencies'],
   'agency.paid': ['agencies'],
@@ -247,12 +280,18 @@ const INVALIDATE_MAP = Object.freeze({
   'biz.grant': ['biz'],
   'biz.revoke': ['biz'],
   'biz.setExpire': ['biz'],
+  /* 7 天体验开通后会员状态立即变化，商机列表与角标缓存需失效 */
+  'biz.trial': ['biz'],
   'biz.claim': ['biz'],
   'biz.mark': ['biz'],
+  /* 拉黑 / 移出：商品、需求、资讯、商机池的可见范围随浏览者变化，相关缓存必须立即失效 */
+  'block.add': ['products', 'demands', 'news', 'biz', 'insights'],
+  'block.remove': ['products', 'demands', 'news', 'biz', 'insights'],
   /* 型号库 / 系统设置 / 筛选规则（规则数进看板统计） */
   'catalog.save': ['catalog'],
   'catalog.remove': ['catalog'],
-  'setting.save': ['settings', 'stats'],
+  /* 评论开关随系统设置保存：资讯列表缓存里带评论数，必须一起失效 */
+  'setting.save': ['settings', 'stats', 'news'],
   'rule.toggle': ['stats'],
   'rule.create': ['stats'],
   'rule.update': ['stats'],
@@ -312,6 +351,63 @@ function hasSensitivePayload(value, depth) {
     if (hasSensitivePayload(value[key], level + 1)) return true
   }
   return false
+}
+
+/* 用户发布 / 发送内容需要做微信内容安全检测的动作：头像昵称、商品、需求、商机、聊天、咨询等 */
+const UGC_TEXT_ACTIONS = new Set([
+  'auth.login',
+  'profile.save',
+  'stock.save',
+  'product.publish',
+  'product.submit',
+  'product.update',
+  'demand.publish',
+  'demand.submit',
+  'demand.update',
+  'agency.submit',
+  'agency.update',
+  'news.submit',
+  'quote.paste',
+  'consult.submit',
+  'consult.rate',
+  'report.create',
+  'msg.send',
+  'biz.consult'
+])
+
+/* 字段名黑名单：这些是标识 / 链接 / 枚举，不是用户撰写的文本，跳过可减少误判和接口调用 */
+const UGC_SKIP_KEYS = new Set([
+  'id', 'uid', 'openid', 'unionid', 'phone', 'code', 'token', 'password',
+  'avatar', 'url', 'fileId', 'poster', 'cover', 'targetId', 'productId',
+  'demandId', 'threadId', 'leadId', 'sessionId', 'accountId', 'ref', 'refScene',
+  'city', 'brand', 'model', 'cat', 'tradeMode', 'priceUnit', 'priceMode',
+  'supply', 'cond', 'tax', 'deliver', 'pay', 'closed', 'deposit', 'term',
+  'side', 'type', 'kind', 'status', 'scene', 'channel', 'currency', 'unit'
+])
+
+/* 递归收集用户填写的文字：只取含中文的普通文本，跳过链接 / 超长串 / 标识字段 */
+function collectUgcText(value, out, depth) {
+  const level = depth || 0
+  if (!out || level > 6 || value === null || value === undefined) return
+  if (typeof value === 'string') {
+    const s = value.trim()
+    if (!s || s.length > 1200) return
+    if (/^(https?:|wxfile:|cloud:|data:)/i.test(s)) return
+    if (!/[\u3400-\u9fa5]/.test(s)) return
+    if (out.join('').length >= 1900) return
+    out.push(s)
+    return
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectUgcText(item, out, level + 1)
+    return
+  }
+  if (typeof value === 'object') {
+    for (const key of Object.keys(value)) {
+      if (UGC_SKIP_KEYS.has(key)) continue
+      collectUgcText(value[key], out, level + 1)
+    }
+  }
 }
 
 /**
@@ -471,7 +567,7 @@ function createRouter(options) {
         const session = await resolveSession(context.token, at)
         context.session = session
         context.accountId = session.accountId
-      } else if (scope === 'user' && !context.openid) {
+      } else if (scope === 'user' && !context.openid && !PUBLIC_USER_ACTIONS[action]) {
         throw new AppError(CODES.UNAUTHENTICATED, '请先登录')
       }
 
@@ -494,6 +590,31 @@ function createRouter(options) {
           windowMs: rule.limit.windowMs,
           now: at
         })
+      }
+
+      /* 内容安全：用户发布的文字（含头像昵称、商品、需求、聊天）先过微信检测，
+         命中违规直接拒绝；微信接口异常时放行并记录日志，避免影响正常发布 */
+      if (scope === 'user' && context.openid && typeof options.secCheck === 'function' && UGC_TEXT_ACTIONS.has(action)) {
+        const texts = []
+        collectUgcText(input || {}, texts, 0)
+        const secText = texts.join('\n').slice(0, 2000)
+        if (secText) {
+          let verdict = null
+          try {
+            verdict = await options.secCheck({ type: 'text', text: secText, openid: context.openid })
+          } catch (secErr) {
+            console.error('[secCheck] ' + action + ' ' + (secErr && secErr.message ? secErr.message : 'failed'))
+          }
+          if (verdict && verdict.risky) {
+            if (action === 'auth.login' && input) {
+              /* 微信资料里的昵称 / 头像命中违规时清空后继续登录，不阻断账号进入 */
+              delete input.nick
+              delete input.avatar
+            } else {
+              throw new AppError(CODES.VALIDATION, '内容含违规信息，请修改后重试')
+            }
+          }
+        }
       }
 
       /* 只读接口缓存：wrap 内做并发合并（防击穿），命中后仍记录行为事件 */
@@ -526,6 +647,10 @@ function createRouter(options) {
       if (rateRule && action === 'admin.login') {
         await repo.incrCounter(rateKey, windowStartOf(at, rateRule.limit.windowMs), -1).catch(() => {})
       }
+      /* 领取商机只统计新建领取：之前已领过的再次回看不占每日额度 */
+      if (rateRule && action === 'biz.claim' && result && result.already) {
+        await repo.incrCounter(rateKey, windowStartOf(at, rateRule.limit.windowMs), -1).catch(() => {})
+      }
       /* 写操作成功返回前 bump 分组版本号，旧缓存自然失效 */
       const invalidation = cache ? INVALIDATE_MAP[action] : null
       if (invalidation) {
@@ -545,6 +670,11 @@ function createRouter(options) {
       return { ok: true, code: CODES.OK, data: result === undefined ? null : result }
     } catch (err) {
       const pub = toPublic(err)
+      /* 领取商机失败（条件不符 / 已下架 / 信息未公开等）不占每日额度，
+         只统计真正领取成功的次数；本身被限流拦下的也不回滚，避免反复试探 */
+      if (rateRule && action === 'biz.claim' && pub.code !== CODES.RATE_LIMITED) {
+        await repo.incrCounter(rateKey, windowStartOf(at, rateRule.limit.windowMs), -1).catch(() => {})
+      }
       try {
         await auditSecurityEvent(action, input, context, pub)
       } catch (auditErr) {
@@ -562,4 +692,4 @@ function createRouter(options) {
   return { dispatch, scope, listActions: () => Object.keys(handlers) }
 }
 
-module.exports = { createRouter, RATE_RULES }
+module.exports = { createRouter, RATE_RULES, PUBLIC_USER_ACTIONS }

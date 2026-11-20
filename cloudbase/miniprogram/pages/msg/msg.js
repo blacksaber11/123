@@ -6,6 +6,7 @@ const { getUser } = require('../../utils/auth')
 const inbox = require('../../utils/inbox')
 const notify = require('../../utils/notify')
 const { request } = require('../../utils/request')
+const features = require('../../utils/features')
 
 const SYSTEM_NOTICES = inbox.SYSTEM_NOTICES
 /* 会话置顶 / 本地删除：只影响本账号在本机的列表视图，不动服务端消息 */
@@ -98,7 +99,9 @@ Page({
     /* 剩余可推送条数：-1 表示还没有授权记录，0 表示已用完 */
     notifyRemain: -1,
     /* 未登录访客：只展示登录引导，不请求云端、不自动跳登录页 */
-    guest: false
+    guest: false,
+    /* 发消息 / 对话总开关：关闭时只保留「通知」，隐藏对话入口 */
+    chatEnabled: false
   },
 
   onLoad(options) {
@@ -121,7 +124,15 @@ Page({
     } catch (e) {}
     /* 服务端消息原文：标记已读 / 组装会话时复用，避免重复请求 */
     this.server = { sysNotices: [], chatList: [], unreadStaffIds: [] }
-    this.setData({ statusBarH, navH, navTotal: statusBarH + navH })
+    /* 开关已拉到用真实值，没拉到先用缓存：避免冷启动误判成「已关闭」 */
+    const chatOn = features.chatEnabled()
+    this.setData({
+      statusBarH,
+      navH,
+      navTotal: statusBarH + navH,
+      chatEnabled: chatOn,
+      tab: chatOn ? 'chat' : 'notice'
+    })
   },
 
   onUnload() {
@@ -154,6 +165,8 @@ Page({
   async onShow() {
     this.syncTabBar()
     this.setData({ notifyOn: notify.enabled() })
+    /* 对话开关可能刚在管理端切换：每次显示都同步一次，关闭时直接落到「通知」 */
+    this.syncChatFlag()
     const me = getUser() || {}
     if (!me.uid) {
       /* 未登录：只展示访客引导，不自动拉起授权登录 */
@@ -187,9 +200,21 @@ Page({
 
   // 消息已是底部导航的一页，选中态由页面自己同步
   syncTabBar() {
-    if (typeof this.getTabBar === 'function' && this.getTabBar()) {
-      this.getTabBar().setData({ selected: 3 })
+    const bar = typeof this.getTabBar === 'function' ? this.getTabBar() : null
+    if (!bar) return
+    bar.setData({ selected: 3 })
+    /* 切 tab 时页面是复用的，tabBar 的 pageLifetimes.show 不一定触发，
+       这里主动同步一次社交开关，避免管理端打开后仍停在两项导航 */
+    if (typeof bar.syncSocial === 'function') bar.syncSocial()
+  },
+
+  /* 对话开关：先按当前值（未拉到时用缓存）渲染；还没拉到时补拉一次再刷新 */
+  syncChatFlag() {
+    const chatOn = features.chatEnabled()
+    if (chatOn !== this.data.chatEnabled || (!chatOn && this.data.tab === 'chat')) {
+      this.setData({ chatEnabled: chatOn, chatUnread: chatOn ? this.data.chatUnread : 0, tab: chatOn ? this.data.tab : 'notice' })
     }
+    if (!features.loaded()) features.ensure().catch(() => {})
   },
 
   /* 未读角标立即同步：消息列表刷新后（已读 / 点开）马上刷新底部导航，
@@ -202,9 +227,12 @@ Page({
   /* 开启微信订阅消息：会话、系统消息、商机消息都会推送微信服务通知 */
   async enableNotify() {
     const kinds = ['inquiry', 'chat', 'system', 'biz']
+    /* 点击立即隐藏提示条：服务端额度回流有延迟，不能让用户开通后还等一会儿 */
+    this.setData({ notifyOn: true, notifyRemain: 1 })
     const on = await notify.enable(kinds)
     this.setData({ notifyOn: on })
-    this.loadNotifyQuota(true)
+    /* 未开启（拒绝 / 取消）时恢复提示条与真实额度 */
+    if (!on) this.loadNotifyQuota(true)
   },
 
   /* ---------- 数据装载 ---------- */
@@ -264,8 +292,9 @@ Page({
         return
       }
       const isChat = m.channel === 'kf' || m.type === 'kf.chat'
-      /* 代采代售咨询：带 threadId 的客服消息独立成会话，标题用咨询标题，状态跟领取进度走 */
-      if (isChat && m.threadId) {
+      /* 代采代售咨询：带 threadId 的客服消息独立成会话，标题用咨询标题，状态跟领取进度走；
+         平台客服咨询（platformChat）即使领取后带 threadId，也留在「平台客服」会话里 */
+      if (isChat && m.threadId && m.platformChat !== true) {
         let thread = threadIndex.get(m.threadId)
         if (!thread) {
           thread = {
@@ -291,7 +320,7 @@ Page({
       if (isChat) {
         chatList.push({
           id: m.id,
-          role: m.from === 'staff' ? 'sys' : 'me',
+          role: m.from === 'staff' ? 'sys' : (m.from === 'system' ? 'system' : 'me'),
           kind: m.kind || 'text',
           text: m.body || '',
           at: fmtTime(m.createdAt),
@@ -307,6 +336,9 @@ Page({
         content: m.body || '',
         /* 系统提示（下架 / 退回）单独带出原因，列表里直接可见 */
         reason: m.reason || '',
+        /* 商机提醒等带目标的系统消息：点击可直接跳到对应内容 */
+        targetType: m.targetType || '',
+        targetId: m.targetId || '',
         time: fmtTime(m.createdAt),
         unread: !!m.unread,
         server: true
@@ -331,8 +363,10 @@ Page({
       private: t.private === true,
       unread: t.unread
     }))
+    /* 平台客服不常驻：只有真的咨询过（有对话记录）才出现在消息列表，避免默认就摆一个咨询入口 */
+    const platformEntry = chatList.length ? [this.buildChatEntry(chatList, unreadStaffIds.length)] : []
     /* 置顶排前、删掉的隐藏：未读也只算列表里还看得见的会话，删掉后角标同步减少 */
-    const chats = arrangeChats([this.buildChatEntry(chatList, unreadStaffIds.length)].concat(directEntries))
+    const chats = arrangeChats(platformEntry.concat(directEntries))
     const chatUnread = chats.reduce((sum, c) => sum + (Number(c.unread) || 0), 0)
     const displayList = [Object.assign({}, inbox.WELCOME)].concat(chatList)
 
@@ -424,7 +458,7 @@ Page({
     this.server = { sysNotices: [], chatList: [], unreadStaffIds: [] }
     this.setData({
       notices,
-      chats: arrangeChats([this.buildChatEntry(chatList, 0)]),
+      chats: arrangeChats(chatList.length ? [this.buildChatEntry(chatList, 0)] : []),
       noticeUnread,
       chatUnread: 0
     })
@@ -433,7 +467,10 @@ Page({
   /* ---------- 交互 ---------- */
 
   switchTab(e) {
-    this.setData({ tab: e.currentTarget.dataset.tab })
+    const tab = e.currentTarget.dataset.tab
+    /* 对话开关关闭时不允许切到对话 tab */
+    if (tab === 'chat' && !this.data.chatEnabled) return
+    this.setData({ tab })
   },
 
   async openMsg(e) {
@@ -456,12 +493,20 @@ Page({
       inbox.markRead(id)
       await this.refresh()
     }
-    wx.showModal({
+    const canOpenBiz = notice.targetType === 'biz' && !!notice.targetId
+    const opts = {
       title: notice.title,
       content: (notice.reason ? '原因：' + notice.reason + '\n\n' : '') + (notice.content || '') + '\n\n' + notice.time,
-      showCancel: false,
-      confirmText: '知道了'
-    })
+      showCancel: canOpenBiz,
+      confirmText: canOpenBiz ? '查看商机' : '知道了',
+      success: (res) => {
+        if (canOpenBiz && res && res.confirm) {
+          wx.navigateTo({ url: '/pages/biz/biz?id=' + encodeURIComponent(notice.targetId) })
+        }
+      }
+    }
+    if (canOpenBiz) opts.cancelText = '知道了'
+    wx.showModal(opts)
   },
 
   /* 消息里的需求卡：跳转到对应需求详情，发布方可在详情里继续查看响应人 */

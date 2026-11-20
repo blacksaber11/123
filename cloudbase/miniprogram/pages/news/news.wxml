@@ -29,6 +29,15 @@
       </view>
 
       <view class="nw-content">{{news.content}}</view>
+
+      <!-- 图片 / 视频：点击图片全屏预览，视频直接在页面内播放 -->
+      <view wx:if="{{news.media.length}}" class="nw-media">
+        <block wx:for="{{news.media}}" wx:for-item="m" wx:key="fileId">
+          <video wx:if="{{m.kind === 'video'}}" class="nw-video" src="{{m.fileId}}" object-fit="contain" controls show-center-play-btn></video>
+          <image wx:else class="nw-img" src="{{m.fileId}}" mode="widthFix" lazy-load
+                 data-src="{{m.fileId}}" data-list="{{news.mediaUrls}}" bindtap="previewMedia"/>
+        </block>
+      </view>
     </view>
 
     <!-- 互动：点赞 / 评论 / 收藏 -->
@@ -37,7 +46,7 @@
         <text class="nw-act-ic">{{liked ? '♥' : '♡'}}</text>
         <text>赞{{likes ? ' ' + likes : ''}}</text>
       </view>
-      <view class="nw-act">
+      <view wx:if="{{commentEnabled}}" class="nw-act">
         <text class="nw-act-ic">✎</text>
         <text>评论{{commentTotal ? ' ' + commentTotal : ''}}</text>
       </view>
@@ -51,8 +60,8 @@
       </view>
     </view>
 
-    <!-- 评论列表与回复 -->
-    <view class="nw-cmts">
+    <!-- 评论列表与回复：后台关闭评论后整块不渲染 -->
+    <view wx:if="{{commentEnabled}}" class="nw-cmts">
       <view class="nw-cmt-hd">评论 {{commentTotal}}</view>
 
       <view class="nw-cmt-editor">
@@ -79,14 +88,18 @@
       <view wx:if="{{commentLoading}}" class="nw-cmt-empty">评论加载中…</view>
       <view wx:elif="{{!comments.length}}" class="nw-cmt-empty">还没有评论，来说两句</view>
       <view wx:else class="nw-cmt-list">
-        <view wx:for="{{comments}}" wx:key="id" class="nw-cmt">
+        <!-- 长按自己的评论可删除；删除主楼会连带隐藏下面所有回复与对话 -->
+        <view wx:for="{{comments}}" wx:key="id" class="nw-cmt"
+          data-id="{{item.id}}" data-mine="{{item.mine}}" bindlongpress="onCommentLongPress">
           <view class="nw-cmt-top">
             <text class="nw-cmt-author">{{item.author}}</text>
             <text class="nw-cmt-time">{{item.createdText}}</text>
             <text class="nw-cmt-reply" data-id="{{item.id}}" data-author="{{item.author}}" bindtap="startReply">回复</text>
           </view>
           <view class="nw-cmt-text">{{item.content}}</view>
-          <view wx:for="{{item.replies}}" wx:for-item="rep" wx:key="id" class="nw-cmt-sub">
+          <!-- 回复层用 catchlongpress 阻止冒泡，避免长按回复误删主楼 -->
+          <view wx:for="{{item.replies}}" wx:for-item="rep" wx:key="id" class="nw-cmt-sub"
+            data-id="{{rep.id}}" data-mine="{{rep.mine}}" catchlongpress="onCommentLongPress">
             <view class="nw-cmt-top">
               <text class="nw-cmt-author">{{rep.author}}</text>
               <text wx:if="{{rep.replyToName}}" class="nw-cmt-to">回复 {{rep.replyToName}}</text>

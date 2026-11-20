@@ -6,6 +6,7 @@ const fav = require('../../utils/fav')
 const guard = require('../../utils/guard')
 const sharePoster = require('../../utils/share-poster')
 const { request } = require('../../utils/request')
+const features = require('../../utils/features')
 
 Page({
   data: {
@@ -18,6 +19,8 @@ Page({
     likes: 0,
     faved: false,
     commentTotal: 0,
+    /* 评论总开关：后台关闭后隐藏评论入口、评论列表与评论数 */
+    commentEnabled: true,
     comments: [],
     commentLoading: false,
     commentLoadingMore: false,
@@ -36,7 +39,21 @@ Page({
       return
     }
     this.newsId = id
+    /* 评论属于社交内容：社交总开关（含审核期隐藏）变化时同步显隐 */
+    this.offSocial = features.onChange(() => this.applySocial())
     this.load()
+  },
+
+  onUnload() {
+    if (this.offSocial) this.offSocial()
+  },
+
+  /* 评论区与评论入口统一跟随社交总开关：关闭后与私信 / 对话一起隐藏 */
+  applySocial() {
+    const enabled = this.commentBase !== false && features.chatEnabled()
+    if (enabled === this.data.commentEnabled) return
+    this.setData({ commentEnabled: enabled })
+    if (enabled) this.loadComments()
   },
 
   onShow() {
@@ -67,7 +84,9 @@ Page({
         official: doc.official === true,
         city: doc.city || '',
         publishedText: doc.publishedText || '',
-        views: Number(doc.views) || 0
+        views: Number(doc.views) || 0,
+        media: Array.isArray(doc.media) ? doc.media.filter((m) => m && m.fileId) : [],
+        mediaUrls: (Array.isArray(doc.media) ? doc.media : []).filter((m) => m && m.fileId && m.kind !== 'video').map((m) => m.fileId)
       }
       this.setData({
         loading: false,
@@ -76,10 +95,12 @@ Page({
         liked: doc.liked === true,
         likes: Number(doc.likes) || 0,
         faved: fav.isFav('news', news.id),
-        commentTotal: Number(doc.commentCount) || 0
+        commentTotal: Number(doc.commentCount) || 0,
+        commentEnabled: doc.commentEnabled !== false && features.chatEnabled()
       })
+      this.commentBase = doc.commentEnabled !== false
       this.commentPage = 0
-      this.loadComments()
+      if (this.data.commentEnabled) this.loadComments()
     } catch (err) {
       this.setData({ loading: false, error: (err && err.message) || '暂时无法加载这篇资讯' })
     }
@@ -87,6 +108,14 @@ Page({
 
   retry() {
     this.load()
+  },
+
+  /* 图片全屏预览：只预览图片，视频不会进入 urls */
+  previewMedia(e) {
+    const src = e.currentTarget.dataset.src
+    const list = e.currentTarget.dataset.list || []
+    if (!src) return
+    wx.previewImage({ current: src, urls: list.length ? list : [src] })
   },
 
   /* 作者头像 / 作者行：进入作者主页，看 TA 的在架商品与资讯 */
@@ -154,6 +183,7 @@ Page({
 
   /* ---------- 评论 ---------- */
   async loadComments(more) {
+    if (!this.data.commentEnabled) return
     if (more && (this.data.commentLoading || this.data.commentLoadingMore || !this.data.commentHasMore)) return
     const page = more ? (this.commentPage || 1) + 1 : 1
     this.setData(more ? { commentLoadingMore: true } : { commentLoading: true })
@@ -199,7 +229,43 @@ Page({
     this.setData({ replyTo: null })
   },
 
+  /**
+   * 长按自己的评论：二次确认后删除。
+   * 删除主楼会连带隐藏下面所有回复与对话（服务端按 rootId 级联软删），避免留下孤儿评论。
+   */
+  onCommentLongPress(e) {
+    const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
+    if (!ds.id) return
+    if (ds.mine !== true && ds.mine !== 'true') {
+      wx.showToast({ title: '只能删除自己的评论', icon: 'none' })
+      return
+    }
+    if (this.deletingComment) return
+    wx.showModal({
+      title: '删除这条评论？',
+      content: '删除后，这条评论下的回复与对话会一起消失，且无法恢复。',
+      confirmText: '删除',
+      confirmColor: '#E5484D',
+      success: async (res) => {
+        if (!res.confirm) return
+        this.deletingComment = true
+        try {
+          await request('user', 'news.comment.delete', { id: ds.id }, { silent: true })
+          /* 正在回复被删评论时一并退出回复态，避免把新回复挂在已删除的评论下 */
+          if (this.data.replyTo && this.data.replyTo.id === ds.id) this.setData({ replyTo: null })
+          await this.loadComments()
+          wx.showToast({ title: '已删除', icon: 'none' })
+        } catch (err) {
+          wx.showToast({ title: (err && err.message) || '删除失败，请稍后再试', icon: 'none' })
+        } finally {
+          this.deletingComment = false
+        }
+      }
+    })
+  },
+
   async sendComment() {
+    if (!this.data.commentEnabled) return
     if (this.data.commentSending) return
     const content = String(this.data.commentInput || '').trim()
     if (!content) {
@@ -224,10 +290,11 @@ Page({
 
   onShareAppMessage() {
     const news = this.data.news || {}
+    const id = String(this.newsId || '')
     return {
-      title: news.title || '资讯',
-      desc: guard.scrubContact(news.summary || '算力聚合 · 行情与避坑指南'),
-      path: '/pages/news/news?id=' + encodeURIComponent(this.newsId || '')
+      title: news.title || '算力行情与避坑指南，点开看全文',
+      desc: guard.scrubContact(news.summary || 'H100 / A100 报价行情、机房清退与交易避坑'),
+      path: id ? '/pages/news/news?id=' + encodeURIComponent(id) : '/pages/news/news'
     }
   },
 

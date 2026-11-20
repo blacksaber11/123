@@ -14,6 +14,16 @@ const root = path.join(here, '..')
 const sharedDir = path.join(root, 'shared')
 const functionsDir = path.join(root, 'cloudfunctions')
 
+/* 粘贴识别规则的真源在小程序端（miniprogram/utils/publish-parse.js + region.js），
+   小程序离线兜底与云函数共用同一份实现：这里先同步到 shared，再随其它共享模块下发到
+   各云函数的 _shared。调整识别规则后执行 npm run sync 并重新部署 cloudfunctions/user
+   即可生效，不需要重新提审小程序。 */
+const parseSrcDir = path.join(root, 'miniprogram', 'utils')
+for (const name of ['publish-parse.js', 'region.js']) {
+  const src = path.join(parseSrcDir, name)
+  if (fs.existsSync(src)) fs.copyFileSync(src, path.join(sharedDir, name))
+}
+
 const FILES = fs.readdirSync(sharedDir).filter((f) => f.endsWith('.js'))
 
 /* 型号库静态目录的真源在 cloudbase/device-catalog.js，同步一份到 shared，

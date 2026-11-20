@@ -82,7 +82,7 @@ Page({
     const tool = TOOLS.filter((t) => t.key === ds.tool)[0]
     if (!tool) {
       return {
-        title: '算力工具 · 选型与预算测算',
+        title: '选型 / 功耗 / 回本一键测算，免登录直接算',
         desc: '本地部署 / 微调 / 功耗 / 回本，选完参数直接出结果',
         imageUrl: FALLBACK_CARD,
         path: '/pages/tools/tools'
@@ -99,7 +99,7 @@ Page({
   /* 分享到朋友圈：朋友圈只带标题，落到工具中心 */
   onShareTimeline() {
     return {
-      title: '算力工具 · 选型与预算测算（本地部署 / 微调 / 功耗 / 回本）',
+      title: '选型 / 功耗 / 回本一键测算，30 秒出结果',
       query: '',
       imageUrl: FALLBACK_CARD
     }

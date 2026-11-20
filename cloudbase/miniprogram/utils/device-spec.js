@@ -1,7 +1,7 @@
 /* 设备规格推断：显存 / 卡数 / 单台功耗，各测算工具共用一份规则，避免口径漂移。
-   设备来源：device-catalog.js → mock.js 的 DEVICE_TREE。
+   设备来源：服务端型号目录（与小程序的型号滚轮同源），离线时回退打包目录。
    显存 / 卡数认不出的型号不进测算列表，避免瞎猜。 */
-const M = require('./mock')
+const catalog = require('./catalog')
 
 /* 参与测算的品类：按目录顺序（即需求热度）展示。
    笔记本 / 边缘盒子 / 一体机不参与：前者不适合长时推理，后两者型号里看不出卡型。 */
@@ -148,9 +148,10 @@ function specTextOf(d) {
 function buildDevices() {
   const out = []
   const seen = {}
-  Object.keys(M.DEVICE_TREE || {}).forEach((cat) => {
+  const tree = catalog.currentTree()
+  Object.keys(tree || {}).forEach((cat) => {
     if (CALC_CATS.indexOf(cat) < 0) return
-    const brands = M.DEVICE_TREE[cat] || {}
+    const brands = tree[cat] || {}
     Object.keys(brands).forEach((brand) => {
       const seriesMap = brands[brand] || {}
       const isFlat = Array.isArray(seriesMap)

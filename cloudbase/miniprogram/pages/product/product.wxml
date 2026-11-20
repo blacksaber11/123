@@ -1,11 +1,11 @@
 <view class="detail" wx:if="{{product}}">
 
   <!-- 分享落地提示：内容与平台内一致，只是再强调一次联系方式不对外 -->
-  <view wx:if="{{fromShare}}" class="share-tip">来自好友分享 · 满足必须条件后可与货主直接对话</view>
+  <view wx:if="{{fromShare}}" class="share-tip">来自好友分享 · {{chatEnabled ? '满足必须条件后可与货主直接对话' : '可在平台内查看完整商品信息'}}</view>
   <!-- 朋友圈单页模式：没有底部导航与登录入口，提示从右上角进入完整小程序 -->
-  <view wx:if="{{singlePage}}" class="sp-inline">朋友圈预览 · 点右上角 ··· 选择「前往小程序」后可与货主对话</view>
-  <!-- 私密发布＝匿名公开：内容照常展示，发布人完全匿名 -->
-  <view wx:if="{{privateShare}}" class="callout warn private-tip">匿名发布 · 内容公开展示，但不显示发布人，也无法从这里进入对方主页</view>
+  <view wx:if="{{singlePage}}" class="sp-inline">朋友圈预览 · 点右上角 ··· 选择「前往小程序」查看完整商品信息</view>
+  <!-- 私密发布仅自己与平台可见，不对外展示 -->
+  <view wx:if="{{privateShare}}" class="callout warn private-tip">私密发布 · 仅你与平台可见，不进入商机匹配</view>
   <!-- 发布人置顶：平台代采 / 代售只显示「平台」，由平台统一对接 -->
   <block wx:else>
     <view wx:if="{{product.platformOnly}}" class="publisher platform">
@@ -16,14 +16,14 @@
           <view class="pub-sb">平台代采 / 代售 · 由平台统一对接委托方</view>
         </view>
       </view>
-      <view class="pub-act" bindtap="contactPlatform">咨询平台</view>
+      <view wx:if="{{chatEnabled}}" class="pub-act" bindtap="contactPlatform">咨询平台</view>
     </view>
-    <view wx:elif="{{!contactHidden}}" class="publisher">
+    <view wx:elif="{{product.ownerKey}}" class="publisher">
       <view class="pub-l" bindtap="openSeller">
         <view class="pub-av">{{product.owner.short}}</view>
         <view class="pub-info">
           <view class="pub-nm">{{product.owner.nick}}<text class="owner-go">›</text></view>
-          <view class="pub-sb">{{product.ownerSubject || '未公开主体'}} · {{product.city || '城市未填写'}}</view>
+          <view class="pub-sb">{{contactHidden ? '主体未公开 · 可查看账号主页' : (product.ownerSubject || '未公开主体') + ' · ' + (product.city || '城市未填写')}}</view>
           <view wx:if="{{ownerPhone}}" class="pub-phone" catchtap="copyOwnerPhone">
             <text>{{ownerPhone}}</text><text class="pub-phone-act">复制</text>
           </view>
@@ -36,16 +36,16 @@
     </view>
     <view wx:else class="publisher">
       <view class="pub-l">
-        <view class="pub-av">匿</view>
+        <view class="pub-av">商</view>
         <view class="pub-info">
-          <view class="pub-nm">匿名发布</view>
-          <view class="pub-sb">内容公开展示，发布人身份与主页入口已隐藏</view>
+          <view class="pub-nm">发布方</view>
+          <view class="pub-sb">该内容暂未提供可访问的发布方主页</view>
         </view>
       </view>
     </view>
   </block>
 
-  <!-- 图片与视频：左右滑动切换，可全屏查看；水印铺满整个画面 -->
+  <!-- 图片与视频：左右滑动切换，可全屏查看；画面铺满发布方水印 -->
   <view class="block media-sec">
     <view class="block-hd">
       <text class="bt">商品图片与视频</text>
@@ -69,7 +69,7 @@
           </view>
         </swiper-item>
       </swiper>
-      <view wx:if="{{wmOn}}" class="ms-wm-wall">
+      <view wx:if="{{wmTiles.length}}" class="ms-wm-wall">
         <view wx:for="{{wmTiles}}" wx:key="k" class="ms-wm-t">{{item.t}}</view>
       </view>
       <view wx:if="{{mediaSlides.length > 1}}" class="ms-hint">左右滑动切换</view>
@@ -82,14 +82,14 @@
         <text class="ms-empty-t">{{product.model || product.cat || '算力设备'}}</text>
         <text wx:if="{{product.qty || product.city}}" class="ms-empty-sub">{{product.qty ? product.qty + ' 台' : ''}}{{product.qty && product.city ? ' · ' : ''}}{{product.city || ''}}</text>
         <text class="ms-empty-d">货主暂未上传实拍图片或视频</text>
-        <text class="ms-empty-h">可在对话中向货主索取实拍</text>
+        <text wx:if="{{chatEnabled}}" class="ms-empty-h">可在对话中向货主索取实拍</text>
       </view>
     </view>
     <view wx:if="{{mediaSlides.length}}" class="media-guard">
       <image class="mg-i" src="/assets/icons/tip-lock.png" mode="aspectFit" />
       <view class="mg-b">
         <text class="mg-bt">媒体已加密保护</text>
-        <text class="mg-bd">{{wmOn ? '图片与视频仅平台内在线查看，画面全程铺满你的账号与昵称水印，泄漏可定向追责。' : '图片与视频仅平台内在线查看，可在设置中重新开启水印保护。'}}</text>
+        <text class="mg-bd">图片与视频仅平台内在线查看，画面全程叠加发布方标识水印，截图外传可追溯来源。</text>
       </view>
     </view>
   </view>
@@ -204,18 +204,18 @@
   <view wx:if="{{product.must.length || product.nego.length}}" class="block">
     <view class="block-hd">
       <text class="bt">④ {{product.isRent ? '承租条件' : '购买条件'}}</text>
-      <text class="r">必须条件 {{product.must.length}} 项全部满足才能联系货主</text>
+      <text class="r">必须条件 {{product.must.length}} 项{{chatEnabled ? '，全部满足才能联系货主' : ''}}</text>
     </view>
 
     <view wx:if="{{product.nego.length}}" class="cond-group">
-      <view class="cond-sub">可协商条件<text class="cs-note">不拦截对话，在会话中沟通</text></view>
+      <view class="cond-sub">可协商条件<text class="cs-note">{{chatEnabled ? '不拦截对话，在会话中沟通' : '可在后续对接时沟通'}}</text></view>
       <view class="chip-group cond-chips">
         <text wx:for="{{product.nego}}" wx:key="*this" class="chip">{{item}}</text>
       </view>
     </view>
 
     <view class="cond-group">
-      <view class="cond-sub">必须条件<text class="cs-note">逐项满足才能开始对话</text></view>
+      <view class="cond-sub">必须条件<text class="cs-note">{{chatEnabled ? '逐项满足才能开始对话' : '请对照自身情况逐项核对'}}</text></view>
       <view class="cond-list">
         <view wx:for="{{product.must}}" wx:key="*this" class="ci">
           <text class="ci-ico ok">✓</text>
@@ -241,7 +241,7 @@
         <text class="cp-v">{{ownerPhone}}</text>
         <text class="cp-act" bindtap="copyOwnerPhone">复制</text>
       </view>
-      <view wx:else class="contact-phone-none">未公开电话号码，请通过私信联系货主</view>
+      <view wx:else class="contact-phone-none">{{chatEnabled ? '未公开电话号码，请通过私信联系货主' : '未公开电话号码'}}</view>
     </view>
   </view>
 
@@ -252,24 +252,26 @@
   <view class="sticky-consult safe-bottom">
     <view class="meta">
       <view class="cnt"><text class="b">{{product.views}}</text> 次浏览<text wx:if="{{product.favCount}}"> · 收藏 {{product.favCount}}</text></view>
-      <text class="meta-tip">{{isMine ? (product.status || '在售') : (product.platformOnly ? '确认条件后与平台对接' : '确认条件后可直接对话')}}</text>
+      <text class="meta-tip">{{isMine ? (product.status || '在售') : (chatEnabled ? (bizMine ? '已领取 · 可直接对话' : (product.platformOnly ? '确认条件后与平台对接' : '确认条件后可直接对话')) : '仅浏览 · 暂不支持私信')}}</text>
     </view>
     <view class="row">
       <button class="btn ghost share-btn" open-type="share">分享</button>
       <button class="btn ghost share-btn" catchtap="savePoster">海报</button>
       <button wx:if="{{isMine}}" class="btn primary lg grow" bindtap="goMyPub">我的发布</button>
-      <button wx:else class="btn primary lg grow" bindtap="consult">{{product.platformOnly ? '咨询平台' : (bizMode ? '领取商机' : '私信货主')}}</button>
+      <button wx:elif="{{chatEnabled}}" class="btn primary lg grow" bindtap="consult">{{product.platformOnly ? '咨询平台' : (bizMine ? '进入对话' : (bizMode ? '领取商机' : '私信货主'))}}</button>
     </view>
     <view class="hint">
       <block wx:if="{{isMine}}">这是你自己发布的商品，可在「我的发布」里改状态、编辑与分享<text class="hint-report" catchtap="goMyPub">去管理 ›</text></block>
+      <block wx:elif="{{!chatEnabled}}">平台暂未开放私信与对话，可先收藏或分享该商品<text class="hint-report" catchtap="report">举报该商品</text></block>
+      <block wx:elif="{{bizMine}}">这条商机已领取，点「进入对话」即可继续联系对方<text class="hint-report" catchtap="report">举报该商品</text></block>
       <block wx:elif="{{product.platformOnly}}">逐项确认必须条件后，由平台与委托方对接<text class="hint-report" catchtap="report">举报该商品</text></block>
       <block wx:else>满足必须条件即可直接对话；可直接发送联系方式<text class="hint-report" catchtap="report">举报该商品</text></block>
     </view>
   </view>
 
   <!-- 必须条件确认弹层：确认完成后直接进入与货主的会话 -->
-  <view wx:if="{{condSheet}}" class="cond-mask" catchtouchmove="noop" bindtap="closeCondSheet"></view>
-  <view wx:if="{{condSheet}}" class="cond-sheet">
+  <view wx:if="{{condSheet && chatEnabled}}" class="cond-mask" catchtouchmove="noop" bindtap="closeCondSheet"></view>
+  <view wx:if="{{condSheet && chatEnabled}}" class="cond-sheet">
     <view class="cs-hd">
       <view class="cs-tt">确认必须条件</view>
       <view class="cs-sub">已确认满足 {{condMet}} / {{condTotal}} 项</view>
@@ -294,27 +296,27 @@
     </view>
   </view>
 
-  <!-- 材料查看层：全程叠加个人水印，不提供保存 / 下载 / 转发入口 -->
+  <!-- 材料查看层：全程叠加发布方水印，不提供保存 / 下载 / 转发入口 -->
   <view wx:if="{{viewerOpen}}" class="viewer">
     <view class="vw-hd">
       <text class="vw-t">{{viewerType === 'video' ? '设备实拍视频' : product.model + ' · 实拍图片'}}</text>
       <text class="vw-x" bindtap="closeViewer">✕</text>
     </view>
     <view class="vw-stage">
-      <cover-view wx:if="{{wmOn}}" class="vw-badge">仅平台内查看 · 账号水印</cover-view>
+      <cover-view wx:if="{{watermark}}" class="vw-badge">仅平台内查看 · 发布方水印</cover-view>
       <swiper wx:if="{{mediaSlides.length}}" class="vw-swiper" current="{{viewerIndex}}" bindchange="onViewerSwipe" circular="{{mediaSlides.length > 1}}">
         <swiper-item wx:for="{{mediaSlides}}" wx:key="k">
           <image wx:if="{{item.kind === 'image'}}" class="vw-media" src="{{item.url}}" mode="aspectFit" show-menu-by-longpress="{{false}}"/>
           <video wx:else class="vw-media" src="{{item.url}}" autoplay="{{viewerIndex === index}}" controls="{{true}}" show-center-play-btn object-fit="contain"></video>
         </swiper-item>
       </swiper>
-      <view wx:if="{{wmOn}}" class="vw-wm">
+      <view wx:if="{{watermark}}" class="vw-wm">
         <view wx:for="{{wmTiles}}" wx:key="k" class="vw-wm-t">{{item.t}}</view>
       </view>
-      <view wx:if="{{wmOn}}" class="vw-id">{{watermark}}</view>
+      <view wx:if="{{watermark}}" class="vw-id">{{watermark}}</view>
       <cover-view wx:if="{{mediaSlides.length > 1}}" class="vw-count">{{viewerIndex + 1}} / {{mediaSlides.length}}</cover-view>
     </view>
-    <view class="vw-tip">{{wmOn ? '画面已叠加你的账号与昵称水印，请勿对外传播。' : '仅平台内查看，请勿对外传播。'}}</view>
+    <view class="vw-tip">{{watermark ? '画面已叠加发布方标识水印，请勿对外传播。' : '仅平台内查看，请勿对外传播。'}}</view>
   </view>
 </view>
 

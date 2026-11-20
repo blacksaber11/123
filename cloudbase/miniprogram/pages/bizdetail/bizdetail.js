@@ -3,6 +3,7 @@
    复用普通发布的咨询 / 响应页，填完提交才能发布 */
 const biz = require('../../utils/biz')
 const { request } = require('../../utils/request')
+const features = require('../../utils/features')
 const { goThread } = require('../../utils/chat')
 
 /* 发布时上传的图片与视频：与普通详情页同一份数据，缺字段时按图片处理 */
@@ -51,14 +52,30 @@ Page({
     consulting: false,
     claimed: false,
     unsatisfied: false,
-    consulted: false
+    consulted: false,
+    /* 发消息 / 对话总开关：关闭时隐藏「站内对话」入口 */
+    chatEnabled: false
   },
 
   onLoad(options) {
     this.id = options && options.id ? String(options.id) : ''
     this.type = options && options.type ? String(options.type) : ''
+    /* 开关已拉到用真实值，没拉到先用缓存：避免冷启动分享进来被误判成关闭 */
+    this.setData({ chatEnabled: features.chatEnabled() })
+    /* 管理端随时可能打开 / 关闭社交功能：开关回来后本页立即跟随 */
+    this.offFlags = features.onChange((on) => {
+      if (this.data && on !== this.data.chatEnabled) this.setData({ chatEnabled: on })
+    })
+    features.ensure()
     wx.setNavigationBarTitle({ title: '商机详情' })
     this.load()
+  },
+
+  onUnload() {
+    if (this.offFlags) {
+      this.offFlags()
+      this.offFlags = null
+    }
   },
 
   /* 从「填写完整需求」返回：那边可能已提交响应并开通会话，回到本页刷新状态 */
@@ -395,6 +412,18 @@ Page({
         duration: 3000
       })
     }
+  },
+
+  /* 查看发布者主页：匿名 / 未公开主体也允许进入，敏感字段由主页侧脱敏 */
+  openOwner(e) {
+    const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
+    const key = String(ds.key || '')
+    if (!key) return
+    const nick = String(ds.nick || '')
+    wx.navigateTo({
+      url: '/pages/userhome/userhome?key=' + encodeURIComponent(key) +
+        (nick ? '&nick=' + encodeURIComponent(nick) : '') + '&from=biz'
+    })
   },
 
   copyPhone(e) {

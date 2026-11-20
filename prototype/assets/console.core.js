@@ -9,6 +9,8 @@
   const TOKEN_KEY = 'hx_console_token'
   const SESSION_KEY = 'hx_console_session'
   const API_URL = '/api/admin'
+  /* 管理端版本号：由 admin/index.html 的 window.CONSOLE_VERSION 下发，登录页与右上角展示，便于核对线上版本 */
+  const APP_VERSION = (typeof window !== 'undefined' && window.CONSOLE_VERSION) || 'dev'
 
   const state = Console.state = {
     token: localStorage.getItem(TOKEN_KEY) || '',
@@ -453,7 +455,9 @@
     { group: '运营', items: [
       { key: 'dashboard', page: 'stats', label: '数据看板', icon: 'grid', desc: '业务增长与实时指标' },
       /* 工单中心已并入工作台：工作台内直接展示待领取咨询与工单核心表，detail 页仍可深链进入 */
-      { key: 'workbench', page: ['workbench', 'leads', 'consult'], label: '工作台', icon: 'bolt', desc: '今天要处理的事' }
+      { key: 'workbench', page: ['workbench', 'leads', 'consult'], label: '工作台', icon: 'bolt', desc: '今天要处理的事' },
+      /* 消息中心紧跟工作台：领取后的会话直接进消息页，不再夹在业务页中间 */
+      { key: 'messages', page: 'messages', label: '消息中心', icon: 'chat', desc: '用户留言与客服回复' }
     ] },
     { group: '业务', items: [
       /* 代采代售委托独立成页，与工单中心分开 */
@@ -463,8 +467,7 @@
       /* 电销线索只在电销专员登录时出现；管理员从「用户管理」导出即可，不再单独占一个 tab */
       { key: 'sales', page: 'sales', label: '电销线索', icon: 'phone', roles: ['sales'], desc: '线索号码与拨号记录' },
       { key: 'users', page: 'users', label: '用户管理', icon: 'users', desc: '用户档案、商机会员与权限' },
-      { key: 'messages', page: 'messages', label: '消息中心', icon: 'chat', desc: '用户留言与客服回复' },
-      { key: 'cs', page: 'cs', label: '客服业务', icon: 'users', desc: '绑定用户、业绩提成与服务评价' },
+      { key: 'cs', page: 'cs', label: '客服业务', icon: 'users', desc: '绑定用户、委托佣金与服务评价' },
       { key: 'risk', page: 'risk', label: '风险提示', icon: 'shield', desc: '风险单与内容监管' },
       { key: 'media', page: ['boards', 'news'], label: '媒体', icon: 'media', desc: '资讯 / 榜单 / 价格水平 / 首页横幅' }
     ] },
@@ -554,6 +557,7 @@
             <div><b>7</b>运营工作域</div>
             <div><b>全链路</b>行为留痕</div>
             <div><b>0</b>明文联系方式出站</div>
+            <div><b>v${esc(APP_VERSION)}</b>管理端版本</div>
           </div>
         </section>
         <section class="login-panel">
@@ -790,6 +794,7 @@
       if (document.hidden) return
       loadNavCounts()
       if (typeof C.msgPollNow === 'function') C.msgPollNow()
+      if (typeof C.cfPollNow === 'function') C.cfPollNow()
     }
     document.addEventListener('visibilitychange', refresh)
     window.addEventListener('focus', refresh)
@@ -803,7 +808,7 @@
   /**
    * 侧边栏口径：
    * - 红色待办角标统一取 admin.todos：工作台 total / 咨询单 leads / 消息 unread / 举报 reports / 风控 risk / 财务 payments / 代采代售 agency
-   * - 商品管理 / 需求管理 / 用户管理 / 媒体：白色数字 = 对应总量
+   * - 商品管理 / 需求管理 / 代采代售 / 用户管理 / 媒体：白色数字 = 对应总量
    * - admin.todos 不可用时回退到各模块自身的待处理统计
    */
   async function loadNavCounts() {
@@ -823,6 +828,10 @@
     if (canPage('demands')) {
       jobs.push(fetchTotal('demand.list', { page: 1, limit: 1 })
         .then((n) => { if (n !== null) paintNav(countOf('demands'), n) }))
+    }
+    if (canPage('biz')) {
+      jobs.push(fetchTotal('agency.list', { page: 1, limit: 1 })
+        .then((n) => { if (n !== null) paintNav(countOf('biz'), n) }))
     }
     if (canPage('users')) {
       jobs.push(api('user.list', { page: 1, limit: 1 })
@@ -924,6 +933,7 @@
               <h1>${esc(conf.label)}</h1>
             </div>
             <div class="topbar-right">
+              <span title="管理端版本号" style="font-size:12px;color:var(--muted-2);font-variant-numeric:tabular-nums">v${esc(APP_VERSION)}</span>
               <button class="btn ghost" id="btn-refresh" title="刷新当前页">${icon('refresh')}<span>刷新</span></button>
               <div class="account-chip">
                 <div><div class="strong" style="font-size:12px">${esc(account.name)}</div></div>

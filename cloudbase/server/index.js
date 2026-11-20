@@ -42,7 +42,7 @@ function loadEnvFile(file) {
 }
 loadEnvFile(process.env.ENV_FILE || path.join(__dirname, '..', '.env'))
 
-const { createRouter } = require('../shared/router')
+const { createRouter, PUBLIC_USER_ACTIONS } = require('../shared/router')
 const { createCache } = require('../shared/cache')
 const { loadKeys, hmacHex, constantTimeEqual, randomToken, sha256Hex } = require('../shared/crypto')
 const { chatCutoff, mediaCutoff } = require('../shared/chatmedia')
@@ -50,6 +50,8 @@ const { ROLES } = require('../shared/constants')
 const { createMysqlRepo } = require('./repo.mysql')
 const { createMarketAdminHandlers, newsScheduleOf, publishScheduledNews } = require('../shared/market')
 const { createPromoteEngine } = require('../shared/promote')
+const { createCsEngine } = require('../shared/cs')
+const { closeIdleLeads } = require('../shared/consultflow')
 const { createWxPayoutClient } = require('./payout')
 
 const PORT = Number(process.env.PORT || 3002)
@@ -166,7 +168,9 @@ const userRouter = createRouter({
   now: () => Date.now(),
   notify,
   payoutClient,
-  exchangePhone: phoneByCode
+  exchangePhone: phoneByCode,
+  /* 用户发布 / 发送内容统一走微信内容安全检测 */
+  secCheck: wxSecCheck
 })
 
 const adminRouter = createRouter({
@@ -266,6 +270,35 @@ function httpsJson(url, method, payload) {
   })
 }
 
+/** multipart/form-data 上传（图片内容安全检测用），返回微信 JSON 结果 */
+function httpsPostForm(url, body, boundary) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, {
+      method: 'POST',
+      timeout: 15000,
+      headers: {
+        'Content-Type': 'multipart/form-data; boundary=' + boundary,
+        'Content-Length': body.length
+      }
+    }, (res) => {
+      let raw = ''
+      res.setEncoding('utf8')
+      res.on('data', (chunk) => { if (raw.length < 16384) raw += chunk })
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(raw || '{}'))
+        } catch (err) {
+          reject(new Error('微信接口返回格式异常'))
+        }
+      })
+    })
+    req.on('timeout', () => req.destroy(new Error('微信接口超时')))
+    req.on('error', reject)
+    req.write(body)
+    req.end()
+  })
+}
+
 async function wxAccessToken() {
   if (wxTokenCache.value && wxTokenCache.expireAt > Date.now() + 60000) return wxTokenCache.value
   const appid = String(process.env.WX_APPID || '')
@@ -296,6 +329,64 @@ async function phoneByCode(code) {
   }
   const info = res.phone_info || {}
   return info.purePhoneNumber || info.phoneNumber || ''
+}
+
+/* ---------- 3.1.2 内容安全：头像 / 昵称 / 发布内容检测 ---------- */
+/**
+ * 文本检测（security.msgSecCheck v2）：只有 suggest=pass 才放行。
+ * openid 必须是当前操作用户，微信据此做用户维度风控。
+ */
+async function wxTextSecCheck(text, openid) {
+  const content = String(text || '').slice(0, 2500)
+  if (!content) return { risky: false }
+  const call = async () => {
+    const token = await wxAccessToken()
+    return httpsJson(
+      'https://api.weixin.qq.com/wxa/msg_sec_check?access_token=' + encodeURIComponent(token),
+      'POST',
+      { content, version: 2, scene: 1, openid: String(openid || '') }
+    )
+  }
+  let res = await call()
+  if (res && (res.errcode === 40001 || res.errcode === 42001)) {
+    wxTokenCache = { value: '', expireAt: 0 }
+    res = await call()
+  }
+  if (!res || res.errcode) throw new Error((res && res.errmsg) || '内容安全检测失败')
+  const suggest = (res.result && res.result.suggest) || 'pass'
+  return { risky: suggest !== 'pass', suggest }
+}
+
+/**
+ * 图片检测（security.imgSecCheck）：头像、商品实拍、聊天图片统一在上传时检测。
+ * errcode 87014 表示内容违规；其他错误视为检测不可用，不阻断上传。
+ */
+async function wxImageSecCheck(buffer, contentType) {
+  if (!buffer || !buffer.length) return { risky: false }
+  const token = await wxAccessToken()
+  const boundary = '----slsec' + randomToken(8)
+  const head = Buffer.from(
+    '--' + boundary + '\r\n' +
+    'Content-Disposition: form-data; name="media"; filename="media"\r\n' +
+    'Content-Type: ' + (contentType || 'image/jpeg') + '\r\n\r\n',
+    'latin1'
+  )
+  const tail = Buffer.from('\r\n--' + boundary + '--\r\n', 'latin1')
+  const res = await httpsPostForm(
+    'https://api.weixin.qq.com/wxa/img_sec_check?access_token=' + encodeURIComponent(token),
+    Buffer.concat([head, buffer, tail]),
+    boundary
+  )
+  if (res && res.errcode === 87014) return { risky: true }
+  if (!res || res.errcode) throw new Error((res && res.errmsg) || '图片安全检测失败')
+  return { risky: false }
+}
+
+/** 路由层统一入口：type=image 走图片检测，其余按文本检测 */
+async function wxSecCheck(payload) {
+  const p = payload || {}
+  if (p.type === 'image') return wxImageSecCheck(p.buffer, p.contentType)
+  return wxTextSecCheck(p.text, p.openid)
 }
 
 /* ---------- 3.1.1 小程序码（分享海报底部二维码） ---------- */
@@ -404,12 +495,16 @@ async function handleWxacode(req, res) {
     sendJson(res, 400, { ok: false, code: 'VALIDATION', message: '该页面不支持生成小程序码' })
     return
   }
-  /* 推广大使保存的海报：小码里追加他自己的推广码，别人扫码进入即完成绑定 */
+  /* 所有登录用户保存的海报都带自己的推广码：普通用户转发也能完成绑定归属；
+     佣金资格不影响带码，避免大量分享进来的人归不到任何人名下 */
   let target = raw
   try {
     const openid = verifyUserToken(bearer(req) || String(body.token || ''))
     const self = openid ? await repo.get('users', openid) : null
-    const code = self && self.promoterStatus === 'active' ? String(self.refCode || '').trim() : ''
+    const usable = self && self.status !== '停用' && self.promoterStatus !== 'blocked'
+    const code = usable
+      ? (String(self.refCode || '').trim() || String(await promoteEngine.ensureRefCode(openid) || '').trim())
+      : ''
     if (code && !/(?:^|[?&])ref=/.test(target)) {
       const withRef = target + (target.indexOf('?') >= 0 ? '&' : '?') + 'ref=' + encodeURIComponent(code)
       /* getwxacode 的 path 上限 128 字符：超长就不带推广码，保证海报能出图 */
@@ -773,6 +868,18 @@ async function handleUploadInner(req, res, chat) {
   if (!chat && file.buffer.length > uploadLimitOf(realType)) {
     return sendJson(res, 200, { ok: false, code: 'VALIDATION', message: uploadSizeText(realType) })
   }
+  /* 内容安全：图片（含头像、商品实拍、聊天图片）先检测再落盘，违规直接拒绝 */
+  if (realType.startsWith('image/')) {
+    try {
+      const verdict = await wxImageSecCheck(file.buffer, realType)
+      if (verdict.risky) {
+        return sendJson(res, 200, { ok: false, code: 'VALIDATION', message: '图片含违规信息，请更换后重试' })
+      }
+    } catch (err) {
+      /* 检测接口异常不阻断上传，记录日志便于排查 */
+      console.error('[upload] sec check failed: ' + (err && err.message ? err.message : 'unknown'))
+    }
+  }
   /* 聊天文件名带时间戳前缀，清理任务按修改时间即可识别 7 天未读媒体 */
   const name = (chat ? Date.now().toString(36) + '_' : '') + randomToken(chat ? 16 : 12) + ext
   const dir = chat ? CHAT_UPLOAD_DIR : UPLOAD_DIR
@@ -962,12 +1069,14 @@ async function handleUser(req, res) {
     if (replyBodyError(res, err)) return
     return sendJson(res, 400, { ok: false, code: 'VALIDATION', message: err.message })
   }
-  const openid = verifyUserToken(bearer(req) || String(body.token || ''))
-  if (!openid) {
-    return sendJson(res, 200, { ok: false, code: 'UNAUTHENTICATED', message: '登录已过期，请重新登录' })
-  }
   const action = typeof body.action === 'string' ? body.action : ''
   const data = body.data && typeof body.data === 'object' && !Array.isArray(body.data) ? body.data : {}
+  /* 公开只读动作（首页横幅 / 站点配置）允许未登录访问：
+     小程序冷启动时首屏渲染早于静默登录完成，否则横幅要等用户切页才能出来 */
+  const openid = verifyUserToken(bearer(req) || String(body.token || ''))
+  if (!openid && !PUBLIC_USER_ACTIONS[action]) {
+    return sendJson(res, 200, { ok: false, code: 'UNAUTHENTICATED', message: '登录已过期，请重新登录' })
+  }
   const result = await userRouter.dispatch(action, data, {
     openid,
     ip: clientIp(req),
@@ -1553,6 +1662,23 @@ async function newsSchedulerTick() {
   }
 }
 
+/* 客服超时未回复：每分钟扫描「服务中」工单，超过后台配置的时长没有任何客服回复就自动结束并邀请评价 */
+let csIdleBusy = false
+async function csIdleSchedulerTick() {
+  if (csIdleBusy) return
+  csIdleBusy = true
+  try {
+    const engine = createCsEngine({ repo, now: () => Date.now() })
+    const settings = await engine.readSettings()
+    const ended = await closeIdleLeads(repo, { at: Date.now(), minutes: settings.idleMinutes })
+    if (ended.length) console.log('[cs] 超时未回复自动结束 ' + ended.length + ' 张工单')
+  } catch (err) {
+    console.error('[cs] 超时自动结束失败：' + (err && err.message ? err.message : 'unknown error'))
+  } finally {
+    csIdleBusy = false
+  }
+}
+
 async function main() {
   await repo.initSchema()
   server.listen(PORT, HOST, () => {
@@ -1569,6 +1695,9 @@ async function main() {
   /* 推广佣金：启动检查一次（正好在时间点上时补跑），之后每 30 秒对齐文档 7.4 的六个时间点 */
   promoteSchedulerTick()
   setInterval(() => { promoteSchedulerTick() }, 30 * 1000).unref()
+  /* 客服工单超时自动结束：每分钟扫描一次，时长取管理端客服设置 */
+  setTimeout(() => { csIdleSchedulerTick() }, 60 * 1000).unref()
+  setInterval(() => { csIdleSchedulerTick() }, 60 * 1000).unref()
   /* 登录 / 上传限流计数定期清理：只清已过期键，防止大量来源 IP 把内存撑大 */
   setInterval(() => {
     const ts = Date.now()

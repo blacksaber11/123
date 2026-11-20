@@ -966,3 +966,282 @@
   line-height: 1.7;
 }
 
+/* ===== 朋友圈式资讯卡片 ===== */
+.mo-card {
+  padding: 28rpx;
+  border: 1rpx solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+.mo-hd {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+}
+.mo-av {
+  flex: none;
+  width: 72rpx;
+  height: 72rpx;
+  line-height: 72rpx;
+  border-radius: 14rpx;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 26rpx;
+  font-weight: 700;
+  text-align: center;
+}
+.mo-av.off {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.mo-src {
+  flex: 1;
+  min-width: 0;
+}
+.mo-name {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+.mo-sub {
+  margin-top: 4rpx;
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.mo-cat {
+  flex: none;
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+  background: var(--line-2);
+  color: var(--ink-2);
+  font-size: 20rpx;
+}
+.mo-title {
+  margin-top: 16rpx;
+  font-size: 29rpx;
+  font-weight: 700;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.mo-text {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+.mo-full {
+  margin-left: 8rpx;
+  color: var(--brand);
+  font-weight: 600;
+}
+.mo-media {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+  margin-top: 16rpx;
+}
+.mo-img {
+  width: calc((100% - 16rpx) / 3);
+  height: 216rpx;
+  border-radius: 10rpx;
+  background: var(--line-2);
+}
+.mo-media.two .mo-img {
+  width: calc((100% - 8rpx) / 2);
+  height: 250rpx;
+}
+.mo-media.single .mo-img {
+  width: 62%;
+  height: 380rpx;
+}
+.mo-video {
+  width: 100%;
+  height: 400rpx;
+  border-radius: 12rpx;
+  background: #000;
+}
+/* 互动区：左侧浏览数 + 评论框（到卡片 2/3 处），赞 / 分享靠右 */
+.mo-acts {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8rpx;
+  margin-top: 16rpx;
+  padding-top: 10rpx;
+  border-top: 1rpx solid var(--line-2);
+}
+/* 左侧区域固定占卡片 2/3，评论框在其中占满剩余宽度 */
+.mo-left {
+  flex: none;
+  width: 66%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+}
+/* 评论关闭时左侧仍保持 2/3，赞 / 分享固定在最右侧，不随评论隐藏而左移 */
+/* 右侧：赞 / 分享 */
+.mo-ops {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4rpx;
+}
+/* 浏览次数：描边小框 */
+.mo-views {
+  flex: none;
+  height: 58rpx;
+  padding: 0 16rpx;
+  line-height: 58rpx;
+  border: 1rpx solid var(--line-2);
+  border-radius: 10rpx;
+  color: var(--muted);
+  font-size: 20rpx;
+  white-space: nowrap;
+}
+/* 评论框：占满左侧剩余宽度，输入后右侧出现「发送」 */
+.mo-cmt-box {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  height: 58rpx;
+  padding: 0 18rpx;
+  border-radius: 10rpx;
+  background: var(--line-2);
+}
+/* 操作按钮：整体靠右 */
+.mo-act {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4rpx;
+  height: 56rpx;
+  padding: 0 8rpx;
+  border: none;
+  border-radius: 8rpx;
+  background: transparent;
+  color: var(--muted);
+  font-size: 22rpx;
+  line-height: 1;
+}
+.mo-act.on {
+  color: var(--brand);
+}
+/* 转发按钮：重置小程序 button 默认样式，与点赞同一视觉 */
+.mo-act-btn {
+  width: auto;
+  min-width: 0;
+  margin: 0;
+}
+.mo-act-btn::after {
+  border: none;
+}
+.mo-act-t {
+  font-size: 22rpx;
+}
+.mo-act-n {
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.mo-act.on .mo-act-n {
+  color: var(--brand);
+}
+.mo-ic {
+  font-size: 28rpx;
+}
+.mo-cmts {
+  margin-top: 10rpx;
+  padding: 14rpx 16rpx;
+  border-radius: 12rpx;
+  background: var(--line-2);
+}
+.mo-cmt-empty {
+  padding: 8rpx 0;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.mo-cmt {
+  font-size: 22rpx;
+  line-height: 1.65;
+  color: var(--ink-2);
+  word-break: break-all;
+}
+.mo-cmt + .mo-cmt {
+  margin-top: 8rpx;
+}
+.mo-cmt-a {
+  color: var(--ink);
+  font-weight: 600;
+}
+.mo-cmt-input {
+  flex: 1;
+  min-width: 0;
+  height: 56rpx;
+  padding: 0;
+  background: transparent;
+  font-size: 22rpx;
+}
+.mo-cmt-send {
+  flex: none;
+  font-size: 22rpx;
+  font-weight: 600;
+  color: var(--brand);
+}
+
+/* ===== 发布资讯：图片 / 视频选择 ===== */
+.np-media {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
+.np-m {
+  position: relative;
+  width: 140rpx;
+  height: 140rpx;
+  border-radius: 12rpx;
+  overflow: hidden;
+  background: var(--line-2);
+}
+.np-m-img {
+  width: 100%;
+  height: 100%;
+}
+.np-m-vid {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: #000;
+  color: #fff;
+  font-size: 22rpx;
+}
+.np-m-x {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 36rpx;
+  height: 36rpx;
+  line-height: 36rpx;
+  border-bottom-left-radius: 10rpx;
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+  font-size: 20rpx;
+  text-align: center;
+}
+.np-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 140rpx;
+  height: 140rpx;
+  border: 1rpx dashed var(--line);
+  border-radius: 12rpx;
+  background: #fff;
+  color: var(--muted);
+  font-size: 22rpx;
+}
+

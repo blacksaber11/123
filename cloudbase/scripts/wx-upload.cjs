@@ -15,6 +15,10 @@
 try {
   Object.defineProperty(globalThis, 'localStorage', { value: undefined, configurable: true, writable: true })
 } catch (e) { /* no-op */ }
+/* 编译在子进程里跑，主进程删掉 localStorage 不够：把开关塞进 NODE_OPTIONS 让子进程一起生效 */
+if (!/--no-experimental-webstorage/.test(process.env.NODE_OPTIONS || '')) {
+  process.env.NODE_OPTIONS = ((process.env.NODE_OPTIONS || '') + ' --no-experimental-webstorage').trim()
+}
 
 const fs = require('node:fs')
 const path = require('node:path')

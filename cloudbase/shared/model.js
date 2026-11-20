@@ -8,9 +8,14 @@
  * 注意：小程序 JS 引擎不支持正则后行断言，这里只用普通的字母/数字边界替换。
  */
 
-/** 型号归一化：忽略大小写、空格与常见分隔符，避免「H100 80G」与「h100-80g」匹配不上 */
+/**
+ * 型号归一化：忽略大小写、空格与常见分隔符，避免「H100 80G」与「h100-80g」匹配不上。
+ * 分隔符里带上 Unicode 连字符（‑ – — − － 等），保证从聊天/文档粘贴的「X3‑8000」等价于「X3-8000」。
+ */
+const MODEL_SEP_RE = /[\s\-_/·,，、+|‐-―−－﹣]+/g
+
 function normModel(value) {
-  return String(value == null ? '' : value).toLowerCase().replace(/[\s\-_/·,，、+]+/g, '')
+  return String(value == null ? '' : value).toLowerCase().replace(MODEL_SEP_RE, '')
 }
 
 /** 拆词元：归一化后按字母 / 数字边界切分，如 a10080gpcie → a 100 80 g pcie */
@@ -41,6 +46,9 @@ function modelHit(left, right) {
 /** 核心型号：字母 + 数字的芯片 / 平台标识，如 b300、gb300、h100、a100、910b、mi355x */
 const CORE_LETTERS_FIRST = /^[a-z]{1,6}\d{1,5}[a-z]{0,3}$/
 const CORE_DIGITS_FIRST = /^\d{3,4}[a-z]{1,2}$/
+/* 长料号：硬盘 / 交换机这类「字母数字混写 8 位以上」的 SKU，
+   如 st16000nm002h、wuh722016cle604、wus721208ble6l4、mg11aca16te、wd85puru */
+const CORE_LONG_SKU = /^[a-z0-9]{8,}$/
 
 /** 容量词：80g / 80gb / 288g；带 T 的口径（4T、8T）在目录里语义不统一，不参与比对 */
 const CAPACITY_TOKEN = /^\d+(?:\.\d+)?(?:gb|g)$/
@@ -56,7 +64,8 @@ function modelCoreOf(value) {
   for (const token of raw) {
     if (!token) continue
     if (CAPACITY_TOKEN.test(token)) continue
-    if (!CORE_LETTERS_FIRST.test(token) && !CORE_DIGITS_FIRST.test(token)) continue
+    const isSku = CORE_LONG_SKU.test(token) && /[a-z]/.test(token) && /\d/.test(token)
+    if (!isSku && !CORE_LETTERS_FIRST.test(token) && !CORE_DIGITS_FIRST.test(token)) continue
     if (out.indexOf(token) < 0) out.push(token)
   }
   return out
@@ -92,17 +101,24 @@ function modelMatch(left, right) {
 }
 
 /**
+ * 检索分隔符：空白、常见符号，以及从聊天/文档里粘进来的各种 Unicode 连字符
+ * （‑ U+2011 不断行连字符、– U+2013、— U+2014、− U+2212、－ U+FF0D 等）。
+ * 不归一的话「X3‑8000」与目录里的「X3-8000」永远匹配不上。
+ */
+const SEARCH_SEP_RE = /[\s\-_/·,，、+|‐-―−－﹣]+/g
+
+/**
  * 检索归一：忽略大小写、空白与常见分隔符，H100 80G → h10080g。
  * 让「H10080G」与「H100 80G」互相命中，不必按目录里的书写方式带空格。
  */
 function normSearch(value) {
-  return String(value == null ? '' : value).toLowerCase().replace(/[\s\-_/·,，、+|]+/g, '')
+  return String(value == null ? '' : value).toLowerCase().replace(SEARCH_SEP_RE, '')
 }
 
 /** 检索分词：按空白 / 分隔符切词后逐词归一，供乱序多词查询使用 */
 function searchTokensOf(value) {
   return String(value == null ? '' : value)
-    .split(/[\s\-_/·,，、+|]+/)
+    .split(SEARCH_SEP_RE)
     .map(normSearch)
     .filter(Boolean)
 }

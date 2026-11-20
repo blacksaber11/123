@@ -10,8 +10,8 @@ const prefs = require('../../utils/prefs')
 const shop = require('../../utils/shop')
 const { request, uploadFile } = require('../../utils/request')
 
-/* 会话页水印：铺满 3 列 × 6 行，绑定当前账号；聊天图片右下角再单独叠一条 */
-const WM_TILES = 18
+/* 查看层水印块数量：2 列 × 6 行，铺满整个页内查看器 */
+const WM_TILES = 12
 
 /* 咨询服务评价标签：与服务端 shared/cs.js 的 RATING_TAGS 保持一致 */
 const CS_RATING_TAGS = ['专业', '响应快', '态度好', '讲解清楚', '解决问题', '需要改进']
@@ -98,6 +98,8 @@ Page({
     peerContact: null,
     /* 直聊顶部标识：双方任一为商机会员时展示 */
     chatMember: '',
+    /* 昵称旁的小字主体名：昵称才是会话对象，公司名只作点缀 */
+    chatSubject: '',
     /* 私密发布会话：对方身份全程匿名 */
     chatPrivate: false,
     /* 代采代售咨询：等待平台客服处理 / 客服正在接入 / 已结束评价 */
@@ -112,22 +114,39 @@ Page({
     /* 名片详情弹层：聊天里点方形名片打开 */
     cardOpen: false,
     cardDetail: {},
-    /* 账号水印：用户 id + 昵称，整页与消息图片都带；设置关闭后不渲染 */
+    cardWm: '',
+    /* 我发出的图片 / 视频叠我的账号水印；设置关闭后不再叠加，别人发来的始终带对方标识 */
     wmText: '',
-    wmTiles: [],
     wmOn: true,
+    /* 对方身份标识：用于给收到的图片 / 视频、对方名片叠水印，不随本机开关变化 */
+    peerWm: '算力聚合 · 平台客服',
     /* 页内图片查看器：不走 wx.previewImage，避免长按保存 / 转发 */
     imgOpen: false,
     imgSrc: '',
-    /* 页内视频查看器：同样不走 wx.previewMedia，保证画面始终叠账号水印 */
+    imgWm: '',
+    imgWmTiles: [],
+    /* 页内视频查看器：同样不走 wx.previewMedia，保证画面始终叠发送方水印 */
     videoOpen: false,
     videoSrc: '',
     videoPoster: '',
+    videoWm: '',
+    videoWmTiles: [],
     /* 微信提醒剩余条数：-1 表示还没有授权记录（旧版账号），0 表示已用完 */
     wxRemain: -1
   },
 
   onLoad(options) {
+    /* 管理端关闭对话功能时直接拦截：入口已隐藏，旧链接 / 历史跳转也无法进入 */
+    const appRef = getApp()
+    if (appRef && appRef.globalData && appRef.globalData.featureFlagsLoaded && !appRef.globalData.chatEnabled) {
+      wx.showModal({
+        title: '提示',
+        content: '对话功能暂未开放，请通过平台客服联系',
+        showCancel: false,
+        success: () => wx.navigateBack({ fail: () => wx.switchTab({ url: '/pages/msg/msg', fail: () => {} }) })
+      })
+      return
+    }
     /* 对话需要登录并授权手机号：未满足直接跳登录，登录后回到本会话 */
     if (!gate('pages/chat/chat', options || {})) return
     const o = options || {}
@@ -150,14 +169,10 @@ Page({
       this.onKbChange = (res) => this.handleKeyboard(res)
       wx.onKeyboardHeightChange(this.onKbChange)
     }
-    /* 水印跟随当前账号：ID 尾 8 位 + 昵称；开关关闭则不渲染 */
+    /* 我发出的内容水印：ID 尾 8 位 + 昵称；「水印保护」关闭后我发出的图片不再叠加 */
     const wmText = guard.accountMark()
     const wmOn = prefs.watermarkOn()
-    this.setData({
-      wmOn,
-      wmText,
-      wmTiles: wmOn ? Array.from({ length: WM_TILES }, (_, k) => ({ k, t: wmText })) : []
-    })
+    this.setData({ wmOn, wmText })
     this.targetDismissed = ''
 
     /* 平台客服的商品上下文：由商品页咨询入口通过 globalData 交接 */
@@ -194,10 +209,12 @@ Page({
     this.setData({ wxRemain: n === null ? -1 : n })
   },
 
-  /* 会话顶部点「开启 / 续订」：补一次授权，同时再拉一次剩余条数 */
+  /* 会话顶部点「开启 / 续订」：补一次授权，成功后提示条立即消失 */
   async renewNotify() {
-    await notify.enable('chat')
-    this.syncNotify(true)
+    /* 点击先隐藏：服务端额度回流有延迟，不能等刷新后才消失 */
+    this.setData({ wxRemain: 1 })
+    const on = await notify.enable('chat')
+    if (!on) this.syncNotify(true)
   },
 
   /* 键盘高度变化：面板顶部（navTotal）不变，只调整底部到键盘顶边 */
@@ -361,11 +378,13 @@ Page({
     items.forEach((m) => {
       const isChat = m.channel === 'kf' || m.type === 'kf.chat'
       if (!isChat) return
-      /* 代采代售咨询按 threadId 独立成会话，不混进平台客服通道 */
-      if (m.threadId) return
+      /* 代采代售咨询按 threadId 独立成会话，不混进平台客服通道；
+         平台客服咨询（platformChat）领取后会带上工单 threadId，仍留在这里 */
+      if (m.threadId && m.platformChat !== true) return
       rows.push({
         id: m.id,
-        role: m.from === 'staff' ? 'sys' : 'me',
+        /* system 走居中提示（客服接入 / 进度 / 评价邀请），不再显示成用户自己的气泡 */
+        role: m.from === 'staff' ? 'sys' : (m.from === 'system' ? 'system' : 'me'),
         kind: m.kind || 'text',
         text: m.body || '',
         image: m.image || '',
@@ -439,10 +458,12 @@ Page({
         patch.chatPeerKey = ''
         patch.peerContact = null
         patch.chatMember = ''
+        patch.chatSubject = ''
       } else if (res.kind !== 'cs') {
         patch.chatPeerKey = res.peerKey || this.data.chatPeerKey
         patch.peerContact = res.peerContact || this.data.peerContact
         patch.chatMember = res.memberLabel || this.data.chatMember
+        patch.chatSubject = res.peerSubject || ''
       }
     }
     if (!Object.keys(patch).length) return
@@ -462,12 +483,14 @@ Page({
       chatTarget: ctxOk ? targetCardOfCtx(ctx) : null,
       chatTitle: '算力聚合 · 官方客服',
       chatAvatar: '平',
+      peerWm: '算力聚合 · 平台客服',
       chatPeerKey: '',
       chatList: cached.length ? cached : [Object.assign({}, inbox.WELCOME)],
       chatAnchor: 'chat-end',
       toolsOpen: false,
       peerContact: null,
       chatMember: '',
+      chatSubject: '',
       chatPrivate: false,
       chatCs: null,
       chatCsTitle: '',
@@ -489,9 +512,11 @@ Page({
       /* 拉取前先清掉上一个会话的身份信息，避免短暂串号 */
       chatTitle: '直聊会话',
       chatAvatar: '对',
+      peerWm: '算力聚合 · 对方',
       chatPeerKey: '',
       peerContact: null,
       chatMember: '',
+      chatSubject: '',
       chatList: this.enrichMedia(this.readChatCache(id), id),
       chatAnchor: 'chat-end',
       toolsOpen: false,
@@ -519,6 +544,7 @@ Page({
       chatCtx: null,
       chatTarget: card && String(card.id) !== this.targetDismissed ? card : null,
       chatTitle: isPrivate ? '私密发布' : name,
+      peerWm: '算力聚合 · ' + (isCs ? '平台客服' : (isPrivate ? '私密发布方' : '对方 · ' + name)),
       chatAvatar: isPrivate ? '私' : (String(name).slice(0, 1) || (isCs ? '客' : '对')),
       chatPeerKey: isPrivate || isCs ? '' : (res.peerKey || ''),
       chatList,
@@ -526,6 +552,8 @@ Page({
       toolsOpen: false,
       peerContact: isPrivate || isCs ? null : (res.peerContact || null),
       chatMember: isPrivate || isCs ? '' : (res.memberLabel || ''),
+      /* 昵称才是会话对象：公司 / 主体名只在昵称旁做小字点缀，且仅对方公开时给出 */
+      chatSubject: isPrivate || isCs ? '' : (res.peerSubject || ''),
       chatPrivate: isPrivate,
       chatCs: isCs ? (res.cs || null) : null,
       chatCsTitle: isCs ? (res.title || '') : ''
@@ -879,7 +907,17 @@ Page({
     this.writeMediaList(key, keep)
   },
 
-  /* 图片消息：先登记打开，再进页内查看器（叠加账号水印） */
+  /* 水印跟着发送方：我发出的用我的账号标识（受「水印保护」开关控制），别人发来的固定用对方标识 */
+  senderMark(row) {
+    if (row && row.role === 'me') return this.data.wmOn ? this.data.wmText : ''
+    return this.data.peerWm || '算力聚合 · 对方'
+  },
+
+  wmTiles(mark) {
+    return mark ? Array.from({ length: WM_TILES }, (_, k) => ({ k, t: mark })) : []
+  },
+
+  /* 图片消息：先登记打开，再进页内查看器（叠加发送方水印） */
   async previewImage(e) {
     const id = String((e && e.currentTarget && e.currentTarget.dataset.id) || '')
     const row = (this.data.chatList || []).filter((m) => String(m.id) === id)[0]
@@ -889,11 +927,12 @@ Page({
       return
     }
     if (row && !(await this.ensureMediaOpen(row))) return
-    this.setData({ imgOpen: true, imgSrc: src })
+    const mark = this.senderMark(row)
+    this.setData({ imgOpen: true, imgSrc: src, imgWm: mark, imgWmTiles: this.wmTiles(mark) })
     if (row) this.cacheMedia(row)
   },
 
-  /* 视频消息：封面块点开，进页内播放器（画面叠账号水印），不走系统播放器 */
+  /* 视频消息：封面块点开，进页内播放器（画面叠发送方水印），不走系统播放器 */
   async playVideo(e) {
     const id = String((e && e.currentTarget && e.currentTarget.dataset.id) || '')
     const row = (this.data.chatList || []).filter((m) => String(m.id) === id)[0]
@@ -904,7 +943,14 @@ Page({
       return
     }
     if (!(await this.ensureMediaOpen(row))) return
-    this.setData({ videoOpen: true, videoSrc: src, videoPoster: row.poster || '' })
+    const mark = this.senderMark(row)
+    this.setData({
+      videoOpen: true,
+      videoSrc: src,
+      videoPoster: row.poster || '',
+      videoWm: mark,
+      videoWmTiles: this.wmTiles(mark)
+    })
     this.cacheMedia(row)
   },
 
@@ -930,7 +976,7 @@ Page({
     const id = String((e && e.currentTarget && e.currentTarget.dataset.id) || '')
     const row = (this.data.chatList || []).find((x) => String(x.id) === id)
     if (!row || !row.card) return
-    this.setData({ cardOpen: true, cardDetail: row.card })
+    this.setData({ cardOpen: true, cardDetail: row.card, cardWm: this.senderMark(row) })
   },
 
   closeCard() {

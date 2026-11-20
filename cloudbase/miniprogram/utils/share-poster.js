@@ -62,6 +62,7 @@ const cache = new Map()
 const pending = new Map()
 
 const wxacodeFile = require('./wxacode')
+const { readToken } = require('./request')
 
 function hash(str) {
   const s = String(str || '')
@@ -76,9 +77,11 @@ function available() {
     typeof wx.canvasToTempFilePath === 'function'
 }
 
+/* 海报本身与身份无关，但底部小程序码按登录的推广者生成：
+   缓存按登录态隔离，避免同一台设备切换账号后复用上一个账号的带码海报 */
 function keyOf(kind, spec) {
   const s = spec || {}
-  return String(kind || '') + ':' + String(s.id || s.title || '')
+  return String(kind || '') + ':' + String(s.id || s.title || '') + '@' + readToken()
 }
 
 /** 工具海报的固定 spec；未知 key 返回 null */
@@ -462,9 +465,14 @@ function cached(kind, itemOrSpec) {
 }
 
 function clear(kind, id) {
-  const key = String(kind || '') + ':' + String(id || '')
-  cache.delete(key)
-  pending.delete(key)
+  /* keyOf 末尾带登录态：按前缀清掉该条目在「不带码 / 带码」两个变体下的缓存 */
+  const prefix = String(kind || '') + ':' + String(id || '') + '@'
+  for (const key of Array.from(cache.keys())) {
+    if (key.indexOf(prefix) === 0) cache.delete(key)
+  }
+  for (const key of Array.from(pending.keys())) {
+    if (key.indexOf(prefix) === 0) pending.delete(key)
+  }
 }
 
 module.exports = {

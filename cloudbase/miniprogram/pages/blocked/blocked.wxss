@@ -1,0 +1,77 @@
+page {
+  background: var(--line-2);
+}
+.bl-page {
+  padding: 24rpx 24rpx calc(48rpx + env(safe-area-inset-bottom));
+}
+.bl-tip {
+  margin-bottom: 20rpx;
+  padding: 20rpx 24rpx;
+  border-radius: 16rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+  font-size: 22rpx;
+  line-height: 34rpx;
+  color: var(--muted);
+}
+.bl-row {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding: 24rpx;
+  margin-bottom: 16rpx;
+  border-radius: 18rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+}
+.bl-av {
+  flex: none;
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 32rpx;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bl-main {
+  flex: 1;
+  min-width: 0;
+}
+.bl-nm {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bl-d {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.bl-btn {
+  flex: none;
+  height: 64rpx;
+  line-height: 64rpx;
+  padding: 0 28rpx;
+  margin: 0;
+  border-radius: 999rpx;
+  font-size: 24rpx;
+  font-weight: 600;
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+.bl-btn::after {
+  border: none;
+}
+.bl-empty {
+  padding: 80rpx 0;
+  text-align: center;
+  font-size: 24rpx;
+  color: var(--muted);
+}

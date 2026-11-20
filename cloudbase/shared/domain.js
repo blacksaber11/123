@@ -13,7 +13,6 @@
 
 const { AppError, CODES } = require('./errors')
 const {
-  TRADE_MODES,
   TRADE_SIDE,
   RENTAL_MODES,
   TRADE_MODE_OPTIONS,
@@ -24,9 +23,7 @@ const {
   RENT_LIMITS,
   MUST_CONDITIONS,
   MUST_CONDITIONS_SELL,
-  MUST_CONDITIONS_BUY,
   MUST_CONDITIONS_RENT,
-  MUST_CONDITIONS_LEASE,
   TIERS,
   BLOCKED_REVIEW_WINDOW_MS,
   BLOCKED_CLEANUP_DAYS,
@@ -118,10 +115,12 @@ function parseAmount(value, field) {
 }
 
 /**
- * 发布渠道归一化。
+ * 发布渠道归一化（仅作历史兼容镜像）。
+ * 发布只有两种：普通发布（visibility=public）与私密发布（visibility=private）。
+ * 普通发布一律进入商机匹配池，私密发布一律不进池，channel 不再影响 bizPool。
  * 兼容历史入参 bizPool（true/false）：
  * - 未传 channel 时，bizPool !== false 视作 both，bizPool === false 视作 normal；
- * - 保密发布只能是 normal（隐藏主体只能普通发布，避免匿名商机打扰）。
+ * - 保密发布统一记作 normal（仅作旧字段镜像）。
  */
 function channelOf(data, visibility) {
   const fallback = data.bizPool === false ? PUBLISH_CHANNELS.NORMAL : PUBLISH_CHANNELS.BOTH
@@ -187,11 +186,11 @@ function buildProduct(data, ownerId, at, opts) {
   const doc = {
     id: str(data.id, { field: '商品号', max: 64 }) || '',
     visibility,
-    /* 发布渠道：仅普通 / 仅商机 / 二者都发；保密发布强制仅普通 */
+    /* 发布渠道：仅作历史兼容镜像，不再影响是否进池 */
     channel,
-    /* 是否进入商机池：由渠道推导，兼容旧字段与旧查询 */
-    bizPool: visibility === VISIBILITIES.PUBLIC && channel !== PUBLISH_CHANNELS.NORMAL,
-    /* 商机领取名额：0 表示不限，发布者可在发布页选择 3 家 / 5 家 / 自定义 */
+    /* 是否进入商机池：普通发布即 true，私密发布即 false */
+    bizPool: visibility !== VISIBILITIES.PRIVATE,
+    /* 商机领取名额：0 表示不限 */
     claimLimit: claimLimitOf(data, channel),
     currency,
     currencySymbol: cur.symbol,
@@ -245,7 +244,7 @@ function buildProduct(data, ownerId, at, opts) {
       })
     }
     doc.nego = arrayOfStrings(data.nego, { field: '可沟通条件', max: 20, itemMax: 60 })
-    doc.flow = arrayOfStrings(data.flow, { field: '交易流程', max: 12, itemMax: 40 })
+    doc.flow = arrayOfStrings(data.flow, { field: '交易流程', max: 12, itemMax: 120 })
   } else {
     /* 出售：整单价 + 交易地 + 成色；无押金字段 */
     doc.price = priceMode === 'nego'
@@ -266,7 +265,7 @@ function buildProduct(data, ownerId, at, opts) {
       })
     }
     doc.nego = arrayOfStrings(data.nego, { field: '可沟通条件', max: 20, itemMax: 60 })
-    doc.flow = arrayOfStrings(data.flow, { field: '交易流程', max: 12, itemMax: 40 })
+    doc.flow = arrayOfStrings(data.flow, { field: '交易流程', max: 12, itemMax: 120 })
   }
 
   /* 价格区间：最高价必须高于最低价；面议不落金额，避免被当成 0 元商品 */
@@ -332,11 +331,11 @@ function buildDemand(data, ownerId, at, opts) {
   const doc = {
     id: str(data.id, { field: '需求号', max: 64 }) || '',
     visibility,
-    /* 发布渠道：仅普通 / 仅商机 / 二者都发；保密发布强制仅普通 */
+    /* 发布渠道：仅作历史兼容镜像，不再影响是否进池 */
     channel,
-    /* 是否进入商机池：由渠道推导，兼容旧字段与旧查询 */
-    bizPool: visibility === VISIBILITIES.PUBLIC && channel !== PUBLISH_CHANNELS.NORMAL,
-    /* 商机领取名额：0 表示不限，发布者可在发布页选择 3 家 / 5 家 / 自定义 */
+    /* 是否进入商机池：普通发布即 true，私密发布即 false */
+    bizPool: visibility !== VISIBILITIES.PRIVATE,
+    /* 商机领取名额：0 表示不限 */
     claimLimit: claimLimitOf(data, channel),
     currency,
     currencySymbol: cur.symbol,

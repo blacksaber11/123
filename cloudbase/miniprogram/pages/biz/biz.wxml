@@ -17,9 +17,11 @@
           <view class="pfr-line"><text class="pfr-knob" style="left:6rpx"></text></view>
         </view>
         <text class="pfr-t">商机提示设置</text>
-        <text class="pfr-v">{{prefLevelName}} · {{dayLabel}}</text>
+        <text class="pfr-v">{{prefLevelName}} · {{dayLabel}}{{prefCityText ? ' · ' + prefCityText : ''}}{{prefSubject === 'open' ? ' · 仅公开主体' : ''}}</text>
       </view>
     </view>
+    <!-- 主体信息筛选生效时，提示还有多少条因不公开主体被隐藏 -->
+    <view wx:if="{{!mineMode && prefSubject === 'open' && hiddenCount > 0}}" class="bz-hidden">另有 {{hiddenCount}} 条被筛选隐藏</view>
     <view wx:if="{{!mineMode}}" class="bz-stats">
       <view class="bz-s">
         <text class="n">{{stats.matched}}</text>
@@ -42,6 +44,16 @@
       <text class="bm-t">已开通 · 剩余 {{daysLeft}} 天 · {{expireText}}</text>
       <text class="bm-x" bindtap="openSheet">续费 ›</text>
     </view>
+  </view>
+
+  <!-- 微信商机提醒额度用完：随时点开通 / 续订，授权成功立即消失 -->
+  <view wx:if="{{!singlePage && wxNotifyTip}}" class="notify-tip" bindtap="renewNotify">
+    <image class="nt-ico" src="/assets/icons/tip-bell.png" mode="aspectFit" />
+    <view class="nt-body">
+      <view class="nt-title">{{wxRemain === 0 ? '微信提醒已用完' : '开启商机微信提醒'}}</view>
+      <view class="nt-sub">{{wxRemain === 0 ? '一次性订阅每条授权只能提醒一次，点这里续订，新商机第一时间提醒你' : '有新的匹配商机时，第一时间在微信收到服务通知'}}</view>
+    </view>
+    <text class="nt-go">{{wxRemain === 0 ? '续订 ›' : '开通 ›'}}</text>
   </view>
 
   <!-- 从分享卡片进入：只展示被分享的那一条，可一键回到完整列表 -->
@@ -91,7 +103,7 @@
         <view class="gate-tt">商机会员</view>
         <text class="gate-ribbon">{{plan}}</text>
       </view>
-      <view class="gate-ds">真实买家与卖家发布的供需，按你的库存自动匹配；发布商机免费，发布者必须公开主体身份。</view>
+      <view class="gate-ds">真实买家与卖家发布的供需，按你的库存自动匹配；商品与需求默认公开并自动进入商机匹配池，也可选择「仅发商机池」只进匹配、不在首页与搜索展示。未开通可看脱敏信息，开通后可查看完整主体、联系方式并领取。</view>
 
       <!-- 匹配概览：开通前就能看到有多少条在等 -->
       <view class="gate-kpi">
@@ -116,43 +128,29 @@
         <view class="gb">
           <text class="gb-no">1</text>
           <view class="gb-c">
-            <view class="gb-t">公开手机号直接看明文</view>
-            <view class="gb-d">普通信息流里，货主主动公开的联系电话你可直接复制拨打；商机池里领取过的联系人手机号永久可回看，未公开的走站内对话。未开通时联系方式打码。</view>
+            <view class="gb-t">商机全量匹配，都能领取</view>
+            <view class="gb-d">按你的库存型号、成色、起订量自动匹配供需；开通后可查看完整主体、全部条件与匹配依据。匹配到的商机不限名额，所有会员都能领取，不用抢。</view>
           </view>
         </view>
         <view class="gb">
           <text class="gb-no">2</text>
           <view class="gb-c">
-            <view class="gb-t">按库存自动匹配商机</view>
-            <view class="gb-d">填一次你的库存型号（品牌 / 系列 / 成色 / 起订量），平台按九维规则自动对上求购与货源，不匹配的不会推给你。可随时切换「宽松 / 标准 / 严格」三档预设。</view>
+            <view class="gb-t">联系方式直接解锁</view>
+            <view class="gb-d">货主主动公开电话时，领取后可直接复制拨打；没留电话就走站内对话，全程不暴露你的手机号。未开通只能看到脱敏信息。</view>
           </view>
         </view>
         <view class="gb">
           <text class="gb-no">3</text>
           <view class="gb-c">
-            <view class="gb-t">完整主体与联系人</view>
-            <view class="gb-d">未开通可见型号、数量、价格与脱敏主体（如「某国企***公司」）；开通后可见完整发布者主体、联系人电话与匹配的库存条目。</view>
+            <view class="gb-t">承接平台代采 / 代售</view>
+            <view class="gb-d">平台核验资质与金额后的委托只进商机池，不公开。会员可查看并领取，点「咨询平台」提交承接需求，由客服居中推进。</view>
           </view>
         </view>
         <view class="gb">
           <text class="gb-no">4</text>
           <view class="gb-c">
             <view class="gb-t">四类榜单看行情</view>
-            <view class="gb-d">需求榜、火热榜、供给榜、品类榜，掌握当前热门机型、成交价区间与供给分布，判断行情不用再靠打听。</view>
-          </view>
-        </view>
-        <view class="gb">
-          <text class="gb-no">5</text>
-          <view class="gb-c">
-            <view class="gb-t">代采 / 代售一键对接平台</view>
-            <view class="gb-d">平台核验资质与金额后上架的委托，只进商机池不公开；会员点开委托逐项确认必须条件后，点「咨询平台」提交需求，由客服核实后推进，全程不泄露你的联系方式给第三方。</view>
-          </view>
-        </view>
-        <view class="gb">
-          <text class="gb-no">6</text>
-          <view class="gb-c">
-            <view class="gb-t">真实主体准入，匿名不进池</view>
-            <view class="gb-d">发布者必须公开主体身份（企业 / 个人实名）才能进商机池；私密 / 匿名发布不参与匹配，代采 / 代售经平台核验资质与金额后才上架。</view>
+            <view class="gb-d">需求榜、火热榜、供给榜、品类榜，热门机型、成交价区间与供给分布一眼看清。</view>
           </view>
         </view>
       </view>
@@ -183,6 +181,11 @@
       </view>
 
       <button class="btn primary block gate-btn" bindtap="openSheet" loading="{{paying}}" disabled="{{paying}}">{{unlocked ? '立即续费' : '立即开通'}}{{selectedPlan ? ' · ¥' + selectedPlan.price + ' / ' + selectedPlan.days + ' 天' : ' · ' + plan}}</button>
+      <!-- 7 天体验：每个账号一次，需二次确认后开通 -->
+      <block wx:if="{{!unlocked && trialAvailable}}">
+        <button class="btn block gate-trial" bindtap="startTrial" loading="{{trialing}}" disabled="{{trialing || paying}}">先体验 7 天</button>
+        <view class="gate-trial-tip">先开通 7 天体验，权益与付费会员一致；每个账号仅一次，到期后需开通会员才能继续使用。</view>
+      </block>
       <view class="gate-foot">微信支付 · 付款后自动延长会员时长</view>
     </view>
 
@@ -194,7 +197,7 @@
           <text class="gi">1</text>
           <view class="gc">
             <view class="gt">发布门槛</view>
-            <view class="gd">只有公开主体的供需进商机池，私密 / 匿名不参与；代采 / 代售核验后上架。</view>
+            <view class="gd">商品与需求默认公开并自动进入商机匹配池，也可以选择「仅发商机池」只进匹配、不在首页与搜索展示；未公开主体也可被匹配，展示时脱敏；代采 / 代售核验后上架。</view>
           </view>
         </view>
         <view class="gl">
@@ -218,7 +221,7 @@
     <view class="bz-teaser">
       <view class="teaser-hd">
         <text class="teaser-tt">匹配到的商机</text>
-        <text class="teaser-sub">{{teaserItems.length}} 条 · 开通后可见联系方式</text>
+        <text class="teaser-sub">{{teaserItems.length}} 条 · 开通后可看完整主体，领取后可见联系方式</text>
       </view>
       <scroll-view wx:if="{{teaserItems.length}}" class="teaser-scroll" scroll-y="true" show-scrollbar="{{false}}">
         <view wx:for="{{teaserItems}}" wx:key="id" class="tes-row">
@@ -232,11 +235,16 @@
             <text class="tes-via">{{item.matchText || (item.matchVia ? '基于' + item.matchVia : '')}}</text>
             <text class="tes-time">{{item.published}}</text>
           </view>
-          <view class="tes-bot">主体 {{item.org || '已脱敏'}}</view>
+          <view class="tes-bot">
+            <text class="tes-bot-t">主体 {{item.org || '已脱敏'}}</text>
+            <text wx:if="{{item.ownerKey}}" class="tes-home"
+                  data-key="{{item.ownerKey}}" data-nick="{{item.nick || item.org}}"
+                  catchtap="openOwner">查看主页 ›</text>
+          </view>
         </view>
       </scroll-view>
       <view wx:else class="teaser-none">暂时没有和你条件匹配的商机：完善库存型号 / 成色 / 起订量，或发布求购需求后再看</view>
-      <view wx:if="{{teaserItems.length}}" class="teaser-foot">上下滑动查看其余商机 · 联系方式与完整主体开通后可见</view>
+      <view wx:if="{{teaserItems.length}}" class="teaser-foot">上下滑动查看全部匹配商机 · 未公开主体也可查看发布者主页</view>
     </view>
   </block>
 
@@ -306,7 +314,13 @@
             data-id="{{item.id}}" data-type="{{item.type}}" bindtap="openDetail">
         <view class="top">
           <text class="top-info">{{item.org || '平台商机'}} · {{item.city || '城市未填写'}} · {{item.published}}</text>
+          <!-- 未公开主体的商机也能进入发布者主页，主体字段仍按脱敏展示 -->
+          <text wx:if="{{item.ownerKey}}" class="top-home"
+                data-key="{{item.ownerKey}}" data-nick="{{item.nick || item.org}}"
+                catchtap="openOwner">查看主页</text>
           <view class="top-right">
+            <!-- 本次进入时新增的商机：置顶并标「新」，下次进入即回到正常排序 -->
+            <text wx:if="{{item.isNew}}" class="pill-tag new">新</text>
             <text class="pill-tag {{item.isRent ? 'rent' : ((item.type === 'supply' || item.kind === '代售') ? '' : 'buy')}}">{{item.kind}}</text>
             <!-- 与首页商品卡一致：右上角收藏 -->
             <view class="fav-btn {{item.fav ? 'on' : ''}}" data-id="{{item.id}}" data-type="{{item.type}}" catchtap="toggleFav">{{item.fav ? '★' : '☆'}}</view>
@@ -346,13 +360,14 @@
           <text wx:if="{{item.matchText}}" class="om-via">{{item.matchText}}</text>
         </view>
         <!-- 底部与普通商品卡一致：左侧浏览量，右侧状态；「我的商机」里全是已领取，
-             不再重复标「已领取」，只在右侧保留一个轻量删除入口 -->
+             不再重复标「已领取」 -->
         <view class="foot">
           <text>浏览 {{item.views}}</text>
           <text wx:if="{{item.closed}}" class="hot">{{item.statusText || '已结束'}}</text>
           <text wx:elif="{{item.claimed && state !== 'claimed'}}" class="hot brand">已领取</text>
           <text wx:elif="{{item.unsatisfied}}" class="hot">已标记不满足</text>
           <view wx:if="{{item.closed || item.expireText}}" class="r">{{item.closed ? '已结束，仅供回看' : item.expireText}}</view>
+          <!-- 我的商机：删除与浏览量同一行、保持同高，只靠右对齐，不另起一行 -->
           <text
             wx:if="{{item.claimed && (mineMode || listMode)}}"
             class="foot-del"
@@ -370,7 +385,7 @@
     <view wx:if="{{!items.length}}" class="empty">
       <image class="big-img" src="/assets/icons/empty-target.png" mode="aspectFit" />
       <view class="ttl">{{state === 'claimed' ? '还没有领取过商机' : (state === 'unsatisfied' ? '没有标记不满足的商机' : '暂无匹配商机')}}</view>
-      <view class="ds">{{state === 'claimed' ? '领取后的商机会保存在这里，点开可查看联系方式并发起对话' : (state === 'unsatisfied' ? '在商机页逐项确认后标记「不满足」的商机会保留在这里，不再角标提醒，可随时重新查看' : '只展示和你库存的型号、成色、起订量匹配的需求，以及和你求购需求匹配的货源；主体信息未公开的发布内容不会进入商机池')}}</view>
+      <view class="ds">{{state === 'claimed' ? '领取后的商机会保存在这里，点开可查看联系方式并发起对话' : (state === 'unsatisfied' ? '在商机页逐项确认后标记「不满足」的商机会保留在这里，不再角标提醒，可随时重新查看' : '只展示和你库存的型号、成色、起订量匹配的需求，以及和你求购需求匹配的货源；普通发布自动匹配，私密发布不参与。未公开主体的商机以脱敏主体展示，可点「查看主页」了解发布者。')}}</view>
       <view wx:if="{{mineMode}}" class="acts">
         <button class="btn primary" bindtap="goAllBiz">去看可领取商机</button>
       </view>
@@ -466,20 +481,48 @@
       </view>
     </view>
 
+    <!-- 主体信息：独立于匹配力度，切换后立即保存并刷新列表 -->
+    <view class="pf-sec">
+      <view class="pf-sec-hd">
+        <text class="pf-sec-t">主体信息</text>
+        <text class="pf-sec-s">开启后只显示公开主体的商机</text>
+      </view>
+      <view class="pf-opts">
+        <text wx:for="{{prefSubjectOptions}}" wx:key="key"
+              class="pf-opt {{prefSubject === item.key ? 'on' : ''}}"
+              data-key="{{item.key}}" bindtap="pickSubject">{{item.label}}</text>
+      </view>
+    </view>
+
     <view class="pf-dims">
       <view wx:for="{{prefDims}}" wx:key="key" class="pf-dim">
         <view class="pf-dim-hd">
           <text class="pf-dim-t">{{item.name}}</text>
-          <text class="pf-dim-tag">可单独微调</text>
+          <text class="pf-dim-tag">{{item.extra || '可单独微调'}}</text>
         </view>
         <view class="pf-opts">
           <text wx:for="{{item.options}}" wx:for-item="opt" wx:key="key"
                 class="pf-opt {{item.value === opt.key ? 'on' : ''}}"
                 data-dim="{{item.key}}" data-key="{{opt.key}}" bindtap="pickPrefDim">{{opt.label}}</text>
         </view>
+        <!-- 指定城市多选：按大区分组，点一下加入 / 取消，不选则视为不限地区 -->
+        <view wx:if="{{item.key === 'city' && prefs.city === 'pick'}}" class="pf-cities">
+          <view class="pf-city-hd">
+            <text class="pf-city-s">{{prefCityText || '不选城市时按不限地区匹配'}}</text>
+            <text wx:if="{{prefCityText}}" class="pf-city-clear" bindtap="clearPrefCities">清空</text>
+          </view>
+          <view wx:for="{{prefCityGroups}}" wx:for-item="grp" wx:key="p" class="pf-city-grp">
+            <text class="pf-city-grp-t">{{grp.p}}</text>
+            <view class="pf-city-list">
+              <text wx:for="{{grp.cities}}" wx:for-item="c" wx:key="name"
+                    class="pf-city {{c.on ? 'on' : ''}}"
+                    data-city="{{c.name}}" bindtap="togglePrefCity">{{c.name}}</text>
+            </view>
+          </view>
+        </view>
       </view>
     </view>
-    <view class="pf-note">例：只要 B300、数量少一点也能接 → 选「宽松」；只顾同城、报价必须在预算内 → 把「城市」「价格」分别调紧；4T 也能接受 3T → 把「容量」调成「容量不限」。价格按对方预算 / 采购价比对，任一方没填价格时不作限制。</view>
+    <view class="pf-note">例：只要 B300、数量少一点也能接 → 选「宽松」；不只做本地、只接深圳 / 北京 / 上海的商机 → 城市选「指定城市」并多选；报价必须在预算内 → 把「价格」调紧；4T 也能接受 3T → 把「容量」调成「容量不限」。价格按对方预算 / 采购价比对，任一方没填价格时不作限制。</view>
     </view>
     <button class="btn primary block pf-save" bindtap="savePref" loading="{{prefSaving}}" disabled="{{prefSaving}}">保存并重新匹配</button>
   </view>

@@ -264,6 +264,17 @@ const COLLECTIONS = [
     ]
   },
   {
+    name: 'userBlocks',
+    /* 用户黑名单：uid 拉黑 peerUid（单向关系），id 为两者确定性哈希。
+       私聊双向静默；拉黑者看不到被拉黑者的商品 / 资讯 / 主页。仅服务端读写。 */
+    permission: { read: false, write: false },
+    indexes: [
+      { field: 'uid', unique: false },
+      { field: 'peerUid', unique: false },
+      { field: 'createdAt', unique: false }
+    ]
+  },
+  {
     name: 'userEvents',
     /* 用户行为事件：登录 / 发布 / 咨询 / 代采代售 / 领取商机 / 商品浏览等。
        保留 90 天，由 events.cleanupUserEvents 定期清理；仅管理端可读。 */
@@ -327,17 +338,6 @@ const COLLECTIONS = [
     ]
   },
   {
-    name: 'csCommissions',
-    /* 客服提成流水：只统计绑定账号「直接下级」的会员支付，paymentId 幂等 */
-    permission: { read: false, write: false },
-    indexes: [
-      { field: 'paymentId', unique: true },
-      { field: 'csId', unique: false },
-      { field: 'payerUid', unique: false },
-      { field: 'paidAt', unique: false }
-    ]
-  },
-  {
     name: 'csRatings',
     /* 客服评价：一张代采代售咨询单只能评价一次，自动聚合进客服档案 */
     permission: { read: false, write: false },
@@ -349,7 +349,7 @@ const COLLECTIONS = [
   },
   {
     name: 'csProfiles',
-    /* 客服个人配置：单独提成比例与代采代售佣金比例（为空时用 settings#cs 的全局默认） */
+    /* 客服个人配置：单独委托佣金比例（为空时用 settings#cs 的全局默认） */
     permission: { read: false, write: false },
     indexes: [{ field: 'id', unique: true }]
   },

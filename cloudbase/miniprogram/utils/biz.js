@@ -175,6 +175,13 @@ async function claimRemote(targetType, targetId, conds, opts) {
   return res
 }
 
+/** 已领取商机的联系方式：只读回看，不消耗每日领取次数 */
+async function contactRemote(targetType, targetId, opts) {
+  const payload = { targetType }
+  payload[targetType === 'supply' ? 'supplyId' : (targetType === 'agency' ? 'agencyId' : 'demandId')] = targetId
+  return request('user', 'biz.contact', payload, opts)
+}
+
 /** 云端标记「不满足」：仍在列表里，但不再计入首页商机角标 */
 async function markRemote(targetType, targetId, marked) {
   const res = await request('user', 'biz.mark', {
@@ -349,5 +356,5 @@ module.exports = {
   opportunities, stats, isClaimed, claim, unclaim,
   isUnsatisfied, markUnsatisfied,
   isConsulted, consult, matchHint,
-  claimRemote, markRemote, deleteRemote, badgeDirty
+  claimRemote, contactRemote, markRemote, deleteRemote, badgeDirty
 }

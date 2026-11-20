@@ -30,6 +30,57 @@ function isConditionObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value)
 }
 
+/**
+ * 等值查询高频字段：线上 docs 表已为它们建了函数索引（见 initSchema 里的 idx_docs_*）。
+ * MySQL 只有在查询表达式与索引表达式完全一致时才会命中函数索引，
+ * 所以这些字段必须把 JSON 路径内联成字面量 + 相同的 CAST，不能用 ? 占位传路径。
+ * 只收「值一定是字符串」的字段：索引列是 CHAR，与数字常量比较会退化成全表扫描。
+ */
+const INDEXED_FIELDS = new Set([
+  'tokenHash',
+  'ownerKey',
+  'uid',
+  'ownerId',
+  'refCode',
+  'threadId',
+  'payload.threadId',
+  'username',
+  'assignedAccount'
+])
+
+/** 等值 / IN 用的表达式，必须与 ALTER TABLE 里的函数索引逐字一致 */
+function valueExpr(field) {
+  const path = jsonPath(field)
+  if (INDEXED_FIELDS.has(field)) {
+    return "CAST(JSON_UNQUOTE(JSON_EXTRACT(data, '" + path + "')) AS CHAR(191))"
+  }
+  return "JSON_UNQUOTE(JSON_EXTRACT(data, '" + path + "'))"
+}
+
+/** 范围 / 正则 / 非等值比较用的表达式：保持原来的文本比较口径，不加 CAST */
+function textExpr(field) {
+  return "JSON_UNQUOTE(JSON_EXTRACT(data, '" + jsonPath(field) + "'))"
+}
+
+/** 原始 JSON 值表达式，用于 IS NULL / IS NOT NULL 判断 */
+function jsonExpr(field) {
+  return "JSON_EXTRACT(data, '" + jsonPath(field) + "')"
+}
+
+/**
+ * 建表用的函数索引定义（与 valueExpr 的表达式逐字一致）。
+ * 已有库由 scripts/migrate-docs-indexes.sh 用同样的表达式补建，两边不能改歪。
+ */
+function indexDefs(fields) {
+  return fields.map((field) => {
+    const name = 'idx_docs_' + field.replace(/\./g, '_').toLowerCase()
+    return ' KEY ' + name + ' (collection, (' +
+      "CAST(JSON_UNQUOTE(JSON_EXTRACT(data, '" + jsonPath(field) + "')) AS CHAR(191))" +
+      '))'
+  })
+}
+const INDEX_DEFS = indexDefs(Array.from(INDEXED_FIELDS))
+
 /** 把仓储层 query 编译成 SQL 条件；参数顺序与占位符严格一致 */
 function buildWhere(query) {
   const clauses = []
@@ -37,13 +88,21 @@ function buildWhere(query) {
   const q = query || {}
   for (const key of Object.keys(q)) {
     const cond = q[key]
-    const path = jsonPath(key)
-    const raw = 'JSON_EXTRACT(data, ?)'
+    /* 路径经 jsonPath 白名单校验（仅字母数字下划线点），可安全内联 */
+    const col = valueExpr(key)
 
     if (!isConditionObject(cond)) {
-      /* JSON_UNQUOTE 后与参数比较：数字参数走数值比较，字符串走字符比较 */
-      clauses.push('JSON_UNQUOTE(' + raw + ') = ?')
-      params.push(path, typeof cond === 'boolean' ? String(cond) : cond)
+      const value = typeof cond === 'boolean' ? String(cond) : cond
+      if (key === 'id') {
+        /* 历史数据可能只把业务 id 写在主键列、没写进 data，
+           只按 data.id 匹配会让 updateWhere 静默命中 0 行（表现为「保存成功但没生效」） */
+        clauses.push('(id = ? OR ' + col + ' = ?)')
+        params.push(value, value)
+      } else {
+        /* JSON_UNQUOTE 后与参数比较：数字参数走数值比较，字符串走字符比较 */
+        clauses.push(col + ' = ?')
+        params.push(value)
+      }
       continue
     }
 
@@ -52,30 +111,37 @@ function buildWhere(query) {
       if (!list.length) {
         clauses.push('1 = 0')
       } else {
-        clauses.push('JSON_UNQUOTE(' + raw + ') IN (' + list.map(() => '?').join(', ') + ')')
-        params.push(path, ...list.map((v) => (typeof v === 'boolean' ? String(v) : v)))
+        const values = list.map((v) => (typeof v === 'boolean' ? String(v) : v))
+        const holes = values.map(() => '?').join(', ')
+        if (key === 'id') {
+          /* 同 id 等值匹配：兼容只写主键列的历史记录 */
+          clauses.push('(id IN (' + holes + ') OR ' + col + ' IN (' + holes + '))')
+          params.push(...values, ...values)
+        } else {
+          clauses.push(col + ' IN (' + holes + ')')
+          params.push(...values)
+        }
       }
     }
     if ('$ne' in cond) {
-      clauses.push('(' + raw + ' IS NULL OR JSON_UNQUOTE(' + raw + ') <> ?)')
-      params.push(path, path, typeof cond.$ne === 'boolean' ? String(cond.$ne) : cond.$ne)
+      clauses.push('(' + jsonExpr(key) + ' IS NULL OR ' + textExpr(key) + ' <> ?)')
+      params.push(typeof cond.$ne === 'boolean' ? String(cond.$ne) : cond.$ne)
     }
     if ('$gte' in cond) {
-      clauses.push('JSON_UNQUOTE(' + raw + ') >= ?')
-      params.push(path, cond.$gte)
+      clauses.push(textExpr(key) + ' >= ?')
+      params.push(cond.$gte)
     }
     if ('$lt' in cond) {
-      clauses.push('JSON_UNQUOTE(' + raw + ') < ?')
-      params.push(path, cond.$lt)
+      clauses.push(textExpr(key) + ' < ?')
+      params.push(cond.$lt)
     }
     if ('$exists' in cond) {
-      clauses.push(cond.$exists ? raw + ' IS NOT NULL' : raw + ' IS NULL')
-      params.push(path)
+      clauses.push(cond.$exists ? jsonExpr(key) + ' IS NOT NULL' : jsonExpr(key) + ' IS NULL')
     }
     if ('$regex' in cond) {
       const flags = /i/i.test(String(cond.$options || '')) ? '(?i)' : ''
-      clauses.push('JSON_UNQUOTE(' + raw + ') REGEXP ?')
-      params.push(path, flags + String(cond.$regex))
+      clauses.push(textExpr(key) + ' REGEXP ?')
+      params.push(flags + String(cond.$regex))
     }
   }
   return {
@@ -106,12 +172,10 @@ function buildOrder(sort) {
   for (const spec of specs) {
     const field = spec.field
     const desc = spec.desc
-    const path = jsonPath(field)
+    const raw = jsonExpr(field)
     /* 缺失字段排最后，和内存实现的 undefined / null 排序口径一致 */
-    parts.push('(JSON_EXTRACT(data, ?) IS NULL) ASC')
-    params.push(path)
-    parts.push('JSON_EXTRACT(data, ?) ' + (desc ? 'DESC' : 'ASC'))
-    params.push(path)
+    parts.push('(' + raw + ' IS NULL) ASC')
+    parts.push(raw + ' ' + (desc ? 'DESC' : 'ASC'))
   }
   parts.push('id ASC')
   return { sql: ' ORDER BY ' + parts.join(', '), params }
@@ -236,7 +300,8 @@ function createMysqlRepo(options) {
         ' data JSON NOT NULL,' +
         ' updated_at BIGINT NOT NULL DEFAULT 0,' +
         ' PRIMARY KEY (collection, id),' +
-        ' KEY idx_collection (collection)' +
+        ' KEY idx_collection (collection),' +
+        INDEX_DEFS.join(',') +
         ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci'
       )
       await pool.query(
@@ -264,8 +329,8 @@ function createMysqlRepo(options) {
       if (rows.length) return parseRow(rows[0])
       /* 兼容历史数据：早期写入没有把业务 id 放到主键上 */
       const [legacy] = await pool.query(
-        'SELECT data FROM docs WHERE collection = ? AND JSON_UNQUOTE(JSON_EXTRACT(data, ?)) = ? LIMIT 1',
-        [collection, jsonPath('id'), String(id)]
+        'SELECT data FROM docs WHERE collection = ? AND ' + valueExpr('id') + ' = ? LIMIT 1',
+        [collection, String(id)]
       )
       return legacy.length ? parseRow(legacy[0]) : null
     },
@@ -369,6 +434,9 @@ function createMysqlRepo(options) {
           'ON DUPLICATE KEY UPDATE count_value = count_value + VALUES(count_value)',
           [id, String(key), Number(windowStart), step]
         )
+      } else if (step < 0) {
+        /* 回滚额度（领取失败 / 重复领取 / 登录成功）：只减不增，最低到 0，不凭空建计数行 */
+        await pool.query('UPDATE counters SET count_value = GREATEST(count_value + ?, 0) WHERE id = ?', [step, id])
       }
       const [rows] = await pool.query('SELECT count_value FROM counters WHERE id = ?', [id])
       return rows.length ? Number(rows[0].count_value || 0) : 0

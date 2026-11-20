@@ -158,9 +158,10 @@ const PRODUCTS = [
 function agencyDoc(row) {
   const d = deadlineOf(row.days)
   const amount = Math.round(row.qty * row.price)
+  /* 与 shared/market.js agencyFee 的分档保持一致：≤3 万 299 元，3 万–100 万 1% 封顶 5000，100 万以上 0.5% */
   const fee = amount >= 1000000
     ? Math.round(amount * 0.005)
-    : Math.min(Math.round(amount * 0.01), 5000)
+    : (amount <= 30000 ? 299 : Math.min(Math.round(amount * 0.01), 5000))
   const createdAt = at(row.views * 60 * 1000)
   return {
     id: row.id,

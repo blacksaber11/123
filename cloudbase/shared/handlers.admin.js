@@ -27,12 +27,9 @@ const {
   CHAT_RETENTION_DAYS,
   /* 代采代售咨询标准流程的阶段枚举与展示文案，与小程序端共用 */
   CONSULT_STAGE,
-  CONSULT_STAGE_LABELS,
-  /* 会员到期提醒：内容模板与提前天数等配置，媒体页与定时提醒共用 */
-  MEMBER_REMIND_DEFAULTS,
   memberRemindOf
 } = require('./constants')
-const { hashPassword, verifyPassword, verifyTotp, decryptField, blindIndex, sha256Hex, userNoOf, randomToken, randomId } = require('./crypto')
+const { hashPassword, verifyPassword, verifyTotp, decryptField, encryptField, blindIndex, sha256Hex, userNoOf, randomToken, randomId } = require('./crypto')
 const { str, enumOf, normalizePaging, normalizePhone, maskSensitiveText, maskPhone, fileRef } = require('./validate')
 const {
   projectProductForStaff,
@@ -49,6 +46,8 @@ const { countHeat } = require('./domain')
 const { chatKindOf, mediaState, chatCutoff } = require('./chatmedia')
 /* 内置型号库：与小程序 / 用户端共用同一份静态目录，管理端只在其上叠加平台覆盖记录 */
 const { DEVICE_CATALOG } = require('./device-catalog')
+/* 型号归一：型号库去重按「品类 + 品牌 + 归一化型号」判断，忽略空格与分隔符 */
+const { normModel } = require('./model')
 /* 主体类型与个人资料页共用同一份枚举，避免两边口径漂移 */
 const { SUBJECT_TYPES, REPORT_TYPES, REPORT_TARGETS, REPORT_STATUS } = require('./handlers.user')
 const REPORT_STATUS_LIST = Object.values(REPORT_STATUS)
@@ -62,7 +61,8 @@ const {
   stageOf: consultStageOf,
   stageLabel: consultStageLabel,
   advance: advanceConsultStage,
-  assertStage: assertConsultStage
+  assertStage: assertConsultStage,
+  endLead: endLeadConsult
 } = require('./consultflow')
 /* 平台确认成交的唯一入口：客服登记成交与管理员委托管理确认成交共用同一套写入 */
 const { AGENCY_STATUS, confirmAgencyDeal, lockAgencyForContract } = require('./market')
@@ -343,17 +343,26 @@ function createAdminHandlers(deps) {
   }
 
   /**
-   * 工作台待办：每次请求只做 6 次限量查询，避免待办数字把库拖慢。
+   * 工作台待办：每次请求只做 7 次限量查询，避免待办数字把库拖慢。
    * 口径与消息中心 / 线索池 / 风险池保持一致。
    */
   async function collectTodos() {
-    const [leadRows, agencyRows, contractRows, kfRows, reportRows, riskRows] = await Promise.all([
+    const [leadRows, agencyRows, contractRows, kfRows, reportRows, riskRows, withdrawRows] = await Promise.all([
       repo.find('leads', { status: LEAD_STATUS.PENDING, targetType: 'agency' }, { limit: 1000 }),
-      repo.find('agencies', { status: { $in: ['待审核', '已通过', '待确认'] }, deleted: { $ne: true } }, { limit: 1000 }),
+      /* 代采代售角标只提示待处理委托（待审核 / 待确认 / 已通过），
+         已上架、已锁定属于正常在办状态，不计入待办；与前端回退口径保持一致 */
+      repo.find('agencies', {
+        status: { $in: [AGENCY_STATUS.REVIEW, AGENCY_STATUS.PENDING, AGENCY_STATUS.APPROVED] },
+        deleted: { $ne: true }
+      }, { limit: 1000 }),
       repo.find('agencyContracts', { status: '待审核' }, { limit: 1000 }),
       repo.find('outbox', { 'payload.channel': 'kf' }, { sort: { field: 'createdAt', dir: 'desc' }, limit: 1000 }),
       repo.find('reports', { status: '待处理' }, { limit: 1000 }),
-      repo.find('riskCases', { status: '待处理' }, { limit: 1000 })
+      repo.find('riskCases', { status: '待处理' }, { limit: 1000 }),
+      /* 推广提现：待审核 / 待打款 / 打款中 / 打款失败四类都需要人工跟进 */
+      repo.find('promoterWithdrawals', {
+        status: { $in: ['待审核', '待打款', '打款中', '打款失败'] }
+      }, { limit: 1000 })
     ])
     /* 未读会话：用户发来的客服留言且坐席未读，按 uid 去重 */
     const unreadUids = new Set()
@@ -374,12 +383,23 @@ function createAdminHandlers(deps) {
       reports: reportRows.length,
       risk: riskRows.length,
       /* 收款登记即入账，财务待办不再统计；保留 0 以兼容工作台 / 侧边栏的字段读取 */
-      payments: 0
+      payments: 0,
+      /* 推广提现待办：客服只处理「待审核」，财务 / 管理员还要跟进打款与失败重打 */
+      withdrawPending: withdrawRows.filter((row) => row.status === '待审核').length,
+      withdrawPayout: withdrawRows.filter((row) => row.status === '待打款' || row.status === '打款中').length,
+      withdrawFailed: withdrawRows.filter((row) => row.status === '打款失败').length
     }
+    /* 待打款超时：审核通过后超过约定时效仍未回填，工作台单独提醒 */
+    const nowMs = now()
+    counts.withdrawTimeout = withdrawRows.filter((row) => {
+      if (row.status !== '待打款' && row.status !== '打款中') return false
+      const deadline = Number(row.payoutDeadlineAt) || 0
+      return deadline > 0 && deadline < nowMs
+    }).length
     counts.reviewTotal = counts.agencyReview + counts.contracts
     /* 收款已改自动入账，不再计入待办；财务每周对账由财务工作台单独提醒 */
     counts.total = counts.leads + counts.agency + counts.contracts + counts.unread
-      + counts.reports + counts.risk
+      + counts.reports + counts.risk + counts.withdrawPending + counts.withdrawPayout + counts.withdrawFailed
     return counts
   }
 
@@ -534,7 +554,7 @@ function createAdminHandlers(deps) {
       count += 1
       /* 会话里补接入提示：该用户换客服时也能看到「本委托由同一客服统一对接」 */
       await repo.insert('outbox', {
-        id: 'M' + sha256Hex('cs-adopt:' + row.id).slice(0, 22),
+        id: 'M' + sha256Hex(`cs-adopt:${row.id}:${at}`).slice(0, 22),
         type: 'kf.chat',
         payload: {
           uid: row.uid,
@@ -546,7 +566,8 @@ function createAdminHandlers(deps) {
           targetId: agencyId,
           title: row.agencyTitle || '',
           body: `客服 ${staff.name} 已接入，本委托由同一客服统一对接`,
-          csStatus: CS_STATUS.SERVING
+          csStatus: CS_STATUS.SERVING,
+          platformChat: String(row.source || '') === 'kf_leave'
         },
         status: 'pending',
         createdAt: at
@@ -1108,15 +1129,18 @@ function createAdminHandlers(deps) {
   }
 
   /**
-   * 工单是否已经真正对话：领取后客服与用户各自至少发过一条消息。
-   * 领取时写入的咨询内容是用户提交前的留言，不算对话；
-   * 因此新工单只有「领取」动作，聊过之后才出现「确认满足条件」。
+   * 工单是否已经真正对话：用户提出过诉求，且客服领取后回过至少一条消息。
+   * 用户提交的咨询内容（intakeBody / intakeMedia）在领取时随工单落库，本身就是用户说过的话；
+   * 它早于 csClaimedAt，不能因为「早于领取」就当作没沟通过 ——
+   * 否则客服回完消息仍看不到「确认满足条件」，工单会永远停在沟通中。
    */
   async function consultChatStartedOf(lead) {
     const threadId = String((lead && (lead.threadId || lead.id)) || '')
     if (!threadId) return false
     const since = Number((lead && (lead.csClaimedAt || lead.assignedAt)) || 0)
-    let user = false
+    const intakeBody = String((lead && (lead.intakeBody || lead.formSummary)) || '').trim()
+    const intakeMedia = Array.isArray(lead && lead.intakeMedia) ? lead.intakeMedia.length : 0
+    let user = !!(intakeBody || intakeMedia)
     let staff = false
     try {
       const rows = await repo.find('outbox', { 'payload.threadId': threadId }, { limit: 200 })
@@ -1132,7 +1156,7 @@ function createAdminHandlers(deps) {
       /* 会话读取失败不阻塞工单详情，按「还没开始对话」处理 */
       return false
     }
-    return false
+    return staff && user
   }
 
   /** 流程推进权限：领取该咨询的客服本人或管理员 */
@@ -1408,6 +1432,14 @@ function createAdminHandlers(deps) {
     return `catalog_${sha256Hex(catalogKeyOf(item)).slice(0, 16)}`
   }
 
+  /**
+   * 型号去重键：同一品类 / 品牌下，忽略空格、大小写与分隔符后相同的型号视为同一个产品。
+   * 用于型号库去重，避免「FusionServer 2288H V7」与「2288HV7」被录成两条。
+   */
+  function catalogModelKeyOf(item) {
+    return [normModel(item.cat), normModel(item.brand), normModel(item.model)].join('::')
+  }
+
   function projectCatalog(row) {
     return {
       id: row.id,
@@ -1426,6 +1458,51 @@ function createAdminHandlers(deps) {
   }
 
   const CATALOG_STATUSES = Object.freeze(['active', 'disabled', 'removed'])
+
+  /**
+   * 型号库去重：同一「品类 + 品牌」下，型号忽略空格、大小写与分隔符后相同的只保留一条。
+   * 内置目录提供规范写法，平台记录提供状态 / 备注；两条平台记录重复时保留最近更新的一条。
+   */
+  function dedupeCatalogItems(list) {
+    /* 先统一写法：同品牌下只差空格 / 分隔符的型号，展示时沿用先出现的规范写法 */
+    const spellings = new Map()
+    const spellKey = (brand, model) => normModel(brand) + '::' + normModel(model)
+    for (const item of list) {
+      const key = spellKey(item.brand, item.model)
+      if (!spellings.has(key)) spellings.set(key, item.model)
+    }
+    const out = []
+    const index = new Map()
+    for (const original of list) {
+      const model = spellings.get(spellKey(original.brand, original.model))
+      const item = model && model !== original.model ? Object.assign({}, original, { model }) : original
+      const key = catalogModelKeyOf(item)
+      const seen = index.get(key)
+      if (!seen) {
+        index.set(key, item)
+        out.push(item)
+        continue
+      }
+      let row = seen
+      if (seen.source === 'builtin' && item.source === 'platform') {
+        row = Object.assign({}, seen, {
+          status: item.status,
+          note: item.note,
+          updatedAt: item.updatedAt,
+          updatedBy: item.updatedBy,
+          source: 'platform'
+        })
+      } else if (seen.source === 'platform' && item.source === 'platform' &&
+        Number(item.updatedAt) > Number(seen.updatedAt)) {
+        row = item
+      }
+      if (row !== seen) {
+        out[out.indexOf(seen)] = row
+        index.set(key, row)
+      }
+    }
+    return out
+  }
 
   /** 某商品 / 需求的咨询热度（去重人数，P0 已拦截不计入） */
   async function heatOf(field, id) {
@@ -1563,6 +1640,147 @@ function createAdminHandlers(deps) {
     }
     /* 没有任何线索的用户（纯客服留言）视为公共池 */
     return { visible: (uid) => mine.has(uid) || pool.has(uid) || !all.has(uid) }
+  }
+
+  /**
+   * 工单收尾（确认完成 / 终止共用）：写服务结束状态、关闭线索、给用户发「去评价」消息。
+   * 只推进阶段而不结束服务时，用户端会一直显示「服务中」、无法评价，
+   * 客服工作台的「已结束」也不会累计，工单等于没有真正闭合。
+   */
+  async function closeConsultLead(lead, opts) {
+    const o = opts || {}
+    return endLeadConsult(repo, lead, {
+      at: Number(o.at) || now(),
+      accountId: String(o.accountId || ''),
+      staffName: String(o.staffName || '')
+    })
+  }
+
+  /**
+   * 转移归属-查找接收人：按用户 ID / 用户编号 / 手机号 / 昵称定位，最多返回 10 个候选。
+   * 不把整张用户表下发到管理端，客服输入后即时缩小范围。商品 / 需求共用。
+   */
+  async function findTransferTargets(qRaw) {
+    const q = str(qRaw, { field: '接收人', required: true, max: 32 }).trim()
+    if (!q) throw new AppError(CODES.VALIDATION, '请输入用户 ID、编号、手机号或昵称')
+    const users = await repo.find('users', {}, { limit: 100000 })
+    let phone = ''
+    try { phone = normalizePhone(q) } catch (err) { phone = '' }
+    const bidx = phone ? blindIndex({ keys, value: phone }) : ''
+    const plain = q.toLowerCase()
+    const items = []
+    for (const u of users) {
+      if (!u || !u.id) continue
+      const userNo = userNoOf(u.id)
+      const hit = u.id === q || userNo === q || (bidx && u.phoneBidx === bidx) ||
+        String(u.nick || '').toLowerCase().indexOf(plain) >= 0
+      if (!hit) continue
+      items.push({
+        id: u.id,
+        userNo,
+        nick: maskSensitiveText(u.nick || ''),
+        status: u.status || '正常',
+        phoneSaved: !!u.phoneCipher
+      })
+      if (items.length >= 10) break
+    }
+    return { items }
+  }
+
+  /**
+   * 批量转移归属：一次最多 50 条，逐条返回成功 / 跳过原因。商品 / 需求共用。
+   * 商品带发布人手机号密文，按用户 ID 绑定 AAD，转主时必须同步换绑，否则新货主读不到联系方式；
+   * 需求没有联系方式密文，只改 ownerId。
+   */
+  async function transferOwnedRecords(opts) {
+    const { data, ctx, collection, idsField, label, pageHint, rebindPhone, auditAction } = opts
+    const session = ctx.session
+    const rawIds = Array.isArray(data[idsField])
+      ? data[idsField]
+      : (data[idsField.replace(/s$/, '')] ? [data[idsField.replace(/s$/, '')]] : [])
+    if (!rawIds.length) throw new AppError(CODES.VALIDATION, '请选择要转移的' + label)
+    if (rawIds.length > 50) throw new AppError(CODES.VALIDATION, '单次最多转移 50 个' + label)
+    const ids = []
+    rawIds.forEach((raw) => {
+      const id = str(raw, { field: label, max: 64 })
+      if (id && ids.indexOf(id) < 0) ids.push(id)
+    })
+    const targetId = str(data.targetId, { field: '接收人', required: true, max: 64 })
+    const reason = str(data.reason || '', { field: '转移说明', max: 100 })
+    const target = await repo.get('users', targetId)
+    if (!target) throw new AppError(CODES.NOT_FOUND, '接收人不存在，请重新查找')
+    if (target.status === '停用') throw new AppError(CODES.VALIDATION, '接收人账号已停用，不能接收' + label)
+    const targetNo = userNoOf(targetId)
+    const at = now()
+    const movedIds = []
+    const skipped = []
+    /* 原发布人 → 本次被移走的数量，用于给对方一条汇总提示 */
+    const fromOwners = new Map()
+    for (const id of ids) {
+      const record = await repo.get(collection, id)
+      if (!record || record.deleted) {
+        skipped.push({ id, reason: label + '不存在或已删除' })
+        continue
+      }
+      if (record.ownerId === targetId) {
+        skipped.push({ id, reason: '该' + label + '已在接收人名下' })
+        continue
+      }
+      const patch = { ownerId: targetId, updatedAt: at }
+      if (rebindPhone && record.ownerPhoneCipher) {
+        let phone = ''
+        try {
+          phone = decryptField({ keys, token: record.ownerPhoneCipher, aad: phoneAad(record.ownerId) })
+        } catch (err) { phone = '' }
+        /* 解不开（密钥轮换等）时清空，避免新货主看到一串无效密文 */
+        patch.ownerPhoneCipher = phone ? encryptField({ keys, value: phone, aad: phoneAad(targetId) }) : ''
+      }
+      /* CAS：以读到的 ownerId 为条件，避免并发下把刚被别人改过的记录覆盖 */
+      const res = await repo.updateWhere(collection, { id, ownerId: record.ownerId }, patch)
+      if (!res || !res.count) {
+        skipped.push({ id, reason: label + '归属已变化，请刷新后重试' })
+        continue
+      }
+      movedIds.push(id)
+      if (record.ownerId) fromOwners.set(record.ownerId, (fromOwners.get(record.ownerId) || 0) + 1)
+    }
+    if (movedIds.length) {
+      await appendAudit(repo, {
+        actorType: 'admin',
+        actorId: session ? session.accountId : '',
+        action: auditAction,
+        target: `${movedIds.slice(0, 10).join(',')}${movedIds.length > 10 ? ' 等 ' + movedIds.length + ' 个' : ''} -> ${targetNo}`,
+        reason,
+        ip: ctx.ip,
+        result: 'allow',
+        at
+      })
+      try {
+        await notifyUser(targetId, {
+          title: label + '已转入你的账号',
+          body: `平台已将 ${movedIds.length} 个${label}转移到你的账号下，可在「${pageHint}」中查看。`,
+          targetType: 'user',
+          targetId
+        })
+      } catch (err) { /* 通知失败不回滚已完成的转移 */ }
+    }
+    /* 原发布人只收到数量提示，不暴露接收人身份 */
+    for (const row of fromOwners) {
+      try {
+        await notifyUser(row[0], {
+          title: label + '归属已调整',
+          body: `你名下有 ${row[1]} 个${label}的归属已由平台调整到其他账号，如有疑问请联系客服。`,
+          targetType: 'user',
+          targetId: row[0]
+        })
+      } catch (err) { /* 单条通知失败不影响其他用户 */ }
+    }
+    return {
+      moved: movedIds.length,
+      movedIds,
+      skipped,
+      target: { id: targetId, userNo: targetNo, nick: maskSensitiveText(target.nick || '') }
+    }
   }
 
   return {
@@ -2262,59 +2480,111 @@ function createAdminHandlers(deps) {
       if (!res || res.count === 0) {
         throw new AppError(CODES.CONFLICT, '线索状态已被更新，请刷新后重试')
       }
-      if (isCs) {
+      /* 上架审核工单只是认领处理权，不向用户发送「客服已接入」与咨询内容回放 */
+      if (isCs && lead.ticketKind !== 'audit') {
         const threadId = lead.threadId || leadId
         /* 待领取期间内容只暂存在工单上；首次领取时一次性接入消息中心 */
         if (firstClaim) {
-          const body = String(lead.intakeBody || lead.formSummary || '').trim()
-          const mediaCount = Array.isArray(lead.intakeMedia) ? lead.intakeMedia.length : 0
-          const lines = []
-          if (body) lines.push(body)
-          if (mediaCount) lines.push(`（附带 ${mediaCount} 个图片 / 视频材料，可在工单详情查看）`)
-          if (lines.length) {
-            await repo.insert('outbox', {
-              id: 'M' + sha256Hex('cs-intake:' + leadId).slice(0, 22),
-              type: 'kf.chat',
-              payload: {
-                uid: lead.uid,
-                channel: 'kf',
-                from: 'user',
-                staffName: '',
-                threadId,
-                targetType: 'agency',
-                targetId: lead.targetId || lead.agencyId || '',
-                title: lead.agencyTitle || '',
-                body: lines.join('\n'),
-                csStatus: CS_STATUS.SERVING
-              },
-              status: 'read',
-              readByStaff: true,
-              readByUser: true,
-              createdAt: Number(lead.intakeAt) || at
-            })
+          const replay = Array.isArray(lead.intakeMessages) ? lead.intakeMessages : []
+          if (replay.length) {
+            /* 平台留言 / 重新发起的咨询：逐条回放，图片 / 视频 / 名片都原样进入会话 */
+            for (let i = 0; i < replay.length; i += 1) {
+              const item = replay[i] || {}
+              const itemAt = Number(item.at) || Number(lead.intakeAt) || at
+              try {
+                await repo.insert('outbox', {
+                  id: 'M' + sha256Hex(`cs-intake:${leadId}:${i}:${itemAt}`).slice(0, 22),
+                  type: 'kf.chat',
+                  payload: {
+                    uid: lead.uid,
+                    channel: 'kf',
+                    from: 'user',
+                    staffName: '',
+                    threadId,
+                    targetType: 'agency',
+                    targetId: lead.targetId || lead.agencyId || '',
+                    title: lead.agencyTitle || '',
+                    body: String(item.body || ''),
+                    kind: item.kind || 'text',
+                    image: item.image || '',
+                    video: item.video || '',
+                    poster: item.poster || '',
+                    card: item.card || null,
+                    csStatus: CS_STATUS.SERVING,
+                    /* 平台客服咨询：用户端归入「平台客服」会话，不按 threadId 另起 */
+                    platformChat: String(lead.source || '') === 'kf_leave'
+                  },
+                  status: 'read',
+                  readByStaff: true,
+                  readByUser: true,
+                  createdAt: itemAt
+                })
+              } catch (dupErr) {
+                /* 重新领取时旧留言已经接入过：跳过重复，不阻断领取 */
+                if (!dupErr || dupErr.code !== CODES.CONFLICT) throw dupErr
+              }
+            }
+          } else {
+            const body = String(lead.intakeBody || lead.formSummary || '').trim()
+            const mediaCount = Array.isArray(lead.intakeMedia) ? lead.intakeMedia.length : 0
+            const lines = []
+            if (body) lines.push(body)
+            if (mediaCount) lines.push(`（附带 ${mediaCount} 个图片 / 视频材料，可在工单详情查看）`)
+            if (lines.length) {
+              try {
+                await repo.insert('outbox', {
+                  id: 'M' + sha256Hex('cs-intake:' + leadId).slice(0, 22),
+                  type: 'kf.chat',
+                  payload: {
+                    uid: lead.uid,
+                    channel: 'kf',
+                    from: 'user',
+                    staffName: '',
+                    threadId,
+                    targetType: 'agency',
+                    targetId: lead.targetId || lead.agencyId || '',
+                    title: lead.agencyTitle || '',
+                    body: lines.join('\n'),
+                    csStatus: CS_STATUS.SERVING,
+                    platformChat: String(lead.source || '') === 'kf_leave'
+                  },
+                  status: 'read',
+                  readByStaff: true,
+                  readByUser: true,
+                  createdAt: Number(lead.intakeAt) || at
+                })
+              } catch (dupErr) {
+                if (!dupErr || dupErr.code !== CODES.CONFLICT) throw dupErr
+              }
+            }
           }
         }
         /* 接入提示写进同一会话流：用户端立刻看到「XX 正在接入」 */
-        await repo.insert('outbox', {
-          id: 'M' + sha256Hex('cs-claim:' + leadId).slice(0, 22),
-          type: 'kf.chat',
-          payload: {
-            uid: lead.uid,
-            channel: 'kf',
-            from: 'system',
-            staffName: staff.name,
-            threadId,
-            targetType: 'agency',
-            targetId: lead.targetId || lead.agencyId || '',
-            title: lead.agencyTitle || '',
-            body: ticketState === TICKET_STATE.TICKETED
-              ? `客服 ${staff.name} 已接入，工单已生成`
-              : `客服 ${staff.name} 正在接入，先与你确认委托条件`,
-            csStatus: CS_STATUS.SERVING
-          },
-          status: 'pending',
-          createdAt: at
-        })
+        try {
+          await repo.insert('outbox', {
+            id: 'M' + sha256Hex(`cs-claim:${leadId}:${at}`).slice(0, 22),
+            type: 'kf.chat',
+            payload: {
+              uid: lead.uid,
+              channel: 'kf',
+              from: 'system',
+              staffName: staff.name,
+              threadId,
+              targetType: 'agency',
+              targetId: lead.targetId || lead.agencyId || '',
+              title: lead.agencyTitle || '',
+              body: ticketState === TICKET_STATE.TICKETED
+                ? `客服 ${staff.name} 已接入，工单已生成`
+                : `客服 ${staff.name} 正在接入，先与你确认委托条件`,
+              csStatus: CS_STATUS.SERVING,
+              platformChat: String(lead.source || '') === 'kf_leave'
+            },
+            status: 'pending',
+            createdAt: at
+          })
+        } catch (dupErr) {
+          if (!dupErr || dupErr.code !== CODES.CONFLICT) throw dupErr
+        }
       }
       /* 同一委托统一由一个客服跟进：把同委托下还没人领取的工单一起接过来 */
       const adopted = isCs ? await adoptAgencySiblings(lead, staff, at) : 0
@@ -2414,7 +2684,8 @@ function createAdminHandlers(deps) {
           targetId: lead.targetId || lead.agencyId || '',
           title: lead.agencyTitle || '',
           body: '条件已确认，工单已生成，客服将按标准流程推进',
-          csStatus: CS_STATUS.SERVING
+          csStatus: CS_STATUS.SERVING,
+          platformChat: String(lead.source || '') === 'kf_leave'
         },
         status: 'pending',
         createdAt: at
@@ -2488,7 +2759,8 @@ function createAdminHandlers(deps) {
             targetId: lead.targetId || lead.agencyId || '',
             title: lead.agencyTitle || '',
             body: note ? `本次咨询已结束：${note}` : '本次咨询已结束，感谢你的咨询',
-            csStatus: CS_STATUS.ENDED
+            csStatus: CS_STATUS.ENDED,
+            platformChat: String(lead.source || '') === 'kf_leave'
           },
           status: 'pending',
           createdAt: at
@@ -2542,41 +2814,7 @@ function createAdminHandlers(deps) {
             : { abortedAt: at, abortReason: reason || '客服结束服务' }
         })
       }
-      const patch = {
-        csStatus: CS_STATUS.ENDED,
-        csEndedAt: at,
-        csEndedBy: accountId || 'admin',
-        csEndedByName: staff.name || '',
-        status: LEAD_STATUS.CLOSED,
-        updatedAt: at
-      }
-      /* 未生成工单就结束服务：按无效咨询收口，避免一直挂在「磋商中」却没有出口 */
-      if (ticketStateOf(lead) !== TICKET_STATE.TICKETED) {
-        patch.ticketState = TICKET_STATE.INVALID
-        patch.closedAt = at
-        patch.closeReason = '磋商未达成，客服结束服务'
-      }
-      const res = await repo.updateWhere('leads', { id: leadId }, patch)
-      if (!res || res.count === 0) throw new AppError(CODES.CONFLICT, '咨询单状态已更新，请刷新后重试')
-      await repo.insert('outbox', {
-        id: 'M' + sha256Hex('cs-end:' + leadId).slice(0, 22),
-        type: 'kf.chat',
-        payload: {
-          uid: lead.uid,
-          channel: 'kf',
-          from: 'system',
-          staffName: staff.name || '',
-          threadId: lead.threadId || leadId,
-          targetType: 'agency',
-          targetId: lead.targetId || lead.agencyId || '',
-          title: lead.agencyTitle || '',
-          body: '本次咨询服务已结束，请对客服服务进行评价',
-          csStatus: CS_STATUS.ENDED,
-          askRating: true
-        },
-        status: 'pending',
-        createdAt: at
-      })
+      await closeConsultLead(lead, { at, accountId, staffName: staff.name || '' })
       await appendAudit(repo, {
         actorType: 'admin',
         actorId: accountId || 'admin',
@@ -2622,6 +2860,8 @@ function createAdminHandlers(deps) {
       })
       const bucketOf = (lead) => {
         const stage = consultStageOf(lead)
+        /* 上架审核工单：未领取先进「待领取」，领取后归入「上架审核」分栏 */
+        if (lead.ticketKind === 'audit') return lead.assignedAccount ? 'audit' : 'unclaimed'
         /* 未领取优先归入「待领取」，避免按阶段散落到各分栏里找不到 */
         if (!lead.assignedAccount) return 'unclaimed'
 
@@ -2639,7 +2879,7 @@ function createAdminHandlers(deps) {
         if (admin) return true
         return !lead.assignedAccount || lead.assignedAccount === accountId
       })
-      const counts = { unclaimed: 0, communicating: 0, contract: 0, review: 0, deal_pending: 0, fee: 0, paid: 0, all: visible.length }
+      const counts = { unclaimed: 0, audit: 0, communicating: 0, contract: 0, review: 0, deal_pending: 0, fee: 0, paid: 0, all: visible.length }
       visible.forEach((lead) => {
         const key = bucketOf(lead)
         counts[key] = (counts[key] || 0) + 1
@@ -2657,6 +2897,8 @@ function createAdminHandlers(deps) {
       /* 同一委托的对接人数：工单卡片直接显示「N 人咨询 / M 人在对接」，客服一眼看出竞争情况 */
       const agencyStats = new Map()
       all.forEach((lead) => {
+        /* 审核工单不是咨询，不参与「N 人咨询」统计 */
+        if (lead.ticketKind === 'audit') return
         const key = String(lead.agencyId || lead.targetId || '')
         if (!key) return
         const stat = agencyStats.get(key) || { total: 0, active: 0 }
@@ -2686,8 +2928,9 @@ function createAdminHandlers(deps) {
           csStatus: view.csStatus,
           csName: view.csName,
           unclaimed,
-          stage: unclaimed ? '' : view.serviceStage,
-          stageLabel: unclaimed ? '待领取' : view.serviceStageLabel,
+          ticketKind: lead.ticketKind || '',
+          stage: unclaimed ? '' : (lead.ticketKind === 'audit' ? 'audit' : view.serviceStage),
+          stageLabel: unclaimed ? '待领取' : (lead.ticketKind === 'audit' ? '上架审核中' : view.serviceStageLabel),
           stageAt: timeOf(lead),
           agencyStatus: view.agencyStatus || '',
           feeStatus: view.feeStatus || '',
@@ -2723,6 +2966,31 @@ function createAdminHandlers(deps) {
       if (lead.targetType !== 'agency') throw new AppError(CODES.VALIDATION, '只有代采代售咨询有标准流程')
       consultOperator(lead, ctx)
       const detail = await consultDetailOf(lead)
+      /* 上架审核工单：只核对委托内容与资质，不做沟通 / 合同 / 收款流程 */
+      if (lead.ticketKind === 'audit') {
+        detail.stage = 'audit'
+        detail.stageLabel = '上架审核中'
+        detail.audit = {
+          submittedAt: Number(lead.createdAt) || 0,
+          result: lead.auditResult || '',
+          note: lead.auditNote || ''
+        }
+        detail.actions = {
+          canTerms: false,
+          canContract: false,
+          canProposeDeal: false,
+          canUploadProof: false,
+          canComplete: false,
+          canAbort: false
+        }
+        if (detail.lead) {
+          detail.lead.ticketKind = 'audit'
+          detail.lead.ticketStateLabel = '上架审核中'
+          detail.lead.serviceStage = 'audit'
+          detail.lead.serviceStageLabel = '上架审核中'
+        }
+        return detail
+      }
       /* 同一委托的对接情况：客服能直接看到还有几家在对接、各自停在什么阶段、谁已锁定 */
       const agencyId = String(lead.agencyId || lead.targetId || '')
       if (agencyId) {
@@ -3221,6 +3489,8 @@ function createAdminHandlers(deps) {
         note: '服务费已到账，咨询完成，委托同步归档',
         extra: { completedAt: at }
       })
+      /* 工单真正闭合：服务结束 + 线索关闭 + 用户端「去评价」 */
+      await closeConsultLead(updated, { at, accountId, staffName: by })
       return {
         leadId,
         stage: updated.serviceStage,
@@ -3248,6 +3518,8 @@ function createAdminHandlers(deps) {
         note: `终止服务：${reason}`,
         extra: { abortedAt: at, abortReason: reason }
       })
+      /* 终止也要真正收尾：否则用户端一直显示「服务中」，工单不会从客服工作台消失 */
+      await closeConsultLead(updated, { at, accountId, staffName: by })
       return {
         leadId,
         stage: updated.serviceStage,
@@ -3264,7 +3536,7 @@ function createAdminHandlers(deps) {
     },
 
     /**
-     * 客服业务总览：全局提成比例 + 每位客服的绑定用户、生效比例、业绩、提成与评分。
+     * 客服业务总览：全局委托佣金比例 + 每位客服的绑定用户、生效比例、委托业绩、佣金与评分。
      * 「我的客服档案」页与管理员配置页共用这一份数据。
      */
     'cs.settings': async (data, ctx) => {
@@ -3277,15 +3549,20 @@ function createAdminHandlers(deps) {
       const items = []
       for (const row of staff) {
         if (onlyMine && row.username !== me) continue
-        const [stats, rateInfo] = await Promise.all([
+        const [stats, agencyInfo] = await Promise.all([
           csEngine.statsOf(row.username),
-          csEngine.rateOf(row.username)
+          csEngine.agencyRateOf(row.username)
         ])
+        const binding = bindingMap.get(row.username) || null
+        const locked = csEngine.bindingRatesOf(binding)
         items.push(Object.assign({}, row, {
           csId: row.username,
-          binding: bindingMap.get(row.username) || null,
-          rate: rateInfo.rate,
-          rateSource: rateInfo.source,
+          binding,
+          agencyRate: agencyInfo.rate,
+          agencyRateSource: agencyInfo.source,
+          /* 已绑定：返回绑定时刻锁定的比例；未绑定：返回当前默认 */
+          lockedAgencyRate: locked.agencyRate === null ? agencyInfo.rate : locked.agencyRate,
+          rateLocked: locked.agencyRate !== null,
           stats
         }))
       }
@@ -3297,14 +3574,15 @@ function createAdminHandlers(deps) {
       }
     },
 
-    /** 全局默认比例：会员提成与代采代售佣金分开配置，只有管理员可以调整 */
+    /** 全局默认委托佣金比例（代采 / 代售）；客服不设会员提成，只有管理员可以调整 */
     'cs.saveSettings': async (data, ctx) => {
-      if (!isAdminSession(ctx.session)) throw new AppError(CODES.FORBIDDEN, '仅管理员可以调整提成比例')
+      if (!isAdminSession(ctx.session)) throw new AppError(CODES.FORBIDDEN, '仅管理员可以调整佣金比例')
       const payload = {}
-      if (data.rate !== undefined) payload.rate = data.rate
       if (data.agencyRate !== undefined) payload.agencyRate = data.agencyRate
+      if (data.idleMinutes !== undefined) payload.idleMinutes = data.idleMinutes
       const saved = await csEngine.saveSettings(payload, (ctx.session && ctx.session.accountId) || '')
-      const parts = [`会员提成 ${(saved.rate * 100).toFixed(1)}%`, `代采佣金 ${(saved.agencyRate * 100).toFixed(1)}%`]
+      const parts = [`委托佣金 ${(saved.agencyRate * 100).toFixed(1)}%`,
+        `超时自动结束 ${saved.idleMinutes} 分钟`]
       await appendAudit(repo, {
         actorType: 'admin',
         actorId: (ctx.session && ctx.session.accountId) || 'admin',
@@ -3318,25 +3596,7 @@ function createAdminHandlers(deps) {
       return saved
     },
 
-    /** 客服单独提成比例：传空值即恢复按全局默认 */
-    'cs.saveRate': async (data, ctx) => {
-      if (!isAdminSession(ctx.session)) throw new AppError(CODES.FORBIDDEN, '仅管理员可以调整提成比例')
-      const csId = str(data.csId, { field: '客服账号', required: true, max: 64 })
-      const saved = await csEngine.saveRate(csId, data.rate, (ctx.session && ctx.session.accountId) || '')
-      await appendAudit(repo, {
-        actorType: 'admin',
-        actorId: (ctx.session && ctx.session.accountId) || 'admin',
-        action: 'cs.saveRate',
-        target: `cs:${csId}`,
-        reason: `单独提成比例 → ${(saved.rate * 100).toFixed(1)}%（${saved.source}）`,
-        ip: ctx.ip,
-        result: 'allow',
-        at: now()
-      })
-      return saved
-    },
-
-    /** 客服单独佣金比例：与会员提成比例分开配置，传空值即恢复全局默认 */
+    /** 客服单独委托佣金比例：传空值即恢复按全局默认 */
     'cs.saveAgencyRate': async (data, ctx) => {
       if (!isAdminSession(ctx.session)) throw new AppError(CODES.FORBIDDEN, '仅管理员可以调整佣金比例')
       const csId = str(data.csId, { field: '客服账号', required: true, max: 64 })
@@ -3346,7 +3606,7 @@ function createAdminHandlers(deps) {
         actorId: (ctx.session && ctx.session.accountId) || 'admin',
         action: 'cs.saveAgencyRate',
         target: `cs:${csId}`,
-        reason: `代采代售佣金比例 → ${(saved.rate * 100).toFixed(1)}%（${saved.source}）`,
+        reason: `委托佣金比例 → ${(saved.rate * 100).toFixed(1)}%（${saved.source}）`,
         ip: ctx.ip,
         result: 'allow',
         at: now()
@@ -3355,7 +3615,33 @@ function createAdminHandlers(deps) {
     },
 
     /**
-     * 我的工资：分享开通提成 + 代采代售佣金，按自然月汇总。
+     * 每日工作量：客服只能看自己的，管理员可按 csId 查单个或全部。
+     * 按自然日返回新增咨询 / 领取 / 结束、委托成交、服务费、佣金与评价。
+     */
+    'cs.daily': async (data, ctx) => {
+      const session = ctx.session
+      const me = (session && session.accountId) || ''
+      const admin = isAdminSession(session)
+      if (!admin && !me) throw new AppError(CODES.UNAUTHORIZED, '请先登录')
+      const days = Math.min(30, Math.max(1, Number(data.days) || 7))
+      const staff = await listStaff()
+      let targets = staff
+      if (!admin) {
+        targets = staff.filter((row) => row.username === me)
+      } else if (data.csId) {
+        const csId = str(data.csId, { field: '客服账号', max: 64 })
+        targets = staff.filter((row) => row.username === csId)
+      }
+      const items = []
+      for (const row of targets) {
+        const daily = await csEngine.dailyOf(row.username, { days })
+        items.push(Object.assign({ csId: row.username, name: row.name || row.username }, daily))
+      }
+      return { days, items, total: items.length }
+    },
+
+    /**
+     * 我的工资：只含代采代售委托佣金，按自然月汇总。
      * 客服只能看自己的；管理员可按 csId 查任意客服（工资条核对）。
      */
     'cs.salary': async (data, ctx) => {
@@ -3417,14 +3703,14 @@ function createAdminHandlers(deps) {
       return out
     },
 
-    /** 提成流水：管理员可看全部，客服只能看自己的 */
+    /** 委托佣金流水：管理员可看全部，客服只能看自己的 */
     'cs.commissions': async (data, ctx) => {
       const csId = data.csId ? str(data.csId, { field: '客服账号', max: 64 }) : ''
       const me = (ctx.session && ctx.session.accountId) || ''
       const target = isAdminSession(ctx.session) ? csId : me
       if (!target) throw new AppError(CODES.VALIDATION, '请指定客服账号')
       const paging = normalizePaging(data)
-      const result = await csEngine.commissionsOf(target, paging)
+      const result = await csEngine.agencyCommissionsOf(target, paging)
       return Object.assign({ csId: target }, result)
     },
 
@@ -3657,6 +3943,38 @@ function createAdminHandlers(deps) {
       }
       return { id, from: PRODUCT_STATUS.OFFLINE, to: PRODUCT_STATUS.ON_SALE }
     },
+
+    /* 转移归属-查找接收人：商品 / 需求共用 */
+    'product.transferTargets': async (data) => findTransferTargets(data.q),
+
+    /**
+     * 批量转移商品归属：一次最多 50 个，逐条返回成功 / 跳过原因。
+     * 发布人手机号密文按用户 ID 绑定 AAD，转主时必须同步换绑，否则新货主读不到联系方式。
+     */
+    'product.transfer': async (data, ctx) => transferOwnedRecords({
+      data,
+      ctx,
+      collection: 'products',
+      idsField: 'productIds',
+      label: '商品',
+      pageHint: '我的发布',
+      rebindPhone: true,
+      auditAction: 'product.transfer'
+    }),
+
+    /* 需求转移归属：和商品一致，可多选批量转给其他用户 */
+    'demand.transferTargets': async (data) => findTransferTargets(data.q),
+
+    'demand.transfer': async (data, ctx) => transferOwnedRecords({
+      data,
+      ctx,
+      collection: 'demands',
+      idsField: 'demandIds',
+      label: '需求',
+      pageHint: '我的发布',
+      rebindPhone: false,
+      auditAction: 'demand.transfer'
+    }),
 
     /**
      * 求购需求审核：待审核 →（通过）求购中 /（驳回）已驳回。
@@ -3933,6 +4251,9 @@ function createAdminHandlers(deps) {
       const userMap = await staffUserMap(rows.map((d) => d.ownerId), { withActivity: true })
       for (const d of rows) {
         const view = projectDemand(d)
+        /* 商机池标识：管理端筛选与「商机」标签用 */
+        view.bizPool = d.bizPool === true
+        view.channel = d.channel || ''
         view.media = mediaMeta(d.media)
         view.heat = await heatOf('demandId', d.id)
         view.ownerId = d.ownerId || ''
@@ -3967,6 +4288,9 @@ function createAdminHandlers(deps) {
       const doc = await repo.get('demands', id)
       if (!doc || doc.deleted) throw new AppError(CODES.NOT_FOUND, '需求不存在或已删除')
       const view = projectDemand(doc)
+      /* 商机池标识：管理端筛选与「商机」标签用 */
+      view.bizPool = doc.bizPool === true
+      view.channel = doc.channel || ''
       view.media = mediaMeta(doc.media)
       view.heat = await heatOf('demandId', doc.id)
       view.ownerId = doc.ownerId || ''
@@ -4013,12 +4337,115 @@ function createAdminHandlers(deps) {
     },
 
     /**
+     * 宏观经营概览：实时在线 / 在线比例 / 平均停留 / 整体营收与构成。
+     * 与 stats.trend 的分工：trend 看日序列增长，macro 看「此刻 + 累计」的全局盘面。
+     */
+    'stats.macro': async () => {
+      const at = now()
+      const todayStart = at - ((at + CN_OFFSET) % DAY_MS)
+      const last30Start = at - 30 * DAY_MS
+      const todayKey = dayKeyOf(at)
+      const monthKey = todayKey.slice(0, 7)
+      /* 与 insights.js 的 ONLINE_TTL_MS 保持一致：5 分钟内有心跳算在线 */
+      const ONLINE_TTL_MS = 5 * 60 * 1000
+      const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100
+
+      const [onlineRows, users, accesses, orders, payments, stayRows] = await Promise.all([
+        repo.find('onlineUsers', {}, { limit: 5000 }),
+        repo.find('users', {}, { limit: 100000 }),
+        repo.find('bizAccess', {}, { limit: 20000 }),
+        repo.find('bizOrders', {}, { limit: 100000 }),
+        repo.find('payments', {}, { limit: 20000 }),
+        repo.find('stayStats', {}, { limit: 400 })
+      ])
+
+      /* ---------- 实时在线：心跳未过期的算在线，当前会话时长一并累计 ---------- */
+      let online = 0
+      let liveMs = 0
+      for (const row of onlineRows) {
+        const last = Number(row.lastSeenAt) || 0
+        if (at - last > ONLINE_TTL_MS) continue
+        online += 1
+        const start = Number(row.sessionStartAt) || Number(row.createdAt) || last
+        liveMs += Math.max(0, Math.min(last, at) - start)
+      }
+      const liveUsers = users.filter((row) => !row.deleted)
+      const usersTotal = liveUsers.length
+      const usersToday = liveUsers.filter((row) => Number(row.createdAt) >= todayStart).length
+      const users30 = liveUsers.filter((row) => Number(row.createdAt) >= last30Start).length
+
+      /* ---------- 平均停留：已完成会话 + 当前在线会话，按会话数取均值 ---------- */
+      const stayRow = stayRows.find((row) => row.day === todayKey) || {}
+      const sessions = (Number(stayRow.sessions) || 0) + online
+      const stayMs = (Number(stayRow.totalMs) || 0) + liveMs
+      const avgMs = sessions ? Math.round(stayMs / sessions) : 0
+
+      /* ---------- 营收：会员续费（微信支付 + 手动/线下登记收款）+ 委托服务费（财务已确认） ---------- */
+      const memberOrders = orders.filter((row) => Number(row.amount) > 0)
+      const feePayments = payments.filter((row) => row.status === '已确认' && /服务费/.test(String(row.bizType || '')))
+      const revRows = []
+      memberOrders.forEach((row) => revRows.push({
+        at: Number(row.createdAt) || 0,
+        amount: Number(row.amount) || 0,
+        kind: 'member'
+      }))
+      feePayments.forEach((row) => revRows.push({
+        at: Number(row.confirmedAt) || Number(row.paidAt) || Number(row.createdAt) || 0,
+        amount: Number(row.received) || Number(row.amount) || 0,
+        kind: 'fee'
+      }))
+      const sumOf = (list, from) => list.filter((row) => row.at >= from).reduce((sum, row) => sum + row.amount, 0)
+      const memberRevenue = revRows.filter((row) => row.kind === 'member').reduce((sum, row) => sum + row.amount, 0)
+      const feeRevenue = revRows.filter((row) => row.kind === 'fee').reduce((sum, row) => sum + row.amount, 0)
+      const totalRevenue = memberRevenue + feeRevenue
+      const monthRevenue = revRows
+        .filter((row) => row.at && dayKeyOf(row.at).slice(0, 7) === monthKey)
+        .reduce((sum, row) => sum + row.amount, 0)
+      const payers = new Set(memberOrders.map((row) => row.uid).filter(Boolean)).size
+      const activeMembers = accesses.filter((row) => Number(row.expireAt) > at).length
+
+      return {
+        at,
+        online: {
+          count: online,
+          tracked: onlineRows.length,
+          ttlMs: ONLINE_TTL_MS,
+          usersTotal,
+          /* 在线比例 = 实时在线 / 注册用户，百分比保留一位小数；异常数据不超 100% */
+          rate: usersTotal ? Math.min(100, Math.round((online / usersTotal) * 1000) / 10) : 0
+        },
+        stay: { avgMs, sessions, todayMs: stayMs },
+        revenue: {
+          total: round2(totalRevenue),
+          today: round2(sumOf(revRows, todayStart)),
+          month: round2(monthRevenue),
+          last30: round2(sumOf(revRows, last30Start)),
+          member: round2(memberRevenue),
+          memberOrders: memberOrders.length,
+          fee: round2(feeRevenue),
+          feeCount: feePayments.length,
+          orders: revRows.length,
+          avgOrder: revRows.length ? round2(totalRevenue / revRows.length) : 0,
+          payers,
+          activeMembers
+        },
+        growth: { usersToday, users30 }
+      }
+    },
+
+    /**
      * 举报 / 投诉 / 意见反馈：用户端 report.create 写入的队列。
      * 支持按状态 / 类型 / 关键词筛选，关键词同时匹配内容、对象名与联系方式。
      */
     'report.list': async (data) => {
       const paging = normalizePaging(data)
       const status = data.status ? enumOf(data.status, REPORT_STATUS_LIST, '状态') : ''
+      /* 反馈列表分类：处理中（待处理 + 处理中）/ 处理完毕（已处理 + 已驳回） */
+      const group = String(data.group || '').trim()
+      if (group && group !== 'open' && group !== 'done') {
+        throw new AppError(CODES.VALIDATION, 'group 仅支持 open / done')
+      }
+      const groupStatus = { open: ['待处理', '处理中'], done: ['已处理', '已驳回'] }
       const type = data.type ? enumOf(data.type, REPORT_TYPES, '类型') : ''
       const targetType = data.targetType ? enumOf(data.targetType, REPORT_TARGETS, '对象类型') : ''
       const q = String(data.q || '').trim().toLowerCase()
@@ -4031,7 +4458,8 @@ function createAdminHandlers(deps) {
       })
       const filtered = all
         .filter((row) => (!status || (row.status || '待处理') === status) && (!type || row.type === type) &&
-          (!targetType || (row.targetType || 'other') === targetType))
+          (!targetType || (row.targetType || 'other') === targetType) &&
+          (!group || groupStatus[group].indexOf(row.status || '待处理') >= 0))
         .filter((row) => {
           if (!q) return true
           return [row.content, row.targetTitle, row.contact, row.uid, row.type]
@@ -4040,9 +4468,106 @@ function createAdminHandlers(deps) {
         .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
       const items = []
       /* 举报对象要能落到具体账号：处置时可直接打开「调整账号」并限制发布 / 对话；
-         同时把被举报对象的当前状态、标题等一并带回，前端打开举报详情即可看到商品当前形态 */
+         同时把被举报内容（商品 / 需求 / 资讯 / 账号）的正文、图片与发布人一并带回，
+         客服点「受理」就能在弹窗里看到用户投诉的原始内容，不必再跳页打开 */
       const targetCache = new Map() /* key = type:id，value = { uid, doc, preview } */
+      const userCache = new Map() /* uid → 用户摘要，同一页内复用 */
       const targetCollection = { product: 'products', demand: 'demands', news: 'news' }
+      /* 用户摘要：昵称 / 用户ID / 账号状态 / 手机号（只给掩码，与用户详情同口径） */
+      const userBrief = async (id) => {
+        const key = String(id || '')
+        if (!key) return null
+        if (userCache.has(key)) return userCache.get(key)
+        const u = await repo.get('users', key)
+        if (!u) {
+          const empty = { uid: key, nick: '', userNo: '', status: '已注销', phoneMasked: '' }
+          userCache.set(key, empty)
+          return empty
+        }
+        let phoneMasked = u.phoneMasked || ''
+        if (u.phoneCipher) {
+          try {
+            phoneMasked = maskPhone(decryptField({ keys, token: u.phoneCipher, aad: phoneAad(key) })) || phoneMasked
+          } catch (err) { /* 密文异常时退回已留存掩码 */ }
+        }
+        const brief = {
+          uid: key,
+          nick: u.nickname || u.nick || '',
+          /* 用户编号按 uid 现算：users 表不落库该字段，展示口径与用户端「我的」一致 */
+          userNo: u.userNo || userNoOf(key),
+          status: u.status || '正常',
+          phoneMasked
+        }
+        userCache.set(key, brief)
+        return brief
+      }
+      /* 被举报内容详情：按类型摊平关键字段，商品 / 需求带上图片与描述 */
+      const targetDetailOf = (type, doc) => {
+        if (!doc) return null
+        const base = {
+          status: doc.status || '',
+          title: doc.title || doc.model || '',
+          createdAt: Number(doc.createdAt) || 0,
+          city: doc.city || '',
+          offlineAt: Number(doc.offlineAt) || 0,
+          offlineReason: doc.offlineReason || '',
+          reviewReason: doc.reviewReason || '',
+          media: mediaMeta(doc.media)
+        }
+        if (type === 'product' || type === 'demand') {
+          const goods = Object.assign(base, {
+            model: doc.model || '',
+            brand: doc.brand || '',
+            cat: doc.cat || '',
+            tradeMode: doc.tradeMode || '',
+            qty: Number(doc.qty) || 0,
+            cond: doc.cond || '',
+            note: doc.note || '',
+            requirements: doc.requirements || ''
+          })
+          if (type === 'product') {
+            goods.price = Number(doc.price) || 0
+            goods.priceMax = Number(doc.priceMax) || 0
+            goods.priceMode = doc.priceMode || ''
+            goods.priceUnit = doc.priceUnit || ''
+            goods.accept = doc.accept || ''
+          } else {
+            goods.budget = Number(doc.budget) || 0
+            goods.budgetMax = Number(doc.budgetMax) || 0
+            goods.budgetMode = doc.budgetMode || ''
+            goods.budgetUnit = doc.budgetUnit || ''
+          }
+          return goods
+        }
+        /* 资讯：正文可能很长，弹窗里只截取前 1200 字，足够判断是否违规 */
+        return Object.assign(base, {
+          summary: String(doc.summary || doc.digest || '').slice(0, 300),
+          content: String(doc.content || doc.body || '').slice(0, 1200)
+        })
+      }
+      /* 会话类举报：targetId 可能是会话线程号，也可能是咨询工单号，
+         按 leads.id / leads.threadId 反查，能落到代采代售工单就让客服一键打开 */
+      const leadOfTarget = async (targetId) => {
+        if (!targetId) return null
+        let lead = await repo.get('leads', targetId)
+        if (!lead) {
+          const rows = await repo.find('leads', { threadId: targetId }, { limit: 1 })
+          lead = rows[0] || null
+        }
+        /* 只有走标准流程的代采代售咨询才能落到工单中心 */
+        return lead && lead.targetType === 'agency' ? lead : null
+      }
+      const leadPreviewOf = (lead) => {
+        if (!lead) return null
+        const unclaimed = !lead.assignedAccount
+        return {
+          status: unclaimed ? '待领取' : (lead.ticketKind === 'audit' ? '上架审核中' : consultStageLabel(consultStageOf(lead))),
+          title: lead.agencyTitle || lead.targetTitle || lead.formSummary || '',
+          createdAt: Number(lead.createdAt) || 0,
+          leadId: lead.id,
+          csName: lead.assignedTo || lead.csName || ''
+        }
+      }
       for (const row of filtered.slice(paging.skip, paging.skip + paging.limit)) {
         let targetUid = ''
         let targetPreview = null
@@ -4050,31 +4575,44 @@ function createAdminHandlers(deps) {
         const targetId = row.targetId || ''
         if (targetType === 'owner') {
           targetUid = targetId
-          const owner = await repo.get('users', targetId)
-          if (owner) {
-            targetPreview = { status: owner.status || '正常', title: owner.nickname || owner.username || targetId }
+          const brief = await userBrief(targetId)
+          if (brief) {
+            targetPreview = {
+              status: brief.status,
+              title: brief.nick || brief.userNo || targetId,
+              nick: brief.nick,
+              userNo: brief.userNo,
+              phoneMasked: brief.phoneMasked,
+              owner: brief
+            }
           }
         } else if (targetId && targetCollection[targetType]) {
           const cacheKey = targetType + ':' + targetId
           if (!targetCache.has(cacheKey)) {
             const doc = await repo.get(targetCollection[targetType], targetId)
-            let preview = null
-            if (doc) {
-              preview = {
-                status: doc.status || '',
-                title: doc.title || doc.model || row.targetTitle || '',
-                model: doc.model || '',
-                price: Number(doc.price) || 0,
-                offlineAt: Number(doc.offlineAt) || 0,
-                offlineReason: doc.offlineReason || ''
-              }
-            }
-            targetCache.set(cacheKey, { uid: (doc && doc.uid) || (doc && doc.ownerId) || '', doc, preview })
+            const preview = targetDetailOf(targetType, doc)
+            const ownerUid = (doc && (doc.uid || doc.ownerId)) || ''
+            if (preview) preview.owner = await userBrief(ownerUid)
+            targetCache.set(cacheKey, { uid: ownerUid, doc, preview })
           }
           const cached = targetCache.get(cacheKey)
           targetUid = cached.uid
           targetPreview = cached.preview
+          if (targetPreview && !targetPreview.title) targetPreview.title = row.targetTitle || ''
+        } else if (targetId && (targetType === 'chat' || targetType === 'other')) {
+          const cacheKey = 'lead:' + targetId
+          if (!targetCache.has(cacheKey)) {
+            const lead = await leadOfTarget(targetId)
+            const preview = leadPreviewOf(lead)
+            if (preview) preview.owner = await userBrief(lead.uid || lead.ownerId || '')
+            targetCache.set(cacheKey, { uid: (lead && (lead.uid || lead.ownerId)) || '', doc: lead, preview })
+          }
+          const cached = targetCache.get(cacheKey)
+          targetUid = cached.uid
+          targetPreview = cached.preview
+          if (targetPreview && !targetPreview.title) targetPreview.title = row.targetTitle || ''
         }
+        const reporter = await userBrief(row.uid)
         items.push({
           id: row.id,
           type: row.type || '意见反馈',
@@ -4088,9 +4626,17 @@ function createAdminHandlers(deps) {
           status: row.status || '待处理',
           handlerNote: row.handlerNote || '',
           handledBy: row.handledBy || '',
+          /* 转单后的处理人：列表上直接展示，避免同一举报被重复接手 */
+          assignee: row.assignee || '',
+          assigneeAccount: row.assigneeAccount || '',
+          assignedAt: Number(row.assignedAt) || 0,
           createdAt: Number(row.createdAt) || 0,
           handledAt: Number(row.handledAt) || 0,
-          targetPreview
+          targetPreview,
+          /* 会话类举报解析出的咨询工单号：列表点 ID 可直接定位到工单中心 */
+          targetLeadId: (targetPreview && targetPreview.leadId) || '',
+          /* 举报人摘要：受理时可确认是谁提交的，必要时直接打开用户资料 */
+          reporter
         })
       }
       return {
@@ -4099,10 +4645,82 @@ function createAdminHandlers(deps) {
         page: paging.page,
         limit: paging.limit,
         counts,
+        /* 分类页签数量：处理中 / 处理完毕，口径与上方 group 过滤一致 */
+        groupCounts: {
+          open: counts['待处理'] + counts['处理中'],
+          done: counts['已处理'] + counts['已驳回']
+        },
         types: REPORT_TYPES,
         targetTypes: REPORT_TARGETS,
         statusList: REPORT_STATUS_LIST
       }
+    },
+
+    /**
+     * 举报 / 反馈转单：把待办交给别的客服或管理员，转单说明写入审计。
+     * 只调整处理人，不改处置结论；已处理完毕的反馈不再允许转单。
+     */
+    'report.assign': async (data, ctx) => {
+      const session = ctx.session
+      const id = str(data.id, { field: '反馈标识', required: true, max: 64 })
+      const staff = await resolveStaff(data.assignee)
+      const reason = str(data.reason || '', { field: '转单说明', max: 200 })
+      const doc = await repo.get('reports', id)
+      if (!doc) throw new AppError(CODES.NOT_FOUND, '该反馈不存在或已删除')
+      if (['已处理', '已驳回'].indexOf(doc.status || '待处理') >= 0) {
+        throw new AppError(CODES.CONFLICT, '该反馈已处理完毕，不能再转单')
+      }
+      const at = now()
+      const updated = await repo.updateWhere('reports', { id }, {
+        assignee: staff.name,
+        assigneeAccount: staff.username,
+        assignedAt: at,
+        updatedAt: at
+      })
+      if (!updated || !updated.count) throw new AppError(CODES.CONFLICT, '该反馈已被处理，请刷新后重试')
+      await appendAudit(repo, {
+        actorType: 'admin',
+        actorId: session ? session.accountId : '',
+        action: 'report.assign',
+        target: `${id}:${staff.name}`,
+        reason,
+        ip: ctx.ip,
+        result: 'allow',
+        at
+      })
+      return { id, assignee: staff.name, assigneeAccount: staff.username, assignedAt: at }
+    },
+
+    /** 风险单转单：交给别的客服 / 管理员继续处置，已处置完毕的风险单不可再转 */
+    'risk.assign': async (data, ctx) => {
+      const session = ctx.session
+      const id = str(data.id, { field: '风险单', required: true, max: 64 })
+      const staff = await resolveStaff(data.assignee)
+      const reason = str(data.reason || '', { field: '转单说明', max: 200 })
+      const doc = await repo.get('riskCases', id)
+      if (!doc) throw new AppError(CODES.NOT_FOUND, '风险单不存在')
+      if (['已处理', '已忽略'].indexOf(doc.status) >= 0) {
+        throw new AppError(CODES.CONFLICT, '该风险单已处置完毕，不能再转单')
+      }
+      const at = now()
+      const updated = await repo.updateWhere('riskCases', { id }, {
+        owner: staff.name,
+        ownerAccount: staff.username,
+        assignedAt: at,
+        updatedAt: at
+      })
+      if (!updated || !updated.count) throw new AppError(CODES.CONFLICT, '风险单状态已变更，请刷新后重试')
+      await appendAudit(repo, {
+        actorType: 'admin',
+        actorId: session ? session.accountId : '',
+        action: 'risk.assign',
+        target: `${id}:${staff.name}`,
+        reason,
+        ip: ctx.ip,
+        result: 'allow',
+        at
+      })
+      return { id, owner: staff.name, ownerAccount: staff.username, assignedAt: at }
     },
 
     /**
@@ -4116,7 +4734,7 @@ function createAdminHandlers(deps) {
       const note = str(data.note || '', { field: '处理说明', max: 300 })
       /* targetAction 可选：''/none（不动商品）、offline（下架）、pending（退回草稿/驳回）；向后兼容 */
       const targetAction = String(data.targetAction || '').trim()
-      const validActions = ['', 'none', 'offline', 'pending', 'reject', 'remove']
+      const validActions = ['', 'none', 'offline', 'pending', 'reject', 'remove', 'restrict']
       if (!validActions.includes(targetAction)) {
         throw new AppError(CODES.VALIDATION, 'targetAction 不合法：' + targetAction)
       }
@@ -4130,19 +4748,42 @@ function createAdminHandlers(deps) {
       const doc = await repo.get('reports', id)
       if (!doc) throw new AppError(CODES.NOT_FOUND, '该反馈不存在或已删除')
       const at = now()
-      /* ---- 可选：联动处置被举报对象（下架 / 退回草稿） ---- */
-      let targetResult = null
-      let targetUid = ''
+      /* ---- 先定位被举报对象与归属账号：无论是否联动处置，通知都要发对人 ---- */
       const targetType = doc.targetType || 'other'
       const targetId = doc.targetId || ''
       const targetCollection = { product: 'products', demand: 'demands', news: 'news' }
-      if (normalizedAction && targetId && targetCollection[targetType]) {
+      const contentDoc = targetId && targetCollection[targetType]
+        ? await repo.get(targetCollection[targetType], targetId)
+        : null
+      let targetUid = (contentDoc && (contentDoc.uid || contentDoc.ownerId)) ||
+        (targetType === 'owner' ? targetId : '')
+      let targetResult = null
+
+      /* ---- 账号类处置：限制发布 / 资讯 / 对话，与内容下架互不替代 ---- */
+      if (normalizedAction === 'restrict') {
+        if (!targetUid) throw new AppError(CODES.VALIDATION, '该反馈未关联到被举报账号，无法限制账号')
+        if (!(await staffCan(session, 'user.admin'))) {
+          throw new AppError(CODES.FORBIDDEN, '限制账号需要账号管理权限，请联系管理员')
+        }
+        const user = await repo.get('users', targetUid)
+        if (!user) throw new AppError(CODES.NOT_FOUND, '被举报账号不存在，无法限制')
+        const days = Math.min(Math.max(Number(data.restrictDays) || 7, 1), 90)
+        targetUid = user.id
+        const limit = applyRestrictions(user, {
+          publish: days,
+          news: days,
+          chat: days,
+          reason: note
+        }, at, session ? session.accountId : '')
+        await repo.updateWhere('users', { id: user.id }, { restrictions: limit.restrictions, updatedAt: at })
+        targetResult = { from: '正常', to: '限制 ' + days + ' 天', restriction: stateOf({ restrictions: limit.restrictions }, at) }
+      } else if (normalizedAction && targetId && targetCollection[targetType]) {
         /* 联动下架 / 退回属于内容处置：客服只有举报受理权，不能借举报单绕过内容下架权限 */
         const needAction = { product: 'product.offline', demand: 'demand.offline', news: 'news.offline' }[targetType]
         if (needAction && !(await staffCan(session, needAction))) {
           throw new AppError(CODES.FORBIDDEN, '处置被举报内容需要内容下架权限，请联系管理员')
         }
-        const tDoc = await repo.get(targetCollection[targetType], targetId)
+        const tDoc = contentDoc
         if (!tDoc) throw new AppError(CODES.NOT_FOUND, '被举报对象已不存在，无法执行处置')
         targetUid = tDoc.uid || tDoc.ownerId || ''
         let newStatus = ''
@@ -4168,9 +4809,6 @@ function createAdminHandlers(deps) {
             targetResult = { from: tDoc.status, to: tDoc.status, skipped: true, reason: '对象已是终态' }
           }
         }
-      } else if (targetType === 'owner' && normalizedAction === 'offline') {
-        /* 举报对象是用户：暂时仅记录，不直接封禁，避免误伤（封禁需独立审核） */
-        targetUid = targetId
       }
 
       /* ---- 写举报处置记录 ---- */
@@ -4199,40 +4837,56 @@ function createAdminHandlers(deps) {
         at
       })
 
-      /* ---- 通知被举报人（如果有对象+对象被处置） ---- */
+      /* ---- 通知被举报人：只要定位到账号就通知（下架 / 限制账号 / 驳回结论都要让人知道） ---- */
       let targetNotified = false
-      if (targetUid && status === '已处理') {
+      if (targetUid && status !== '处理中' && targetUid !== doc.uid) {
         try {
-          const actionDesc = normalizedAction === 'offline'
-            ? (targetType === 'product' || targetType === 'demand' ? '已下架' : '已下架')
-            : normalizedAction === 'pending' || normalizedAction === 'reject' ? '已退回' : '已核实'
           const typeLabel = { product: '商品', demand: '求购需求', news: '资讯', owner: '账号' }[targetType] || '内容'
+          const actionDesc = normalizedAction === 'restrict'
+            ? '已限制发布、资讯与对话功能' + (targetResult && targetResult.to ? '（' + targetResult.to + '）' : '')
+            : normalizedAction === 'offline' ? '已下架'
+              : normalizedAction === 'pending' || normalizedAction === 'reject' ? '已退回' : ''
+          const subject = doc.targetTitle || targetId || ''
+          let title = ''
+          let body = ''
+          if (status === '已驳回') {
+            title = '关于你的' + typeLabel + '被举报：未发现违规'
+            body = '用户举报你发布的' + typeLabel + '「' + subject + '」，经平台核实未发现违规，本次不作处置。处理说明：' + (note || '举报不成立') + '。'
+          } else if (normalizedAction === 'restrict') {
+            title = '你的账号功能已被限制'
+            body = '你的账号因被举报核实违规，' + actionDesc + '。处理说明：' + (note || '违反平台规则') + '。' +
+              ' 到期自动恢复，如需申诉请联系客服。'
+          } else if (actionDesc) {
+            title = '你的' + typeLabel + actionDesc
+            body = '你的' + typeLabel + '「' + subject + '」因被举报，经平台核实' + actionDesc + '。处理说明：' + (note || '违规内容') + '。 如需申诉请联系客服。'
+          } else {
+            title = '你的' + typeLabel + '被举报，平台已核实'
+            body = '你发布的' + typeLabel + '「' + subject + '」被用户举报，经平台核实结论：' + (note || '已完成核实') + '。 如需申诉请联系客服。'
+          }
           await notifyUser(targetUid, {
-            title: normalizedAction
-              ? `你的${typeLabel}${actionDesc}`
-              : '你的内容被举报，平台已核实',
-            body: (normalizedAction
-              ? `你的${typeLabel}「${doc.targetTitle || targetId}」因被举报，经平台核实${actionDesc}。处理说明：${note || doc.content || '违规内容'}`
-              : `你发布的${typeLabel}「${doc.targetTitle || targetId}」被用户举报，经核实平台结论：${note || doc.content || '不成立'}。`) +
-              ' 如需申诉请联系客服。',
+            title,
+            body,
             reason: note,
-            targetType,
-            targetId
+            targetType: targetType === 'owner' ? 'account' : targetType,
+            targetId: targetId || targetUid
           })
           targetNotified = true
         } catch (e) { /* 通知失败不影响主流程 */ }
       }
 
       /* ---- 通知举报人 ---- */
+      let reporterNotified = false
       if (doc.uid) {
         try {
           const actionTip = targetResult && !targetResult.skipped
-            ? `；平台已对被举报内容执行「${targetResult.to === (PRODUCT_STATUS.OFFLINE || DEMAND_STATUS.OFFLINE) ? '下架' : '退回'}」处置`
+            ? normalizedAction === 'restrict'
+              ? '；平台已对被举报账号执行「' + (targetResult.to || '限制功能') + '」处置'
+              : '；平台已对被举报内容执行「下架 / 退回」处置'
             : ''
           await notifyUser(doc.uid, {
             title: status === '处理中' ? '你的反馈已受理'
               : status === '已处理' ? '你的反馈已核实处理'
-              : '你的反馈处理结果',
+                : '你的反馈处理结果',
             body: status === '处理中'
               ? '平台客服已受理你的反馈，正在核实处理，有结论会再次通知你。'
               : `${note || '平台已完成核实'}${doc.targetTitle ? '（对象：' + doc.targetTitle + '）' : ''}${actionTip}。感谢你的反馈，我们会持续优化。`,
@@ -4240,12 +4894,18 @@ function createAdminHandlers(deps) {
             targetType: 'report',
             targetId: id
           })
+          reporterNotified = true
         } catch (notifyErr) { /* 通知失败不影响处置结果 */ }
       }
 
       return {
-        id, status, handledAt: status === '处理中' ? 0 : at,
-        targetAction: normalizedAction, targetResult, targetNotified
+        id,
+        status,
+        handledAt: status === '处理中' ? 0 : at,
+        targetAction: normalizedAction,
+        targetResult,
+        targetNotified,
+        notified: { reporter: reporterNotified, target: targetNotified, targetUid }
       }
     },
 
@@ -4582,20 +5242,22 @@ function createAdminHandlers(deps) {
       }
       /* 平台新增、且不在内置目录里的型号追加在末尾 */
       for (const row of overrides.values()) merged.push(projectCatalog(row))
+      /* 同物异写合并成一条，避免管理端出现「多了或少了一个空格」的两条型号 */
+      const items = dedupeCatalogItems(merged)
       const counts = {
-        active: merged.filter((item) => item.status === 'active').length,
-        disabled: merged.filter((item) => item.status === 'disabled').length,
-        removed: merged.filter((item) => item.status === 'removed').length
+        active: items.filter((item) => item.status === 'active').length,
+        disabled: items.filter((item) => item.status === 'disabled').length,
+        removed: items.filter((item) => item.status === 'removed').length
       }
-      let items = status ? merged.filter((item) => item.status === status) : merged
+      let filtered = status ? items.filter((item) => item.status === status) : items
       if (q) {
-        items = items.filter((item) => [item.cat, item.brand, item.series, item.model, item.note]
+        filtered = filtered.filter((item) => [item.cat, item.brand, item.series, item.model, item.note]
           .join(' ').toLowerCase().includes(q))
       }
-      return { items, total: items.length, counts }
+      return { items: filtered, total: filtered.length, counts }
     },
 
-    /** 新增 / 修改型号：同一「品类 + 品牌 + 系列 + 型号」只保留一条记录 */
+    /** 新增 / 修改型号：同一品类 / 品牌下型号归一后相同即视为同一条记录 */
     'catalog.save': async (data, ctx) => {
       const session = ctx.session
       const cat = str(data.cat, { field: '品类', required: true, max: 40 })
@@ -4604,32 +5266,55 @@ function createAdminHandlers(deps) {
       const model = str(data.model, { field: '型号', required: true, max: 80 })
       const note = str(data.note || '', { field: '备注', max: 120 })
       const status = data.status ? enumOf(data.status, CATALOG_STATUSES, '状态') : 'active'
-      const key = catalogKeyOf({ cat, brand, series, model })
-      const id = catalogIdOf({ cat, brand, series, model })
+      /* 去重：忽略空格 / 分隔符后相同的型号沿用已有记录的规范写法，
+         避免「2288H V7」与「2288HV7」这类同物异写再次入库 */
+      const identity = catalogModelKeyOf({ cat, brand, model })
+      const rows = await repo.find('catalog', {}, {
+        sort: { field: 'updatedAt', dir: 'desc' },
+        limit: 5000
+      })
+      const platformHit = rows.find((row) => catalogModelKeyOf(row) === identity)
+      /* 内置目录写法最规范：同物异写时以它为准 */
+      const builtinHit = flattenDeviceCatalog().find((item) => catalogModelKeyOf(item) === identity)
+      const canonical = builtinHit || platformHit || { cat, brand, series, model }
+      const final = {
+        cat: canonical.cat,
+        brand: canonical.brand,
+        series: canonical.series,
+        model: canonical.model
+      }
+      const key = catalogKeyOf(final)
+      const id = builtinHit ? catalogIdOf(final) : (platformHit && platformHit.id ? platformHit.id : catalogIdOf(final))
       const at = now()
       const exists = await repo.get('catalog', id)
-      const patch = {
-        cat,
-        brand,
-        series,
-        model,
+      const patch = Object.assign({}, final, {
         status,
         note,
         source: 'platform',
         updatedAt: at,
         updatedBy: session ? session.accountId : ''
-      }
+      })
       if (exists) {
         await repo.updateWhere('catalog', { id }, patch)
       } else {
         await repo.insert('catalog', Object.assign({ id, createdAt: at }, patch))
+      }
+      /* 同型号的其它写法同步状态，避免旧记录（停用 / 删除）把型号重新拉黑或复活 */
+      for (const row of rows) {
+        if (row.id === id || catalogModelKeyOf(row) !== identity) continue
+        if ((row.status || 'active') === status) continue
+        await repo.updateWhere('catalog', { id: row.id }, {
+          status,
+          updatedAt: at,
+          updatedBy: session ? session.accountId : ''
+        })
       }
       await appendAudit(repo, {
         actorType: 'admin',
         actorId: session ? session.accountId : '',
         action: 'catalog.save',
         target: key,
-        reason: `${exists ? '更新' : '新增'}型号：${cat} / ${brand} / ${series} / ${model}（${status}）`,
+        reason: `${exists ? '更新' : '新增'}型号：${final.cat} / ${final.brand} / ${final.series} / ${final.model}（${status}）`,
         ip: ctx.ip,
         result: 'allow',
         at
@@ -4659,6 +5344,18 @@ function createAdminHandlers(deps) {
         }))
       } else {
         await repo.updateWhere('catalog', { id }, {
+          status: 'removed',
+          updatedAt: at,
+          updatedBy: session ? session.accountId : ''
+        })
+      }
+      /* 同型号的其它写法（只差空格 / 分隔符）一并删除，避免换个写法又冒出来 */
+      const identity = catalogModelKeyOf(row)
+      const peers = await repo.find('catalog', {}, { limit: 5000 })
+      for (const peer of peers) {
+        if (peer.id === id || catalogModelKeyOf(peer) !== identity) continue
+        if ((peer.status || 'active') === 'removed') continue
+        await repo.updateWhere('catalog', { id: peer.id }, {
           status: 'removed',
           updatedAt: at,
           updatedBy: session ? session.accountId : ''
@@ -4864,7 +5561,8 @@ function createAdminHandlers(deps) {
      * 客服服务记录：从审计里聚合「分配 / 转派、状态推进、释放联系方式、回复消息」，
      * 既可按客服 / 工单回溯明细，也返回每位坐席的处理量与最近处理时间。
      */
-    'service.records': async (data) => {
+    'service.records': async (data, ctx) => {
+      const session = ctx && ctx.session
       const paging = normalizePaging(data)
       const at = now()
       const query = {
@@ -4872,7 +5570,12 @@ function createAdminHandlers(deps) {
         action: { $in: SERVICE_ACTIONS.slice() },
         at: { $gte: retentionCutoff(at), $lt: at + 1 }
       }
-      if (data.actorId) query.actorId = str(data.actorId, { field: '客服', max: 64 }).toLowerCase()
+      /* 客服坐席只能看到自己的服务记录；管理端可按客服筛选或看全量 */
+      if (!isAdminSession(session)) {
+        query.actorId = String((session && session.accountId) || '').toLowerCase()
+      } else if (data.actorId) {
+        query.actorId = str(data.actorId, { field: '客服', max: 64 }).toLowerCase()
+      }
       const leadId = data.leadId ? str(data.leadId, { field: '工单', max: 64 }) : ''
       /* 工单维度需要先按 target 取线索 id，故一次多取（180 天内客服动作量可控） */
       const rows = await repo.find('audit', query, { sort: { field: 'at', dir: 'desc' }, limit: 500 })
@@ -4906,12 +5609,17 @@ function createAdminHandlers(deps) {
         cur.lastAt = Math.max(cur.lastAt, Number(row.at) || 0)
         counts.set(row.actorId, cur)
       }
-      const staff = (await listStaff()).map((item) => Object.assign({}, item, counts.get(item.username) || {
+      const staffList = await listStaff()
+      const visibleStaff = isAdminSession(session)
+        ? staffList
+        : staffList.filter((item) => item.username === String((session && session.accountId) || '').toLowerCase())
+      const staff = visibleStaff.map((item) => Object.assign({}, item, counts.get(item.username) || {
         handled: 0, assign: 0, status: 0, reply: 0, lastAt: 0
       }))
       const items = matched.slice(paging.skip, paging.skip + paging.limit).map(({ row, lead, leadTitle }) => ({
         id: row.id,
         at: row.at,
+        actorId: row.actorId,
         actorName: names.get(row.actorId) || row.actorId,
         action: row.action,
         actionLabel: AUDIT_ACTION_LABELS[row.action] || row.action,
@@ -5108,6 +5816,10 @@ function createAdminHandlers(deps) {
         const p = profileOf.get(u.id) || {}
         const member = memberStatusOf(u.id)
         const userNo = userNoOf(u.id)
+        /* 注册时间以用户记录为准：老数据没有 createdAt 时回落到资料里的开通日期 */
+        const registeredAt = Number(u.createdAt) || 0
+        const joinedText = p.joined || (registeredAt ? new Date(registeredAt).toISOString().slice(0, 10) : '')
+        const registeredMs = registeredAt || (joinedText ? Date.parse(joinedText) || 0 : 0)
         const qualRows = Array.isArray(p.quals) ? p.quals : []
         const quals = qualRows.map((row) => String((row && typeof row === 'object' ? row.name : row) || ''))
         const qualVerified = qualRows.some((row) => row && typeof row === 'object' && row.status === '已核验')
@@ -5142,7 +5854,9 @@ function createAdminHandlers(deps) {
           memberStatus: member.status,
           memberExpireAt: member.expireAt,
           status: u.status || '正常',
-          joined: p.joined || '',
+          joined: joinedText,
+          /* 注册时间（毫秒）：列表按它倒序，最新注册排最前 */
+          registeredAt: registeredMs,
           note: u.adminNote || '',
           publishCount: (productCount.get(u.id) || 0) + (demandCount.get(u.id) || 0),
           agencyBuy: agencyBuyCount.get(u.id) || 0,
@@ -5169,7 +5883,8 @@ function createAdminHandlers(deps) {
         if (q && r._hay.indexOf(q) < 0) return false
         return true
       })
-      filtered.sort((a, b) => String(b.joined).localeCompare(String(a.joined)) || String(a.id).localeCompare(String(b.id)))
+      /* 按注册时间倒序：最新注册的排最前；同一时间按用户 ID 稳定排序 */
+      filtered.sort((a, b) => (b.registeredAt - a.registeredAt) || String(a.id).localeCompare(String(b.id)))
       /* 检索字段只参与过滤，不能随列表下发（内含未脱敏昵称 / 主体） */
       const items = filtered.slice(paging.skip, paging.skip + paging.limit).map((r) => {
         const item = Object.assign({}, r)
@@ -5744,7 +6459,9 @@ function createAdminHandlers(deps) {
         if (q && r._hay.indexOf(q) < 0) return false
         return true
       })
-      filtered.sort((a, b) => String(b.joined).localeCompare(String(a.joined)) || String(a.id).localeCompare(String(b.id)))
+      /* 按注册时间倒序（与用户管理列表口径一致）：最新注册的排最前 */
+      const regOf = (r) => r.createdAt || (r.joined ? Date.parse(r.joined) || 0 : 0)
+      filtered.sort((a, b) => (regOf(b) - regOf(a)) || String(a.id).localeCompare(String(b.id)))
       const rows = filtered.slice(0, 5000)
       /* 未传字段时导出全部列（兼容脚本 / 旧版管理端）；传了则只输出勾选的列 */
       const asked = Array.isArray(data.fields)
@@ -6497,6 +7214,13 @@ function createAdminHandlers(deps) {
           bannerEnabled: doc.bannerEnabled !== false,
           bannerSpeed: Number(doc.bannerSpeed) || 40,
           bannerItems: normalizeBannerItems(doc.bannerItems, { lenient: true }),
+          /* 社交功能总开关（评论 / 私信 / 对话）：默认关闭，审核通过后在媒体页打开 */
+          socialEnabled: doc.socialEnabled !== undefined ? doc.socialEnabled === true : doc.chatEnabled === true,
+          /* 审核期隔离：只对上报了版本号的新版本隐藏社交，线上老版本不受影响 */
+          reviewHideSocial: doc.reviewHideSocial === true,
+          /* 兼容旧版界面字段 */
+          commentEnabled: doc.socialEnabled !== undefined ? doc.socialEnabled === true : doc.commentEnabled !== false,
+          chatEnabled: doc.socialEnabled !== undefined ? doc.socialEnabled === true : doc.chatEnabled === true,
           /* 会员到期提醒：文案模板 / 提前天数 / 每日时间 / 提醒次数与间隔 */
           memberRemind: memberRemindOf(doc.memberRemind),
           updatedAt: Number(doc.updatedAt) || 0
@@ -6550,6 +7274,29 @@ function createAdminHandlers(deps) {
       /* 会员到期提醒只由媒体页「提醒设置」维护，随其它设置一起保存 */
       if (data.memberRemind !== undefined) patch.memberRemind = memberRemindOf(data.memberRemind)
       if (data.bannerEnabled !== undefined) patch.bannerEnabled = data.bannerEnabled === true || data.bannerEnabled === 'true'
+      /* 社交功能总开关：评论 / 私信 / 对话统一控制。
+         同时写入旧字段，保证已发布的小程序版本无需更新即可跟随开关显隐 */
+      if (data.socialEnabled !== undefined) {
+        const on = data.socialEnabled === true || data.socialEnabled === 'true'
+        patch.socialEnabled = on
+        patch.chatEnabled = on
+        patch.commentEnabled = on
+      }
+      /* 审核期隔离：开启后只对带版本号的新版本隐藏社交，线上老版本照常 */
+      if (data.reviewHideSocial !== undefined) {
+        patch.reviewHideSocial = data.reviewHideSocial === true || data.reviewHideSocial === 'true'
+      }
+      /* 兼容单独提交旧字段的入口：等价于控制同一个总开关 */
+      if (data.chatEnabled !== undefined) {
+        const on = data.chatEnabled === true || data.chatEnabled === 'true'
+        patch.socialEnabled = on
+        patch.chatEnabled = on
+      }
+      if (data.commentEnabled !== undefined) {
+        const on = data.commentEnabled === true || data.commentEnabled === 'true'
+        patch.socialEnabled = on
+        patch.commentEnabled = on
+      }
       if (data.bannerSpeed !== undefined && data.bannerSpeed !== '') {
         const speed = Number(data.bannerSpeed)
         if (!Number.isFinite(speed) || speed < 10 || speed > 200) {
@@ -6620,6 +7367,8 @@ function createAdminHandlers(deps) {
      */
     'msg.threads': async (data, ctx) => {
       const scope = await chatUidScope(ctx.session)
+      const me = (ctx.session && ctx.session.accountId) || ''
+      const admin = isAdminSession(ctx.session)
       const rows = await repo.find('outbox', { 'payload.channel': 'kf' }, {
         sort: { field: 'createdAt', dir: 'desc' },
         limit: 500
@@ -6689,6 +7438,7 @@ function createAdminHandlers(deps) {
             row.consultStage = stage
             row.consultStageLabel = stage ? consultStageLabel(stage) : (TICKET_STATE_LABELS[state] || '')
             row.consultCsName = lead.csName || lead.assignedTo || ''
+            row.leadAssignedAccount = lead.assignedAccount || ''
           }
         }
         /* 消息中心生成的咨询工单没有委托ID，按用户兜底关联，会话里同样能直接进入工单 */
@@ -6709,7 +7459,15 @@ function createAdminHandlers(deps) {
             row.consultStage = stage
             row.consultStageLabel = stage ? consultStageLabel(stage) : (TICKET_STATE_LABELS[state] || '')
             row.consultCsName = lead.csName || lead.assignedTo || ''
+            row.leadAssignedAccount = lead.assignedAccount || ''
           }
+        }
+        if (row.leadId) {
+          row.leadClaimedByOther = !!row.leadAssignedAccount && row.leadAssignedAccount !== me
+          /* 只有领取人能回复；管理员可见但不能操作，需先领取或转单 */
+          row.leadCanReply = !row.leadAssignedAccount || !row.leadClaimedByOther
+          /* 已被他人领取的会话，其他客服在消息中心完全不可见 */
+          if (row.leadClaimedByOther && !admin) continue
         }
         items.push(row)
       }
@@ -6889,11 +7647,11 @@ function createAdminHandlers(deps) {
         const fingerprint = `chat|direct|${threadId}`
         const existing = await repo.find('riskCases', { fingerprint }, { limit: 1 })
         if (existing[0]) {
-          await repo.updateWhere('riskCases', { fingerprint }, {
+          const reopen = existing[0].status === '已处理' || existing[0].status === '已忽略'
+          await repo.updateWhere('riskCases', { fingerprint }, Object.assign({
             detail: note,
-            status: existing[0].status === '已处理' || existing[0].status === '已忽略' ? '待处理' : existing[0].status,
             updatedAt: at
-          })
+          }, reopen ? { status: '待处理', owner: '', ownerAccount: '', action: '', reason: '' } : {}))
         } else {
           await repo.insert('riskCases', {
             id: randomId('RC'),
@@ -7059,8 +7817,11 @@ function createAdminHandlers(deps) {
           throw new AppError(CODES.VALIDATION, '该会话为买卖双方直聊，请到消息中心按用户回复')
         }
         uid = lead.uid
-        if (!isAdminSession(session) && lead.assignedAccount !== ((session && session.accountId) || '')) {
-          throw new AppError(CODES.FORBIDDEN, '请先领取该咨询，再回复用户')
+        /* 领取后只有领取人能回复，管理员也需先领取（领取即接手，转单后新处理人可回复） */
+        if (lead.assignedAccount !== ((session && session.accountId) || '')) {
+          throw new AppError(CODES.FORBIDDEN, lead.assignedAccount
+            ? '该咨询已由 ' + (lead.csName || lead.assignedTo || '其他客服') + ' 领取，领取或转单后才能回复'
+            : '请先领取该咨询，再回复用户')
         }
         if (csStatusOf(lead) === CS_STATUS.ENDED) {
           throw new AppError(CODES.CONFLICT, '咨询服务已结束，不能再发送消息')
@@ -7115,7 +7876,9 @@ function createAdminHandlers(deps) {
           threadId: threadId || '',
           targetType: lead ? (lead.targetType || 'agency') : '',
           targetId: lead ? (lead.targetId || lead.agencyId || '') : '',
-          csStatus: lead ? csStatusOf(lead) : ''
+          csStatus: lead ? csStatusOf(lead) : '',
+          /* 平台客服咨询：用户端归入「平台客服」会话，不因 threadId 变成独立咨询 */
+          platformChat: !!(lead && String(lead.source || '') === 'kf_leave')
         },
         status: 'pending',
         readByUser: false,
@@ -7123,6 +7886,22 @@ function createAdminHandlers(deps) {
         createdAt: at
       }
       await repo.insert('outbox', doc)
+      /* 客服已回复：刷新计时基准，超时自动结束从最后一次回复重新算起 */
+      if (lead) {
+        try {
+          await repo.updateWhere('leads', { id: lead.id }, { csLastReplyAt: at, updatedAt: at })
+        } catch (stampErr) { /* 计时刷新失败不影响消息落库 */ }
+      }
+      /* 微信订阅消息：用户端只有站内信，容易被忽略；不推送会让工单停在一问一答 */
+      if (subscribe) {
+        try {
+          await subscribe.system(uid, {
+            title: `${staffName} 回复了你的${lead ? '咨询' : '消息'}`,
+            body: kind === 'text' ? body : (kind === 'image' ? '[图片]' : '[视频]'),
+            at
+          })
+        } catch (pushErr) { /* 订阅推送失败不影响站内信落库 */ }
+      }
       try {
         await appendAudit(repo, {
           actorType: 'admin',
@@ -7422,10 +8201,10 @@ function createAdminHandlers(deps) {
         if (row.status === LEAD_STATUS.MATCHED || row.status === LEAD_STATUS.DEALT) bucket.matched += 1
         if (row.status === LEAD_STATUS.DEALT) bucket.deals += 1
       }
-      /* 营收只统计微信端调起的支付：手动开通会员 / 线下登记收款不计营收 */
+      /* 营收统计所有实收 > 0 的会员订单，含微信支付与手动开通 / 线下登记收款 */
       const orders = await repo.find('bizOrders', {}, { limit: 100000 })
       for (const row of orders) {
-        if (row.method !== '微信支付') continue
+        if (Number(row.amount) <= 0) continue
         const bucket = bucketOf(row.createdAt)
         if (!bucket) continue
         bucket.orders += 1

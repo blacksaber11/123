@@ -7,7 +7,7 @@
  *    不存 openid、不存手机号明文、不存 token；
  * 3. 云函数的 openid 由微信上下文自动注入，客户端不发送、不读取。
  */
-const { call, CODE, safePath, clearSession } = require('./request')
+const { call, CODE, readToken, safePath, clearSession } = require('./request')
 const { hideShare } = require('./guard')
 const { writeConsent } = require('./privacy')
 
@@ -138,8 +138,33 @@ function currentRef() {
   }
 }
 
+/**
+ * 推广码消费：绑定只认首次登录，服务端处理完就没有再带的必要。
+ * 成功 / 已绑定 / 无效码 / 风控拦截都属终态，清掉并把码记为已消费；
+ * retry（临时故障）与 not-active（上家还没开通成功）保留，等下次登录再试——
+ * 上家开通后重新登录还能补绑，否则分享来的人会被永久丢掉。
+ */
+function consumeIncomingRef(ref, bind) {
+  /* 没有回执（服务端老版本 / 回应被中间层截断）时一律保留：宁可下次再带一次，
+     也不能在服务端没处理的情况下把码丢掉，否则分享来的人永远绑不上 */
+  if (!bind || typeof bind !== 'object') return
+  const reason = String(bind.reason || '')
+  if (reason === 'retry' || reason === 'not-active') return
+  try {
+    const app = getApp()
+    if (!app || !app.globalData) return
+    if (app.globalData.incomingRef === ref) {
+      app.globalData.consumedRef = ref
+      app.globalData.incomingRef = ''
+      writePendingRef('')
+    }
+  } catch (err) { /* 取不到 app 时忽略 */ }
+}
+
 /* 自己的推广码缓存键：开通推广大使后由登录态下发，冷启动尚未登录时分享也能带上 */
 const MY_REF_KEY = 'suanli_my_ref_code'
+/* 别人分享进来时待绑定的推广码：冷启动就落缓存，首次登录失败 / 小程序被杀也不会丢 */
+const PENDING_REF_KEY = 'suanli_pending_ref'
 
 /* 本次启动是否已向服务端同步过登录态：避免页面反复 ensureLogin 时重复请求 */
 let promoterSynced = false
@@ -167,15 +192,46 @@ function writeMyRefCode(code) {
   return value
 }
 
+/* 读待绑定推广码：冷启动先恢复，登录前被杀 / 登录失败都不会丢 */
+function readPendingRef() {
+  try {
+    return String(wx.getStorageSync(PENDING_REF_KEY) || '').trim().slice(0, 32)
+  } catch (err) {
+    return ''
+  }
+}
+
+/* 写 / 清除待绑定推广码（空串即清除） */
+function writePendingRef(code) {
+  const value = String(code || '').trim().slice(0, 32)
+  try {
+    if (value) wx.setStorageSync(PENDING_REF_KEY, value)
+    else wx.removeStorageSync(PENDING_REF_KEY)
+  } catch (err) { /* 缓存不可用只影响容错，不影响本次绑定 */ }
+  return value
+}
+
 /**
- * 保证已登录；未登录则静默走一次 wx.login + auth.login。
+ * 保证已登录；本地没有令牌或没有用户缓存时静默走一次 wx.login + auth.login。
  * 不弹任何授权框：昵称、头像由用户在「我的 - 个人信息」按需补充。
- * 返回 user（匿名视图：uid、nick、phoneMasked、realnameMasked 等）。
+ * 并发调用合并成同一次登录：首屏多个接口同时撞 401 时不会各登录一次。
  */
-async function ensureLogin(app) {
+let loginTask = null
+
+function ensureLogin(app) {
+  if (loginTask) return loginTask
+  const task = runEnsureLogin(app)
+  loginTask = task
+  return task.finally(() => {
+    if (loginTask === task) loginTask = null
+  })
+}
+
+async function runEnsureLogin(app) {
   const cached = readUser()
   const ref = currentRef()
-  if (cached && cached.uid) {
+  /* 有用户缓存但没有令牌（令牌过期已被清掉）时按未登录处理，必须重新登录 */
+  if (cached && cached.uid && readToken()) {
     if (app && app.globalData) app.globalData.user = cached
     /* 每次冷启动静默刷新一次登录态：推广大使开通 / 被取消后，分享用的推广码能立刻同步 */
     if (ref || !promoterSynced) {
@@ -210,13 +266,19 @@ async function wxLogin(profile) {
   const nick = String(p.nick || '').trim()
   if (nick) payload.nick = nick
   if (p.avatar) payload.avatar = p.avatar
-  /* 分享进入时的推广码：登录即绑定，服务端按「首次绑定后不可改绑」处理 */
-  const ref = String(p.ref || '').trim()
+  /* 分享进入时的推广码：登录即绑定，服务端按「首次绑定后不可改绑」处理。
+     调用方没显式传时取本次启动从分享卡片 / 小程序码解析到的推广码，
+     避免登录页主动登录把分享来源丢掉。 */
+  const ref = String(p.ref || currentRef() || '').trim()
   if (ref) payload.ref = ref
   const user = await call('user', 'auth.login', payload)
+  /* 推广码只用于首次绑定：服务端处理完就消费掉，避免后续登录重复携带、换号误绑 */
+  if (ref) consumeIncomingRef(ref, user && user.promoterBind)
   /* 静默登录不采集任何个人信息，因此不写协议同意记录；
      只有用户主动勾选并授权手机号时才调用 markConsent 留痕 */
   const stored = Object.assign({}, user)
+  /* 绑定回执只用于本次消费判断，不落登录缓存 */
+  delete stored.promoterBind
   writeUser(stored)
   /* 推广大使：登录态里带自己的推广码时写入全局与缓存，之后任意页面分享 / 海报都带上 */
   const promoter = user && user.promoter
@@ -254,6 +316,9 @@ function logout() {
     const app = getApp()
     if (app && app.globalData) {
       app.globalData.user = null
+      /* 待绑定推广码随会话清空；已消费记录保留，避免热启动参数把上家的码带进下一个账号 */
+      app.globalData.incomingRef = ''
+      writePendingRef('')
     }
   } catch (e) {}
 }
@@ -275,6 +340,8 @@ module.exports = {
   clearPhoneSkipped,
   readMyRefCode,
   writeMyRefCode,
+  readPendingRef,
+  writePendingRef,
   USER_KEY,
   PROFILE_KEY
 }

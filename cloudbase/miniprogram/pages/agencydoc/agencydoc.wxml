@@ -1,0 +1,57 @@
+<view class="doc">
+  <view class="doc-hd">
+    <text class="doc-t">{{title}}</text>
+    <text class="doc-v">{{subtitle}}</text>
+  </view>
+
+  <block wx:if="{{kind === 'fee'}}">
+    <view class="doc-hero">
+      <text class="dh-t">先成交，后付费</text>
+      <text class="dh-d">发布、审核、上架都不收费；平台确认成交后按成交金额收取服务费。截止时间到期仍未成交，委托自动关闭，不产生任何费用。</text>
+    </view>
+
+    <view class="doc-sec">
+      <text class="ds-h">代采 / 代售（非租赁）</text>
+      <view wx:for="{{feeRows}}" wx:key="k" class="fee-row">
+        <text class="fee-k">{{item.k}}</text>
+        <text class="fee-v">{{item.v}}</text>
+      </view>
+      <text class="ds-p">计费基数为平台确认的实际成交金额。1000 万元及以上费率不变（0.5%），仅需补充资料核验，代采订单只对平台可见。</text>
+    </view>
+
+    <view class="doc-sec">
+      <text class="ds-h">算力租赁</text>
+      <text class="ds-p">服务费为一个月租金，按首月租金合计计算，买卖双方各承担 50%；委托方实际支付半个月租金，租赁不按金额分档改计。</text>
+    </view>
+
+    <view class="doc-sec">
+      <text class="ds-h">结算方式</text>
+      <text class="ds-p">平台确认成交后生成服务费账单，委托方打款后 3 个工作日内确认到账，客服确认完成。服务费不含公证、物流、保险等第三方费用。</text>
+    </view>
+  </block>
+
+  <block wx:else>
+    <view class="doc-sec">
+      <text class="ds-h">{{sideLabel}}委托流程</text>
+      <view wx:for="{{steps}}" wx:key="t" class="step">
+        <view class="step-no">{{index + 1}}</view>
+        <view class="step-i">
+          <text class="step-t">{{item.t}}</text>
+          <text class="step-d">{{item.d}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="doc-sec">
+      <text class="ds-h">服务费</text>
+      <text class="ds-p">{{feeLine}}</text>
+    </view>
+
+    <view class="doc-sec">
+      <text class="ds-h">所需材料</text>
+      <text class="ds-p">{{fileLine}}</text>
+    </view>
+  </block>
+
+  <view class="doc-ft">本页内容与平台实际执行规则一致，规则调整时以平台最新公告为准。</view>
+</view>

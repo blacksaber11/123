@@ -6,10 +6,11 @@
  * 2. 截屏 / 录屏监测在 App.onShow 统一开启，检测到即遮蔽内容；
  * 3. 所有网络请求走 utils/request.js，云函数返回的敏感字段一律不落本地存储。
  */
-const { ensureLogin, readUser, readMyRefCode } = require('./utils/auth')
-const { startScreenGuard } = require('./utils/guard')
-const { request } = require('./utils/request')
+const { ensureLogin, readUser, readMyRefCode, readPendingRef, writePendingRef, hasPhone } = require('./utils/auth')
+const { startScreenGuard, pageShareCard, isSinglePage } = require('./utils/guard')
+const { request, bindApp, safePath } = require('./utils/request')
 const inbox = require('./utils/inbox')
+const features = require('./utils/features')
 
 /* 底部 tab 路由：只有这些页面在栈底时，安卓物理返回才允许退出小程序 */
 const TAB_ROUTES = ['pages/home/home', 'pages/msg/msg', 'pages/mine/mine']
@@ -73,11 +74,131 @@ function appendShareRef(path, ref) {
   return base + '?' + kept.join('&')
 }
 
-/* 自己的推广码：推广大使开通后由登录态写入 globalData，分享时统一追加 */
+/* ============================================================
+   未登录浏览引导
+   - 只在内容页累计停留时长，切到登录 / 发布 / 私信等自身流程页会清零；
+   - 累计约 15 秒后自动打开登录页，登录成功按 from 回到刚才浏览的页面；
+   - 冷却期内、已绑定手机号都不再打扰，避免反复打断浏览。
+   ============================================================ */
+const LOGIN_NUDGE_TICK_MS = 5000
+const LOGIN_NUDGE_TICKS = 3
+const LOGIN_NUDGE_KEY = 'suanli_login_nudge_at'
+const LOGIN_NUDGE_COOL_MS = 10 * 60 * 1000
+/* 这些页面本身就在登录 / 发布 / 私密会话流程里，不弹浏览引导 */
+const LOGIN_NUDGE_SKIP = [
+  'pages/login/login',
+  'pages/privacy/privacy',
+  'pages/publish/publish',
+  'pages/profile/profile',
+  'pages/mine/sub/sub',
+  'pages/consult/consult',
+  'pages/chat/chat',
+  'pages/report/report',
+  'pages/bizform/bizform',
+  'pages/agencydoc/agencydoc',
+  'pages/blocked/blocked'
+]
+let loginNudgeTimer = null
+let loginNudgeTicks = 0
+
+/* 已绑定手机号才算真正登录：静默登录只拿到 openid 的用户仍需引导授权 */
+function signedInWithPhone() {
+  return hasPhone(readUser())
+}
+
+function loginNudgeCooling() {
+  try {
+    const at = Number(wx.getStorageSync(LOGIN_NUDGE_KEY) || 0)
+    return at > 0 && Date.now() - at < LOGIN_NUDGE_COOL_MS
+  } catch (err) {
+    return false
+  }
+}
+
+/* 当前是否停在可浏览的内容页：登录 / 发布 / 会话页以及朋友圈单页都不计入 */
+function nudgePage() {
+  if (isSinglePage()) return null
+  try {
+    const pages = getCurrentPages() || []
+    const cur = pages[pages.length - 1]
+    const route = routeOf(cur)
+    if (!route) return null
+    if (LOGIN_NUDGE_SKIP.some((p) => route === p || route.indexOf(p + '/') === 0)) return null
+    return cur
+  } catch (err) {
+    return null
+  }
+}
+
+function stopLoginNudgeWatch() {
+  if (!loginNudgeTimer) return
+  clearInterval(loginNudgeTimer)
+  loginNudgeTimer = null
+}
+
+/* 浏览到时长后直接弹出登录页：登录成功后按 from 回到刚才浏览的内容 */
+function showLoginNudge(page) {
+  try {
+    wx.setStorageSync(LOGIN_NUDGE_KEY, Date.now())
+  } catch (err) { /* 缓存失败不阻断本次引导 */ }
+  const from = safePath(routeOf(page), page.options || {})
+  const url = '/pages/login/login?from=' + encodeURIComponent(from)
+  wx.navigateTo({
+    url,
+    /* 页面栈已满时用 redirectTo 顶上，保证登录页一定能弹出来 */
+    fail: () => wx.redirectTo({ url, fail: () => {} })
+  })
+}
+
+/* 每 5 秒记一次：只有停在内容页才累计，切到登录 / 发布页立即清零 */
+function tickLoginNudge() {
+  if (signedInWithPhone()) {
+    stopLoginNudgeWatch()
+    return
+  }
+  /* 刚引导过（用户从登录页返回继续浏览）：本次前台会话不再重复弹 */
+  if (loginNudgeCooling()) {
+    stopLoginNudgeWatch()
+    return
+  }
+  const page = nudgePage()
+  if (!page) {
+    loginNudgeTicks = 0
+    return
+  }
+  loginNudgeTicks += 1
+  if (loginNudgeTicks < LOGIN_NUDGE_TICKS) return
+  stopLoginNudgeWatch()
+  showLoginNudge(page)
+}
+
+function startLoginNudgeWatch() {
+  stopLoginNudgeWatch()
+  loginNudgeTicks = 0
+  if (signedInWithPhone() || loginNudgeCooling()) return
+  loginNudgeTimer = setInterval(tickLoginNudge, LOGIN_NUDGE_TICK_MS)
+}
+
+/* 当前小程序版本号：审核期按版本隐藏社交入口时，服务端据此区分待审版本 */
+function appVersion() {
+  try {
+    const info = wx.getAccountInfoSync ? wx.getAccountInfoSync() : null
+    const mp = (info && info.miniProgram) || {}
+    /* version 只在正式版有值：开发版 / 体验版回落到 develop / trial，
+       否则审核隔离开关在提审前的自测阶段完全不生效 */
+    return String(mp.version || mp.envVersion || '').trim()
+  } catch (err) {
+    return ''
+  }
+}
+
+/* 自己的推广码：推广大使开通后由登录态写入 globalData，分享时统一追加。
+   内存为空时回落到本地缓存：静默登录尚未返回 / 本次启动还没拿到登录态，分享也要带上推广码 */
 function ownRefCode() {
   try {
     const app = getApp()
-    return (app && app.globalData && app.globalData.refCode) || ''
+    const code = String((app && app.globalData && app.globalData.refCode) || '').trim()
+    return code || readMyRefCode()
   } catch (err) {
     return ''
   }
@@ -85,8 +206,9 @@ function ownRefCode() {
 
 /**
  * 统一包装 Page：所有页面分享都追加全局推广码。
- * 页面自带 onShareAppMessage 时先调原逻辑，再补齐标题 / 路径并追加 ref；
- * 页面没有定义分享逻辑时给默认标题 + 当前页路径，不会因为缺少 onShareAppMessage 报错。
+ * 页面自带 onShareAppMessage 时先调原逻辑，再补齐标题 / 描述 / 底图并追加 ref；
+ * 页面没有定义分享逻辑时，按当前路由与页面数据生成相关文案（pageShareCard），
+ * 保证在哪个页面转发，卡片就是那个页面的内容 + 登录引导。
  * 朋友圈（onShareTimeline）同样包装，保证任意页面转发到朋友圈也带推广码。
  */
 function installShareRef() {
@@ -98,7 +220,11 @@ function installShareRef() {
     opts.onShareAppMessage = function (event) {
       const res = rawShare ? rawShare.call(this, event) : null
       const card = res && typeof res === 'object' ? Object.assign({}, res) : {}
-      if (!card.title) card.title = SHARE_TITLE
+      const fb = pageShareCard(this)
+      /* 页面没给标题 / 用了通用标题时，换成和当前页内容相关的吸引力文案 */
+      if (!card.title || card.title === SHARE_TITLE) card.title = fb.title
+      if (!card.desc) card.desc = fb.desc
+      if (!card.imageUrl) card.imageUrl = fb.imageUrl
       if (!card.path) card.path = sharePathOf(this)
       card.path = appendShareRef(card.path, ownRefCode())
       return card
@@ -108,7 +234,9 @@ function installShareRef() {
     opts.onShareTimeline = function (event) {
       const res = rawTimeline ? rawTimeline.call(this, event) : null
       const card = res && typeof res === 'object' ? Object.assign({}, res) : {}
-      if (!card.title) card.title = SHARE_TITLE
+      const fb = pageShareCard(this)
+      if (!card.title || card.title === SHARE_TITLE) card.title = fb.title
+      if (!card.imageUrl) card.imageUrl = fb.imageUrl
       const query = card.query ? String(card.query) : queryOf(this.options).replace(/^\?/, '')
       card.query = appendShareRef('?' + query, ownRefCode()).replace(/^\?/, '')
       return card
@@ -157,12 +285,30 @@ App({
      * 别人分享给我的推广码：?ref=xxx 或二维码 scene=ref%3Dxxx 解析后放这里。
      * 只在登录时透传给服务端完成绑定；不参与分享，避免把上家的码套进自己的分享。
      */
-    incomingRef: ''
+    incomingRef: '',
+    /**
+     * 已经用过的推广码：热启动会反复带同一份启动参数，
+     * 记下来避免登录成功后又被当成新推广码去补绑（换号也不会串到上家）。
+     */
+    consumedRef: '',
+    /**
+     * 发消息 / 对话总开关：由管理端「系统设置」控制，默认关闭。
+     * 审核期间隐藏所有对话入口，通过审批后在后台打开。
+     */
+    chatEnabled: false,
+    /* 功能开关是否已从服务端拉取成功：页面据此避免在加载完成前误判 */
+    featureFlagsLoaded: false
   },
 
   onLaunch(options) {
+    /* onLaunch 阶段部分基础库取不到 getApp()：先把实例交给请求层，
+       否则 httpConfig() 判空后会回落云函数，静默登录直接失败、首屏接口全部 401 */
+    bindApp(this)
     /* 冷启动先恢复自己的推广码：尚未登录时分享也能带上，登录后会被服务端结果覆盖 */
     this.globalData.refCode = readMyRefCode()
+    /* 上次分享进入但还没绑定成功（登录失败 / 中途退出）时，先把推广码接回来，再按本次启动参数覆盖 */
+    const pendingRef = readPendingRef()
+    if (pendingRef) this.globalData.incomingRef = pendingRef
     /* 冷启动直接落地分享链接：先记推广码，再走登录绑定 */
     this.captureRef(options)
     /* 开发者工具自动接本地服务：只在 develop（开发者工具 / 真机调试）生效 */
@@ -206,6 +352,9 @@ App({
     /* 截屏 / 录屏 / 保存 防护尽早挂上，越早越好 */
     startScreenGuard()
 
+    /* 公开功能开关：审核期间对话默认关闭，小程序据此隐藏消息 / 私信入口 */
+    this.loadFeatureFlags()
+
     /* 保证非 tab 页面下面垫一层首页：安卓物理返回不会直接退出小程序 */
     this.watchRootStack()
 
@@ -215,7 +364,59 @@ App({
         /* 登录后立刻取一次未读：不必等 20 秒后的第一轮轮询 */
         this.pollInbox()
       })
-      .catch(() => {})
+      .catch(() => this.retrySilentLogin(2))
+
+    /* 未登录浏览一会儿后引导登录：只计时，不拦首屏 */
+    startLoginNudgeWatch()
+  },
+
+  /**
+   * 拉取公开功能开关：审核期间对话关闭，
+   * 小程序端据此隐藏消息 / 私信入口；管理端打开后用户重新进入即恢复。
+   */
+  loadFeatureFlags() {
+    /* 带上当前版本号：服务端据此只对待审版本隐藏社交入口，线上版本不受影响 */
+    return request('user', 'site.get', { ver: appVersion() }, { silent: true })
+      .then((data) => {
+        const site = (data && data.site) || {}
+        this.globalData.chatEnabled = site.chatEnabled === true
+        this.globalData.featureFlagsLoaded = true
+        /* 落一份缓存：冷启动时底部导航先用上次结果渲染，避免闪一下再切换 */
+        try {
+          wx.setStorageSync('featureFlags', { chatEnabled: this.globalData.chatEnabled, at: Date.now() })
+        } catch (e) {}
+        this.syncTabBarFlags()
+        /* 正在打开的商品 / 需求 / 会话等非 tab 页同步刷新开关显隐 */
+        features.emit()
+        return this.globalData.chatEnabled
+      })
+      .catch(() => this.globalData.chatEnabled)
+  },
+
+  /* 开关结果回来后立即刷新底部导航，不必等用户切页 */
+  syncTabBarFlags() {
+    try {
+      const pages = getCurrentPages() || []
+      const cur = pages[pages.length - 1]
+      if (!cur) return
+      const bar = typeof cur.getTabBar === 'function' ? cur.getTabBar() : null
+      if (bar && typeof bar.syncSocial === 'function') bar.syncSocial()
+      /* 当前页自身的开关显隐也一并刷新：从后台回来时页面 onShow 早于本请求返回，
+         不补这一下会停在「关闭」的旧界面（切 tab 前一直不更新） */
+      if (typeof cur.syncSocial === 'function') cur.syncSocial()
+      if (typeof cur.syncChatFlag === 'function') cur.syncChatFlag()
+    } catch (e) { /* 取不到 tabBar / 页面不影响下一轮 */ }
+  },
+
+  /* 冷启动静默登录失败时退避重试：审核机首次启动实测 wx.login 失败后
+     40 秒内没有任何登录态，首页 / 资讯首屏会一直停在加载失败 */
+  retrySilentLogin(times) {
+    if (!(times > 0)) return
+    setTimeout(() => {
+      ensureLogin(this)
+        .then(() => this.pollInbox())
+        .catch(() => this.retrySilentLogin(times - 1))
+    }, times >= 2 ? 1500 : 3000)
   },
 
   onShow(options) {
@@ -224,10 +425,14 @@ App({
     if (freshRef && readUser()) ensureLogin(this).catch(() => {})
     /* 切回前台时重新挂上防护（onLaunch 里已经挂了一次，这里是兜底） */
     startScreenGuard()
+    /* 切回前台同步一次功能开关：管理端刚打开 / 关闭对话时无需重启小程序 */
+    this.loadFeatureFlags()
     /* 回到前台时顺手补一次页面栈：冷启动直达详情页等场景都在这里兜住 */
     this.repairRootStack()
     /* 未读轮询重新挂上并立刻补一次，切回前台马上能看到角标 */
     this.startInboxWatch()
+    /* 切回前台重新累计浏览时长：后台挂起期间不计入 */
+    startLoginNudgeWatch()
     /* 在线心跳：管理端「实时在线人数」按 5 分钟内的心跳统计；未登录不发，失败静默 */
     if (readUser()) request('user', 'online.ping', {}, { silent: true }).catch(() => {})
   },
@@ -240,7 +445,11 @@ App({
   captureRef(options) {
     const ref = refFromOptions(options)
     if (!ref || ref === this.globalData.incomingRef) return false
+    /* 已经用过的推广码：热启动会重复带同一份启动参数，不再当成新码补绑 */
+    if (ref === this.globalData.consumedRef) return false
     this.globalData.incomingRef = ref
+    /* 落一份缓存：首次登录失败或小程序被杀，下次启动还能补绑，不会白丢分享来的人 */
+    writePendingRef(ref)
     return true
   },
 
@@ -369,6 +578,8 @@ App({
 
   onHide() {
     this.stopInboxWatch()
+    /* 切后台停止浏览计时，避免在后台弹出登录引导 */
+    stopLoginNudgeWatch()
     this.globalData.user = null
     this.globalData.profile = null
   },

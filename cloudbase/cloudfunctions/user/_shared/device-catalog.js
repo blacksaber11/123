@@ -83,7 +83,8 @@ const DEVICE_CATALOG = {
       'PR 系列': ['PR4908P RTX PRO 6000 8 卡', 'PR4908P', 'PR4904P', 'PR8908P', 'PR2710P']
     },
     技嘉: {
-      'G 系列': ['G493-SB0 RTX PRO 6000 8 卡', 'G493-SB0', 'G593-SD2', 'G593-SD0', 'G593-SD1', 'G493-ZB1', 'G493-SD0'],
+      'G 系列': ['G493-SB0 RTX PRO 6000 8 卡', 'G493-SB0', 'G494', 'G494-SB0', 'G593-SD2', 'G593-SD0', 'G593-SD1', 'G493-ZB1', 'G493-SD0'],
+      'XL 系列': ['XL44-SX2-AAS1'],
       'A100 / H200 整机': ['G481-S80 A100 80G 8 卡', 'G593-SD0 A100 80G 8 卡', 'G593-SD2 H200 8 卡']
     },
     华硕: {
@@ -128,6 +129,9 @@ const DEVICE_CATALOG = {
       'Gaudi 系列': ['Gaudi 3 128G OAM', 'Gaudi 3 128G PCIe', 'Gaudi 2 96G'],
       'Data Center GPU 系列': ['Max 1550 128G', 'Max 1100 48G'],
       'Arc Pro 系列': ['Arc Pro B60 24G', 'Arc Pro B50 16G', 'Flex 170 16G', 'Flex 140 12G']
+    },
+    白牌: {
+      '白牌芯片': ['白牌 H100 80G', '白牌 A100 80G', '白牌 H200 141G', '白牌 910B 64G', '白牌 AI 加速卡']
     }
   },
 
@@ -339,12 +343,13 @@ const DEVICE_CATALOG = {
   /* ============ CPU 服务器：通用算力底座 ============ */
   'CPU 服务器': {
     戴尔: {
-      'PowerEdge R7 系列': ['PowerEdge R7725', 'PowerEdge R7625', 'PowerEdge R760', 'PowerEdge R7615', 'PowerEdge R760xs', 'PowerEdge R660', 'PowerEdge R6615'],
+      'PowerEdge R7 系列': ['PowerEdge R7725', 'PowerEdge R7625', 'PowerEdge R770', 'PowerEdge R760', 'PowerEdge R7615', 'PowerEdge R760xs', 'PowerEdge R660', 'PowerEdge R6615'],
       'PowerEdge R6 系列': ['PowerEdge R650', 'PowerEdge R650xs', 'PowerEdge R640'],
-      'PowerEdge T 系列': ['PowerEdge T560', 'PowerEdge T360']
+      'PowerEdge R5 系列': ['PowerEdge R570'],
+      'PowerEdge T 系列': ['PowerEdge T560', 'PowerEdge T360', 'PowerEdge T160']
     },
     超聚变: {
-      'FusionServer 2288 系列': ['FusionServer 2288H V7', 'FusionServer 2288H V6', 'FusionServer 2288 V7'],
+      'FusionServer 2288 系列': ['FusionServer 2288H V7', '2288HV7 12盘(SATA)', 'FusionServer 2288H V6', 'FusionServer 2288 V7'],
       'FusionServer 1288 系列': ['FusionServer 1288H V7', 'FusionServer 1288H V6'],
       'FusionServer 5288 系列': ['FusionServer 5288 V7', 'FusionServer 5288 V6']
     },
@@ -365,7 +370,6 @@ const DEVICE_CATALOG = {
       'R6900 系列': ['R6900 G6', 'R6900 G5']
     },
     华为: {
-      'FusionServer G5 系列': ['FusionServer G5500 V7', 'FusionServer G5500 V6'],
       'TaiShan 系列': ['TaiShan 2280 V2', 'TaiShan 200 2280']
     },
     宁畅: {
@@ -377,6 +381,9 @@ const DEVICE_CATALOG = {
       'SYS-1 系列': ['SYS-1029U-TR4', 'SYS-120U-TNR'],
       'SYS-2 系列': ['SYS-2029U-TR4', 'SYS-220U-TNR', 'SYS-521GE-TNRT'],
       'SYS-6 系列': ['SYS-621C-TN12R']
+    },
+    同泰怡: {
+      'TU 系列': ['TU628V3 12盘位 intel 2U通用服务器', 'TU629 V3 v2 12盘位 AMD2U通用服务器']
     },
     中科曙光: {
       'I 系列': ['I620-G30', 'I620-G20', 'I420-G30'],
@@ -659,9 +666,9 @@ const DEVICE_CATALOG = {
   /* ============ 网络设备（光模块 / 线缆等配套） ============ */
   '网络设备': {
     NVIDIA: {
-      'Quantum InfiniBand 交换机': ['Quantum-X800 QM9800 800G', 'Quantum-2 Q3400-RA 400G', 'Quantum-2 MQM9700 400G', 'Quantum-2 QM9700 400G', 'Quantum MQM8790 200G', 'Quantum QM8790 200G', 'SB7890 100G'],
+      'Quantum InfiniBand 交换机': ['Quantum-X800 QM9800 800G', 'Quantum-2 Q3400-RA 400G', 'Quantum-2 MQM9790 400G', 'Quantum-2 MQM9700 400G', 'Quantum-2 QM9700 400G', 'Quantum MQM8790 200G', 'Quantum QM8790 200G', 'SB7890 100G'],
       'Spectrum-X 以太交换机': ['Spectrum-X SN5610 800G', 'Spectrum-X SN5600 800G', 'Spectrum-X SN5400 400G', 'Spectrum-3 MSN4700 400G', 'Spectrum-3 MSN4600 400G', 'Spectrum-2 MSN3700 200G', 'Spectrum MSN2700 100G', 'Spectrum MSN2410 25G', 'Spectrum MSN2201 25G', 'Spectrum MSN8700 800G'],
-      'ConnectX 网卡系列': ['ConnectX-8 800G', 'ConnectX-7 400G 单口', 'ConnectX-7 200G 双口', 'ConnectX-6 200G 双口', 'ConnectX-6 Dx 100G 双口', 'ConnectX-5 100G 双口', 'ConnectX-5 25G 双口', 'ConnectX-4 100G 双口', 'ConnectX-4 Lx 25G 双口']
+      'ConnectX 网卡系列': ['ConnectX-8 800G', 'ConnectX-7 MCX75310AAS-NEAT 400G 单口', 'ConnectX-7 400G 单口', 'ConnectX-7 200G 双口', 'ConnectX-6 200G 双口', 'ConnectX-6 Dx 100G 双口', 'ConnectX-5 100G 双口', 'ConnectX-5 25G 双口', 'ConnectX-4 100G 双口', 'ConnectX-4 Lx 25G 双口']
     },
     思科: {
       'Nexus 9300 系列': ['Nexus 9364D-GX2A', 'Nexus 9336C-FX2'],
@@ -747,9 +754,10 @@ const DEVICE_CATALOG = {
       'ThinkStation P3 系列': ['P3 Tower RTX 5090']
     },
     戴尔: {
-      'Precision 7000 系列': ['Precision 7960 Tower RTX 6000 Ada', 'Precision 7960 Tower', 'Precision 7920 Tower', 'Precision 7865 Tower'],
-      'Precision 5000 系列': ['Precision 5860 RTX 5000 Ada', 'Precision 5860'],
-      'Precision 3000 系列': ['Precision 3680 RTX 5090', 'Precision 3660']
+      'Precision 7000 系列': ['Precision 7960 Tower RTX 6000 Ada', 'Precision 7960 Tower', 'Precision T7960', 'Precision 7920 Tower', 'Precision 7865 Tower'],
+      'Precision 5000 系列': ['Precision 5860 RTX 5000 Ada', 'Precision 5860', 'Precision T5860'],
+      'Precision 3000 系列': ['Precision 3680 RTX 5090', 'Precision T3680', 'Precision 3660'],
+      'Precision 移动工作站': ['Pro Max 18 Plus MB18250', 'Pro Max 16 Plus MB16250', 'Pro Max 16 MC16250', 'Pro Max 14 MC14250']
     },
     惠普: {
       'Z8 / Z6 系列': ['Z8 Fury G5 双卡 RTX 6000 Ada', 'Z8 Fury G5', 'Z6 G5 A RTX 5000 Ada', 'Z6 G5 A'],
@@ -761,7 +769,8 @@ const DEVICE_CATALOG = {
       '塔式工作站': ['AS-5014A-TT', 'AS-4124GS-TNR 工作站']
     },
     超聚变: {
-      'FusionXtation 系列': ['FusionXtation X3 8000', 'FusionXtation X3 8000 工作站', 'FusionXtation X2 6000', 'FusionXtation X1 3000']
+      'FusionXtation 系列': ['FusionXtation X3 8000', 'FusionXtation X3 8000 工作站', 'X3-8000', 'X3-8000 Gen2', 'FusionXtation X2 6000', 'FusionXtation X1 3000'],
+      'xPARK 系列': ['xPARK 128G+2T']
     },
     思腾合力: {
       'AW 系列': ['AW6200 8 卡 RTX 6000 Ada', 'AW5200 8 卡 RTX 4090', 'AW4200 8 卡 RTX 4090', 'AW4200']
@@ -860,6 +869,12 @@ const DEVICE_CATALOG = {
     宁畅: {
       'GPU 准系统': ['X640 G50 准系统', 'X640 G60 准系统']
     },
+    同泰怡: {
+      'GPU 准系统': ['TG659V3 SWITCH 12盘位 AMD八卡准系统', 'TG658V3 SWITCH 12盘位 INTEL八卡准系统', 'TG658V3 8盘位 INTEL八卡准系统', 'TG679V3 8盘位 AMD八卡风扇准系统']
+    },
+    华硕: {
+      '桌面超算套件': ['Ascent GX10 128G+1T']
+    },
     华鲲振宇: {
       '推理整机套件': ['天宫 TG225 B1 套件', '天宫 AT800 套件']
     },
@@ -903,11 +918,8 @@ const DEVICE_CATALOG = {
       'R5300 液冷系列': ['R5300 G6 冷板式', 'R5300 G5 液冷'],
       'R4900 液冷系列': ['R4900 G6 冷板式']
     },
-    华为: {
-      'FusionServer 液冷系列': ['FusionServer G5500 V7 液冷', 'FusionServer G5500 V6 液冷', 'FusionServer 2288H V7 液冷']
-    },
     超聚变: {
-      'FusionServer 液冷系列': ['FusionServer G5500 V7 液冷', 'FusionServer 2288H V7 液冷']
+      'FusionServer 液冷系列': ['FusionServer G5500 V7 液冷', 'FusionServer G5500 V6 液冷', 'FusionServer 2288H V7 液冷']
     },
     宁畅: {
       'X640 液冷系列': ['X640 G50 冷板式'],
@@ -1111,6 +1123,12 @@ const DEVICE_CATALOG = {
     },
     戴尔: {
       '服务器主板': ['PowerEdge R750 主板', 'PowerEdge R650 主板']
+    },
+    同泰怡: {
+      '服务器主板': ['T1DEEP', 'T2SEEP', 'T2DEHG', 'T3ADE', 'T3DGQ']
+    },
+    泰安: {
+      '服务器主板': ['S8030GM2NE']
     }
   },
 
@@ -1190,6 +1208,9 @@ const DEVICE_CATALOG = {
     },
     同德: {
       'RTX 50 系列': ['同德 RTX 5080 16G 三风 ARGB', '同德 RTX 5070 Ti 16G 三风', '同德 RTX 5070 12G 三风', '同德 RTX 5060 Ti 16G 三风', '同德 RTX 5060 8G 三风']
+    },
+    白牌: {
+      '白牌芯片': ['白牌 RTX 5090 32G', '白牌 RTX 5080 16G', '白牌 RTX 4090 24G', '白牌 RTX 3090 24G', '白牌 RTX 3080 10G', '白牌 RTX 3060 12G', '白牌 RTX 2080 Ti 22G']
     }
   },
 
@@ -1198,6 +1219,11 @@ const DEVICE_CATALOG = {
       'FURY 系列': ['FURY Renegade DDR5 8000 48G(24G×2)', 'FURY Renegade DDR5 7200 32G(16G×2)', 'FURY Beast DDR5 6400 32G(16G×2)', 'FURY Beast DDR5 6000 48G(24G×2)', 'FURY Beast DDR5 6000 32G(16G×2)', 'FURY Beast DDR5 5600 32G(16G×2)', 'FURY Beast DDR5 5600 16G', 'FURY Beast DDR4 3200 16G', 'FURY Renegade DDR4 3600 32G(16G×2)'],
       '笔记本内存': ['FURY Impact DDR5 5600 32G SODIMM', 'DDR5 5600 32G SODIMM', 'DDR5 4800 16G SODIMM', 'DDR4 3200 16G SODIMM', 'DDR4 2666 8G SODIMM'],
       '服务器内存': ['DDR5 5600 64G RDIMM ECC', 'DDR5 5600 32G RDIMM ECC', 'DDR5 4800 64G RDIMM ECC', 'DDR5 4800 32G RDIMM ECC', 'DDR4 3200 32G RDIMM ECC']
+    },
+    雷克沙: {
+      'Ares 系列': ['Ares DDR5 6400 32G(16G×2)', 'Ares DDR5 6000 32G(16G×2)', 'Ares DDR5 5600 16G', 'Ares DDR5 6000 48G(24G×2)', 'Ares DDR4 3600 32G(16G×2)', 'Ares DDR4 3200 16G(8G×2)'],
+      'Thor 系列': ['Thor DDR5 6000 32G(16G×2)', 'Thor DDR5 5600 16G', 'Thor DDR4 3200 16G(8G×2)'],
+      '笔记本内存': ['DDR5 5600 32G SODIMM', 'DDR5 4800 16G SODIMM', 'DDR4 3200 16G SODIMM', 'DDR4 2666 8G SODIMM']
     },
     海盗船: {
       'Dominator 系列': ['Dominator Titanium DDR5 8000 48G', 'Dominator Titanium DDR5 7200 32G', 'Dominator Platinum DDR5 6000 64G', 'Dominator Platinum DDR5 5600 32G'],
@@ -1222,11 +1248,16 @@ const DEVICE_CATALOG = {
       '服务器内存': ['DDR5 4800 64G RDIMM', 'DDR5 4800 32G RDIMM', 'DDR4 3200 32G RDIMM']
     },
     光威: {
-      '神武系列': ['神武 DDR5 6000 32G', '神武 DDR5 5600 16G', '神武 DDR4 3200 16G', '神武 DDR4 2666 16G']
+      '神武系列': ['神武 DDR5 6000 32G', '神武 DDR5 5600 16G', '神武 DDR4 3200 16G', '神武 DDR4 2666 16G'],
+      '天策系列': ['天策 DDR5 6000 32G(16G×2)', '天策 DDR5 5600 32G(16G×2)', '天策 DDR4 3200 32G(16G×2)'],
+      '深渊系列': ['深渊 DDR5 6400 32G(16G×2)', '深渊 DDR4 3600 16G(8G×2)'],
+      '笔记本内存': ['DDR5 5600 32G SODIMM', 'DDR4 3200 16G SODIMM']
     },
     金百达: {
       '银爵系列': ['银爵 DDR5 6000 32G', '银爵 DDR5 6400 64G', '银爵 DDR5 6000 96G(48G×2)', '银爵 DDR5 4800 32G', '银爵 DDR5 4800 16G'],
-      'DDR4 系列': ['DDR4 3200 32G', 'DDR4 3200 16G', 'DDR4 2666 16G']
+      '白刃 / 黑刃系列': ['白刃 DDR5 6800 32G(16G×2)', '黑刃 DDR5 6400 32G(16G×2)', '白刃 DDR5 6000 48G(24G×2)'],
+      'DDR4 系列': ['DDR4 3200 32G', 'DDR4 3200 16G', 'DDR4 2666 16G'],
+      '笔记本内存': ['DDR5 5600 32G SODIMM', 'DDR5 4800 16G SODIMM', 'DDR4 3200 16G SODIMM']
     },
     金邦: {
       'DDR4 系列': ['DDR4 3200 32G', 'DDR4 3200 16G', 'DDR4 2666 16G'],
@@ -1259,6 +1290,36 @@ const DEVICE_CATALOG = {
       '星曜系列': ['星曜 DDR5 6000 32G', '星曜 DDR4 3200 16G'],
       'GAMER 系列': ['GAMER DDR4 3200 8G']
     },
+    七彩虹: {
+      '战斧系列': ['战斧 DDR5 6000 32G(16G×2)', '战斧 DDR5 5600 16G', '战斧 DDR4 3200 16G'],
+      'CVN 系列': ['CVN 守卫者 DDR5 6400 32G(16G×2)', 'CVN 捍卫者 DDR5 6000 32G(16G×2)']
+    },
+    铭瑄: {
+      '终结者系列': ['终结者 DDR5 6000 32G(16G×2)', '终结者 DDR4 3200 16G'],
+      '复仇者系列': ['复仇者 DDR5 6000 32G(16G×2)', '复仇者 DDR4 3200 32G(16G×2)']
+    },
+    玖合: {
+      '星舞系列': ['星舞 DDR5 6000 32G(16G×2)', '星舞 DDR5 5600 16G', '星舞 DDR4 3200 16G'],
+      '笔记本内存': ['DDR5 5600 32G SODIMM', 'DDR4 3200 16G SODIMM']
+    },
+    朗科: {
+      '越影系列': ['越影 DDR5 6000 32G(16G×2)', '越影 DDR4 3200 16G'],
+      '绝影系列': ['绝影 DDR5 6400 32G(16G×2)', '绝影 DDR4 3200 8G']
+    },
+    金泰克: {
+      '战虎系列': ['战虎 DDR5 6000 32G(16G×2)', '战虎 DDR4 3200 16G'],
+      '速虎系列': ['速虎 DDR5 5600 16G', '速虎 DDR4 2666 16G']
+    },
+    台电: {
+      '幻影系列': ['幻影 DDR5 5600 32G(16G×2)', '幻影 DDR4 3200 16G'],
+      '笔记本内存': ['DDR5 4800 16G SODIMM', 'DDR4 3200 16G SODIMM']
+    },
+    海康存储: {
+      '消费内存': ['DDR5 6000 32G(16G×2)', 'DDR5 5600 16G', 'DDR4 3200 16G']
+    },
+    惠普: {
+      '原厂内存': ['DDR5 4800 32G RDIMM ECC', 'DDR5 4800 16G', 'DDR4 3200 16G SODIMM']
+    },
     浪潮: {
       '原厂内存': ['DDR5 4800 64G RDIMM', 'DDR5 4800 32G RDIMM', 'DDR5 5600 32G RDIMM', 'DDR4 3200 32G RDIMM']
     },
@@ -1285,26 +1346,29 @@ const DEVICE_CATALOG = {
     佰维: {
       '消费内存': ['DDR5 6000 32G(16G×2)', 'DDR5 5600 32G(16G×2)', 'DDR5 5600 16G', 'DDR4 3200 16G'],
       '嵌入式内存': ['LPDDR5X 8533 16G 颗粒', 'LPDDR5 6400 8G 颗粒']
+    },
+    白牌: {
+      '白配内存': ['白牌 DDR5 6400 64G', '白牌 DDR5 5600 64G', '白牌 DDR5 4800 64G', '白牌 DDR4 3200 64G', '白牌 DDR5 6400 32G', '白牌 DDR5 4800 32G', '白牌 DDR4 3200 32G', '白牌 DDR5 4800 16G', '白牌 DDR4 3200 16G']
     }
   },
 
   '固态硬盘': {
     三星: {
       '9100 系列': ['9100 PRO 8TB NVMe', '9100 PRO 4TB NVMe', '9100 PRO 2TB NVMe'],
-      '990 系列': ['990 PRO 4TB NVMe', '990 PRO 2TB NVMe', '990 PRO 1TB NVMe', '990 EVO Plus 4TB NVMe', '990 EVO Plus 2TB NVMe'],
+      '990 系列': ['990 PRO 4TB NVMe', '990 PRO 2TB NVMe', '990 PRO 1TB NVMe', '990 EVO Plus 4TB NVMe', '990 EVO Plus 2TB NVMe', '990 EVO 1TB NVMe'],
       '870 系列': ['870 EVO 4TB SATA', '870 EVO 1TB SATA', '870 QVO 8TB SATA', '870 QVO 2TB SATA'],
-      '企业级系列': ['PM1743 15.36TB U.2', 'PM9A3 7.68TB U.2', 'PM9A3 3.84TB U.2', 'PM9A3 960GB U.2', 'PM9D3a 7.68TB U.2'],
+      '企业级系列': ['PM1743 15.36TB U.2', 'PM9A3 7.68TB U.2', 'PM9A3 3.84TB U.2', 'PM9A3 960GB U.2', 'PM9D3a 7.68TB U.2', 'PM9A1 1TB NVMe OEM'],
       'SATA 系列': ['PM893 7.68TB SATA', 'PM893 3.84TB SATA', 'PM893 960GB SATA', 'PM893 480GB SATA']
     },
     西部数据: {
       '黑盘系列': ['SN8100 4TB NVMe', 'SN850X 8TB NVMe', 'SN850X 4TB NVMe', 'SN850X 2TB NVMe', 'SN7100 2TB NVMe', 'SN770 1TB NVMe'],
-      '蓝盘系列': ['SN580 1TB NVMe', 'SA510 1TB SATA'],
+      '蓝盘系列': ['SN580 1TB NVMe', 'SN5000 2TB NVMe', 'SA510 1TB SATA'],
       '企业级系列': ['Ultrastar DC SN650 15.36TB U.2', 'Ultrastar DC SN640 7.68TB U.2'],
       '移动固态': ['My Passport SSD 2TB']
     },
     铠侠: {
-      'EXCERIA 系列': ['EXCERIA PRO 2TB NVMe', 'EXCERIA PLUS G3 2TB NVMe', 'EXCERIA G2 1TB NVMe'],
-      '企业级系列': ['CM7-R 15.36TB U.2', 'CD8P 7.68TB U.2']
+      'EXCERIA 系列': ['EXCERIA PRO 2TB NVMe', 'EXCERIA PLUS G4 2TB NVMe', 'EXCERIA PLUS G3 2TB NVMe', 'EXCERIA G3 1TB NVMe', 'EXCERIA G2 1TB NVMe'],
+      '企业级系列': ['CM7-R 15.36TB U.2', 'CM9 15.36TB U.2', 'CD8P 7.68TB U.2']
     },
     英睿达: {
       'T 系列': ['T705 4TB NVMe', 'T700 2TB NVMe', 'T500 2TB NVMe'],
@@ -1312,14 +1376,21 @@ const DEVICE_CATALOG = {
       'MX 系列': ['MX500 2TB SATA', 'MX500 1TB SATA']
     },
     致态: {
-      'TiPro 系列': ['TiPro9000 4TB NVMe', 'TiPro9000 2TB NVMe'],
-      'TiPlus 系列': ['TiPlus7100 4TB NVMe', 'TiPlus7100 2TB NVMe'],
-      'Ti600 系列': ['Ti600 2TB NVMe', 'Ti600 1TB NVMe']
+      'TiPro 系列': ['TiPro9000 4TB NVMe', 'TiPro9000 2TB NVMe', 'TiPro7000 2TB NVMe'],
+      'TiPlus 系列': ['TiPlus7100 4TB NVMe', 'TiPlus7100 2TB NVMe', 'TiPlus5000 2TB NVMe', 'TiPlus5000 1TB NVMe'],
+      'Ti600 系列': ['Ti600 2TB NVMe', 'Ti600 1TB NVMe', 'Ti600 512G NVMe']
     },
     金士顿: {
-      'FURY 系列': ['FURY Renegade G5 4TB NVMe', 'FURY Renegade 2TB NVMe'],
-      'KC 系列': ['KC3000 2TB NVMe', 'KC600 1TB SATA'],
+      'FURY 系列': ['FURY Renegade G5 4TB NVMe', 'FURY Renegade 2TB NVMe', 'FURY Renegade 1TB NVMe'],
+      'KC 系列': ['KC3000 4TB NVMe', 'KC3000 2TB NVMe', 'KC2500 1TB NVMe', 'KC600 1TB SATA'],
+      'NV 系列': ['NV3 2TB NVMe', 'NV3 1TB NVMe', 'NV2 1TB NVMe', 'A400 480G SATA'],
       '移动固态': ['XS1000 2TB', 'XS2000 4TB']
+    },
+    雷克沙: {
+      'NM 系列': ['NM1090 PRO 4TB NVMe', 'NM1090 PRO 2TB NVMe', 'NM790 4TB NVMe', 'NM790 2TB NVMe', 'NQ790 2TB NVMe', 'NQ790 1TB NVMe', 'NM620 1TB NVMe', 'NM610 PRO 1TB NVMe'],
+      'ARES 系列': ['ARES 8TB NVMe', 'ARES 4TB NVMe', 'ARES 2TB NVMe'],
+      'SATA 系列': ['NS100 1TB SATA', 'NS100 512G SATA'],
+      '移动固态': ['SL500 2TB 移动固态', 'SL300 1TB 移动固态', 'P30 1TB 移动固态']
     },
     希捷: {
       '酷鱼系列': ['酷鱼 540 2TB NVMe', '酷鱼 530 1TB NVMe', '酷鱼 520 2TB NVMe'],
@@ -1328,6 +1399,14 @@ const DEVICE_CATALOG = {
     美光: {
       '企业级系列': ['9550 PRO 15.36TB U.2', '9400 PRO 15.36TB U.2', '7450 PRO 7.68TB U.2', '7450 MAX 3.2TB U.2'],
       '消费级系列': ['Crucial P510 2TB NVMe']
+    },
+    海力士: {
+      'Gold 系列': ['Gold P31 2TB NVMe', 'Gold P31 1TB NVMe', 'Gold P41 2TB NVMe'],
+      'OEM 系列': ['PC801 1TB NVMe', 'PC711 1TB NVMe', 'PC611 512G NVMe', 'BC501 512G NVMe']
+    },
+    东芝: {
+      '消费级系列': ['RC500 1TB NVMe', 'RD500 1TB NVMe', 'TR200 480G SATA', 'Q300 960G SATA'],
+      'OEM 系列': ['XG6 1TB NVMe', 'XG5 512G NVMe', 'BG4 512G NVMe']
     },
     长江存储: {
       '致态企业级': ['PE321 7.68TB U.2', 'PE331 15.36TB U.2']
@@ -1364,27 +1443,98 @@ const DEVICE_CATALOG = {
     },
     梵想: {
       '消费级系列': ['S790 4TB NVMe', 'S500 Pro 2TB NVMe']
+    },
+    光威: {
+      '弈系列': ['弈Pro 4TB NVMe', '弈Pro 2TB NVMe', '弈 2TB NVMe', '弈 1TB NVMe'],
+      '悍将系列': ['悍将 1TB NVMe', '悍将 512G NVMe', '悍将 1TB SATA'],
+      'Professional 系列': ['Professional 2TB NVMe', 'Professional 1TB NVMe']
+    },
+    金百达: {
+      'KP 系列': ['KP260 Plus 2TB NVMe', 'KP260 Plus 1TB NVMe', 'KP230 Pro 2TB NVMe', 'KP200 Plus 1TB NVMe', 'KP330 512G SATA']
+    },
+    朗科: {
+      'NV 系列': ['NV7000-t 4TB NVMe', 'NV7000-t 2TB NVMe', 'NV5000-t 2TB NVMe', 'NV3000 1TB NVMe'],
+      'SATA 系列': ['N930E 1TB SATA', 'N530S 512G SATA']
+    },
+    七彩虹: {
+      'CN 系列': ['CN700 Pro 2TB NVMe', 'CN700 2TB NVMe', 'CN600 1TB NVMe'],
+      'SL 系列': ['SL500 2TB SATA', 'SL300 512G SATA']
+    },
+    铭瑄: {
+      '复仇者系列': ['复仇者 NM7 4TB NVMe', '复仇者 NM7 2TB NVMe', '复仇者 NM6 1TB NVMe'],
+      '终结者系列': ['终结者 1TB NVMe', '终结者 512G SATA']
+    },
+    移速: {
+      '猎豹系列': ['猎豹 4TB NVMe', '猎豹 2TB NVMe', '猎豹 1TB NVMe'],
+      '金钱豹系列': ['金钱豹 1TB NVMe', '金钱豹 512G SATA']
+    },
+    金泰克: {
+      'P 系列': ['P700 2TB NVMe', 'P700 1TB NVMe', 'P600 1TB NVMe'],
+      'SATA 系列': ['S500 1TB SATA', 'S300 512G SATA']
+    },
+    海康存储: {
+      'CC 系列': ['CC700 2TB NVMe', 'CC500 1TB NVMe', 'C4000 2TB NVMe', 'E2000 1TB NVMe']
+    },
+    台电: {
+      '幻影系列': ['幻影 2TB NVMe', '幻影 1TB NVMe', '稳影 1TB SATA']
+    },
+    惠普: {
+      'FX 系列': ['FX900 Pro 2TB NVMe', 'FX900 Plus 2TB NVMe', 'EX950 1TB NVMe', 'S750 1TB SATA']
+    },
+    联想: {
+      'SL 系列': ['拯救者 SL7000 2TB NVMe', 'SL700 1TB SATA', 'ThinkLife ST800 512G SATA']
+    },
+    浦科特: {
+      'M 系列': ['M10P 2TB NVMe', 'M10P 1TB NVMe', 'M9P Plus 1TB NVMe']
+    },
+    建兴: {
+      'MU 系列': ['MU III 1TB SATA', 'MU II 512G SATA'],
+      'CA 系列': ['CA3 1TB NVMe', 'CA1 512G NVMe']
+    },
+    铨兴: {
+      'M 系列': ['M600 2TB NVMe', 'N500 1TB NVMe', 'S500 512G SATA']
+    },
+    十铨: {
+      'T-Force 系列': ['T-Force Cardea A440 Pro 2TB NVMe', 'T-Force Cardea Z44Q 1TB NVMe']
+    },
+    海盗船: {
+      'MP 系列': ['MP600 Pro NH 2TB NVMe', 'MP600 Pro XT 4TB NVMe', 'MP510 1TB NVMe']
+    },
+    阿斯加特: {
+      'AN 系列': ['AN4 Pro 2TB NVMe', 'AN4 1TB NVMe', 'AN3 512G NVMe']
+    },
+    京东京造: {
+      '麒麟系列': ['麒麟 2TB NVMe', '麒麟 1TB NVMe', 'JZ-SSD 512G SATA']
+    },
+    白牌: {
+      '白牌固态': ['白牌 NVMe 4T', '白牌 NVMe 2T', '白牌 NVMe 1T', '白牌 NVMe 512G', '白牌 SATA 2T', '白牌 SATA 1T', '白牌 SATA 512G']
     }
   },
 
   '机械硬盘': {
     希捷: {
-      '酷鱼系列': ['酷鱼 8TB 5400 转', '酷鱼 4TB 5400 转', '酷鱼 2TB 7200 转'],
-      '酷狼系列': ['酷狼 Pro 24TB NAS', '酷狼 Pro 16TB NAS', '酷狼 8TB NAS', '酷狼 4TB NAS'],
-      '银河系列': ['Exos M 30TB 企业级', 'Exos X24 24TB 企业级', 'Exos X20 20TB 企业级', 'Exos X18 18TB 企业级', 'Exos 2X18 18TB SAS'],
-      '监控系列': ['SkyHawk 8TB 监控盘', 'SkyHawk 4TB 监控盘']
+      '酷鱼系列': ['酷鱼 8TB 5400 转', '酷鱼 6TB 5400 转', '酷鱼 4TB 5400 转', '酷鱼 2TB 7200 转', '酷鱼 1TB 7200 转'],
+      '酷狼系列': ['酷狼 Pro 24TB NAS', '酷狼 Pro 16TB NAS', '酷狼 Pro 12TB NAS', '酷狼 8TB NAS', '酷狼 4TB NAS'],
+      '银河系列': ['Exos M 30TB 企业级', 'Exos X24 24TB 企业级', 'Exos X20 20TB 企业级', 'Exos X18 18TB 企业级', 'Exos X16 16TB 企业级', 'Exos 7E10 8TB 企业级', 'Exos 2X18 18TB SAS', 'ST16000NM002H 16TB 企业级', 'ST8000NM017B 8TB 企业级'],
+      '监控系列': ['SkyHawk 8TB 监控盘', 'SkyHawk 4TB 监控盘', 'SkyHawk 2TB 监控盘']
     },
     西部数据: {
-      '蓝盘系列': ['蓝盘 8TB 5640 转', '蓝盘 4TB 5400 转', '蓝盘 2TB 7200 转'],
-      '红盘系列': ['红盘 Pro 22TB NAS', '红盘 Pro 14TB NAS', '红盘 Plus 8TB NAS'],
+      '蓝盘系列': ['蓝盘 8TB 5640 转', '蓝盘 4TB 5400 转', '蓝盘 2TB 7200 转', '蓝盘 1TB 7200 转'],
+      '黑盘系列': ['黑盘 4TB 7200 转', '黑盘 2TB 7200 转'],
+      '红盘系列': ['红盘 Pro 22TB NAS', '红盘 Pro 14TB NAS', '红盘 Plus 8TB NAS', '红盘 Plus 4TB NAS', '红盘 6TB NAS'],
       '金盘系列': ['金盘 24TB 企业级', '金盘 18TB 企业级'],
-      '企业级系列': ['Ultrastar DC HC590 26TB', 'Ultrastar DC HC580 24TB', 'Ultrastar DC HC555 12TB', 'Ultrastar DC HC550 18TB'],
-      '监控系列': ['紫盘 8TB 监控盘', '紫盘 4TB 监控盘']
+      '企业级系列': ['Ultrastar DC HC590 26TB', 'Ultrastar DC HC580 24TB', 'Ultrastar DC HC555 12TB', 'Ultrastar DC HC550 18TB', 'Ultrastar DC HC530 14TB', 'Ultrastar DC HC320 8TB', 'WUH722016CLE604 16TB 企业级', 'WUH722016CLE6L4 16TB 企业级', 'WUS721208BLE604 8TB 企业级', 'WUS721208BLE6L4 8TB 企业级'],
+      '监控系列': ['紫盘 8TB 监控盘', '紫盘 4TB 监控盘', '紫盘 2TB 监控盘', 'WD85PURU 8TB 监控盘']
     },
     东芝: {
-      'N300 系列': ['N300 22TB NAS', 'N300 20TB NAS', 'N300 14TB NAS', 'N300 8TB NAS'],
-      'MG 系列': ['MG11ACA 24TB 企业级', 'MG10ACA 20TB 企业级', 'MG08ACA 16TB 企业级', 'MG07ACA 14TB 企业级'],
-      '监控系列': ['S300 8TB 监控盘', 'S300 4TB 监控盘']
+      'N300 系列': ['N300 22TB NAS', 'N300 20TB NAS', 'N300 14TB NAS', 'N300 12TB NAS', 'N300 8TB NAS', 'N300 4TB NAS'],
+      'MG 系列': ['MG11ACA 24TB 企业级', 'MG10ACA 20TB 企业级', 'MG09ACA 18TB 企业级', 'MG08ACA 16TB 企业级', 'MG07ACA 14TB 企业级', 'MG06ACA 10TB 企业级', 'MG11ACA16TE 16TB 企业级'],
+      'P300 台式机': ['P300 6TB 5400 转', 'P300 4TB 5400 转', 'P300 2TB 7200 转'],
+      '监控系列': ['S300 8TB 监控盘', 'S300 4TB 监控盘', 'S300 2TB 监控盘']
+    },
+    日立: {
+      'Ultrastar 系列': ['Ultrastar He12 12TB 企业级', 'Ultrastar He10 10TB 企业级', 'Ultrastar 7K6000 6TB 企业级', 'Ultrastar 7K4000 4TB 企业级', 'Ultrastar 7K3000 3TB 企业级'],
+      '笔记本硬盘': ['Travelstar 1TB 7200 转 2.5 英寸', 'Travelstar 500G 7200 转 2.5 英寸']
     }
   },
 

@@ -16,18 +16,6 @@ const DEFAULT_ROOT = path.resolve(path.dirname(decodeURIComponent(new URL(import
 const ROOT = path.resolve(process.argv[2] || DEFAULT_ROOT)
 const problems = []
 
-/* 小程序内置组件白名单 */
-const BUILTIN = new Set([
-  'view', 'text', 'image', 'button', 'input', 'textarea', 'label', 'form',
-  'scroll-view', 'swiper', 'swiper-item', 'navigator', 'icon', 'rich-text',
-  'progress', 'slider', 'switch', 'picker', 'picker-view', 'picker-view-column',
-  'checkbox', 'checkbox-group', 'radio', 'radio-group', 'label',
-  'movable-area', 'movable-view', 'cover-view', 'cover-image', 'match-media',
-  'page-meta', 'navigation-bar', 'open-data', 'official-account', 'ad',
-  'camera', 'canvas', 'map', 'video', 'audio', 'live-player', 'live-pusher',
-  'web-view', 'block', 'slot', 'template', 'import', 'include', 'wxs'
-])
-
 /* 明确禁止的 HTML 标签 */
 const HTML_TAGS = [
   'br', 'b', 'i', 'u', 'em', 'strong', 'span', 'p', 'div', 'ul', 'ol', 'li',

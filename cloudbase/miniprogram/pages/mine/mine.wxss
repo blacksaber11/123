@@ -1039,3 +1039,66 @@
   border-radius: 999rpx;
   vertical-align: middle;
 }
+
+/* ========== 联系客服（我的页最底部小字链接） ========== */
+.me-kf {
+  padding: 28rpx 0 8rpx;
+  text-align: center;
+}
+.me-kf-link {
+  font-size: 22rpx;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 4rpx;
+}
+.me-kf-link:active {
+  color: var(--brand);
+}
+
+/* ========== 常见问题（帮助与反馈） ========== */
+.faq-list {
+  border-top: 1rpx solid var(--line-2);
+}
+.faq-item {
+  border-bottom: 1rpx solid var(--line-2);
+}
+.faq-q {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 24rpx 0;
+}
+.faq-q-t {
+  flex: 1;
+  min-width: 0;
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.5;
+}
+.faq-arrow {
+  flex: none;
+  color: #B4B4BB;
+  font-size: 28rpx;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform 0.2s ease;
+}
+.faq-arrow.open {
+  transform: rotate(90deg);
+}
+.faq-a {
+  padding: 0 0 24rpx;
+  font-size: 24rpx;
+  color: var(--ink-2);
+  line-height: 1.7;
+  word-break: break-word;
+}
+.faq-more {
+  margin-top: 24rpx;
+  text-align: center;
+  font-size: 22rpx;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 4rpx;
+}

@@ -3,6 +3,7 @@
    LoRA 只算冻结权重 + 约 1.5% 可训练参数的开销。激活用预留比例近似，不追求逐层精确。
    设备既可看推荐，也可以从全部 GPU 设备里自己挑。 */
 const D = require('../../utils/device-spec')
+const catalog = require('../../utils/catalog')
 const guard = require('../../utils/guard')
 const sharePoster = require('../../utils/share-poster')
 
@@ -68,6 +69,15 @@ Page({
     })
     this.setData({ deviceCats: ['全部'].concat(cats) })
     this.recalc()
+    /* 型号目录以服务端为准：管理端新增 / 停用型号后自动刷新 GPU 列表 */
+    catalog.loadCatalog().then(() => {
+      this.gpus = D.buildDevices().filter((x) => x.kind === 'gpu')
+      const cats = []
+      this.gpus.forEach((x) => {
+        if (cats.indexOf(x.cat) < 0) cats.push(x.cat)
+      })
+      this.setData({ deviceCats: ['全部'].concat(cats) }, () => this.recalc())
+    }).catch(() => {})
   },
 
   /* 工具页是公开内容：允许分享给朋友，也允许分享到朋友圈 */
@@ -78,7 +88,7 @@ Page({
 
   onShareAppMessage() {
     return {
-      title: '微调成本测算 · LoRA / 全参要多少显存',
+      title: '微调成本测算 · LoRA / 全参显存与成本',
       desc: '按模型规模与序列长度估算训练显存、机器数量与成本',
       imageUrl: sharePoster.cached('tool', sharePoster.toolSpec('finetune')) || '/assets/share/card-home.png',
       path: '/pages/finetune/finetune'
@@ -87,7 +97,7 @@ Page({
 
   onShareTimeline() {
     return {
-      title: '微调成本测算 · LoRA / 全参要多少显存',
+      title: '微调成本测算 · LoRA / 全参显存与成本',
       query: '',
       imageUrl: sharePoster.cached('tool', sharePoster.toolSpec('finetune')) || '/assets/share/card-home.png'
     }

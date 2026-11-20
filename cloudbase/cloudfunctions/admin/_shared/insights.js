@@ -24,6 +24,9 @@ const MINUTE_MS = 60 * 1000
 /** 在线心跳有效期：超过这个时长视为离线 */
 const ONLINE_TTL_MS = 5 * MINUTE_MS
 
+/** 会话间隔：心跳间隔超过该时长视为上一次访问结束，另起一段会话 */
+const SESSION_GAP_MS = 30 * MINUTE_MS
+
 /** 浏览去重窗口：同一用户对同一对象，窗口内只计一次 */
 const VIEW_DEDUPE_MS = 30 * MINUTE_MS
 
@@ -108,6 +111,36 @@ const RISK_EXTRA_RULES = Object.freeze([
   { code: 'system_payment_pending', type: '系统', label: '收款待确认超时', level: '中', desc: '收款单超过 3 天仍未财务确认' },
   { code: 'system_error', type: '系统', label: '运行错误', level: '高', desc: '近 24 小时出现系统级错误日志' }
 ])
+
+/**
+ * 系统自动处置策略：只处理低风险、规则明确的常见命中，直接归档，不再堆给人工。
+ * 中高风险、涉黄 / 涉暴 / 涉政、账号异常等一律保留人工确认。
+ */
+const RISK_AUTO_POLICY = Object.freeze({
+  low_information: {
+    status: '已忽略',
+    action: '系统自动处置',
+    reason: '信息过少属低风险提示，系统自动归档，不阻断展示'
+  },
+  user_no_license: {
+    status: '已忽略',
+    action: '系统自动处置',
+    reason: '资质未上传属常规提醒，系统自动归档，待用户补充后重新识别'
+  },
+  consult_overdue: {
+    status: '已忽略',
+    action: '系统自动处置',
+    reason: '超时未分配合单提醒，系统自动归档，工单仍在待领取列表'
+  }
+})
+
+/** 联系方式打码：把手机号 / 微信号 / QQ 号替换为掩码，保留其余正文 */
+function maskContactInfo(text) {
+  return String(text || '')
+    .replace(/1[3-9]\d{9}/g, (m) => m.slice(0, 3) + '****' + m.slice(7))
+    .replace(/(微信|weixin|wx|vx|v信)(\s*[:：]?\s*)([a-zA-Z0-9_-]{5,})/gi, (m, k, sep) => k + sep + '***')
+    .replace(/(qq)(\s*[:：]?\s*)(\d{5,12})/gi, (m, k, sep) => k + sep + '***')
+}
 
 /** 榜单维度：品类 */
 const BOARD_SCOPES = Object.freeze(['all', 'GPU', '内存', 'CPU', 'NPU', '存储', '网络', '其他'])
@@ -352,9 +385,36 @@ function windowStartOf(at, windowMs) {
 /** 日期键：YYYY-MM-DD（东八区） */
 function dayKeyOf(at) {
   const d = new Date(at + 8 * 60 * 60 * 1000)
-  const m = ('0' + (d.getMonth() + 1)).slice(-2)
-  const day = ('0' + d.getDate()).slice(-2)
-  return d.getFullYear() + '-' + m + '-' + day
+  const m = ('0' + (d.getUTCMonth() + 1)).slice(-2)
+  const day = ('0' + d.getUTCDate()).slice(-2)
+  return d.getUTCFullYear() + '-' + m + '-' + day
+}
+
+/**
+ * 会话停留累加：按天汇总已完成会话的总时长与次数（键 stay_YYYY-MM-DD）。
+ * 只记录时长与条数，不落任何用户标识，用于看板「平均停留时长」。
+ */
+async function addStayDuration(repo, endAt, duration) {
+  if (!(duration > 0)) return
+  const day = dayKeyOf(endAt)
+  const id = 'stay_' + day
+  const row = await repo.get('stayStats', id).catch(() => null)
+  if (row) {
+    await repo.updateWhere('stayStats', { id }, {
+      totalMs: (Number(row.totalMs) || 0) + duration,
+      sessions: (Number(row.sessions) || 0) + 1,
+      updatedAt: endAt
+    }).catch(() => {})
+    return
+  }
+  await repo.insert('stayStats', {
+    id,
+    day,
+    totalMs: duration,
+    sessions: 1,
+    createdAt: endAt,
+    updatedAt: endAt
+  }).catch(() => {})
 }
 
 function createInsightsUserHandlers(deps) {
@@ -497,12 +557,21 @@ function createInsightsUserHandlers(deps) {
       const id = 'on_' + uid
       const existing = await repo.get('onlineUsers', id)
       if (existing) {
-        await repo.updateWhere('onlineUsers', { id }, { lastSeenAt: at })
+        const last = Number(existing.lastSeenAt) || at
+        const start = Number(existing.sessionStartAt) || Number(existing.createdAt) || last
+        let sessionStartAt = start
+        /* 心跳中断超过会话间隔：上一段停留结算入当日统计，本次另起新会话 */
+        if (at - last > SESSION_GAP_MS) {
+          await addStayDuration(repo, last, last - start)
+          sessionStartAt = at
+        }
+        await repo.updateWhere('onlineUsers', { id }, { lastSeenAt: at, sessionStartAt })
       } else {
         await repo.insert('onlineUsers', {
           id,
           uid,
           lastSeenAt: at,
+          sessionStartAt: at,
           createdAt: at
         }).catch(() => {})
       }
@@ -572,15 +641,28 @@ function createInsightsAdminHandlers(deps) {
   /** 风险单落库：同一对象 + 同一规则只保留一条，重复扫描只刷新详情 */
   async function upsertRiskCase(candidate, at) {
     const fingerprint = `${candidate.type}|${candidate.ruleCode}|${candidate.targetId}`
+    const auto = candidate.status ? null : RISK_AUTO_POLICY[candidate.ruleCode]
     const existing = await repo.find('riskCases', { fingerprint }, { limit: 1 })
     if (existing[0]) {
       if (existing[0].status === '已处理' || existing[0].status === '已忽略') return
-      await repo.updateWhere('riskCases', { fingerprint }, {
+      const patch = {
         targetLabel: candidate.targetLabel,
         detail: candidate.detail,
         level: candidate.level,
         updatedAt: at
-      })
+      }
+      /* 存量待办也按新策略收口：扫描一次就把低风险常见项自动归档 */
+      if (auto) Object.assign(patch, auto)
+      /* 已自动脱敏的存量风险单同步闭环，避免重复落到人工 */
+      if (candidate.status) {
+        Object.assign(patch, {
+          status: candidate.status,
+          owner: candidate.owner || '',
+          action: candidate.action || '',
+          reason: candidate.reason || ''
+        })
+      }
+      await repo.updateWhere('riskCases', { fingerprint }, patch)
       return
     }
     await repo.insert('riskCases', Object.assign({
@@ -592,7 +674,7 @@ function createInsightsAdminHandlers(deps) {
       reason: '',
       createdAt: at,
       updatedAt: at
-    }, candidate))
+    }, auto || {}, candidate))
   }
 
   /** 全量扫描：商品 / 用户 / 咨询 / 对话 / 系统五类风险，幂等写入 riskCases */
@@ -670,10 +752,19 @@ function createInsightsAdminHandlers(deps) {
       const text = String(lead.formSummary || '')
       const label = `咨询单 ${lead.id}`
       if (contactRe.test(text)) {
+        /* 常见违规自动处置：先把咨询正文里的联系方式打码，再以「系统自动脱敏」闭环 */
+        const masked = maskContactInfo(text)
+        if (masked !== text) {
+          await repo.updateWhere('leads', { id: lead.id }, { formSummary: masked, updatedAt: at })
+        }
         await upsertRiskCase({
           type: '咨询', ruleCode: 'consult_contact', ruleLabel: '咨询含联系方式', level: '中',
           targetId: lead.id, targetLabel: label, uid: lead.uid || '',
-          detail: '咨询内容疑似包含手机号 / 微信号'
+          detail: masked !== text ? '系统已自动隐藏正文中的手机号 / 微信号 / QQ 号' : '咨询内容疑似包含手机号 / 微信号',
+          status: masked !== text ? '已处理' : '待处理',
+          owner: masked !== text ? '系统' : '',
+          action: masked !== text ? '系统自动脱敏' : '',
+          reason: masked !== text ? '常见违规自动处置：联系方式已打码，双方仍可通过平台工单对接' : ''
         }, at)
       }
       if (lead.status === '待分配' && at - (Number(lead.createdAt) || at) > DAY_MS) {
@@ -967,7 +1058,7 @@ function createInsightsAdminHandlers(deps) {
      * 风险单：四类视图（商品 / 用户 / 咨询 / 系统）。
      * refresh=true 时先跑一次全量扫描，再返回结果。
      */
-    'risk.cases': async (data) => {
+    'risk.cases': async (data, ctx) => {
       const at = now()
       if (data.refresh) await scanRiskCases(at)
       const page = normalizePaging(data)
@@ -997,6 +1088,10 @@ function createInsightsAdminHandlers(deps) {
         if (counts.byStatus[row.status] !== undefined) counts.byStatus[row.status] += 1
         if (counts.byLevel[row.level] !== undefined) counts.byLevel[row.level] += 1
       }
+      /* 系统自动处置量：owner 为「系统」或动作以「系统自动」开头 */
+      counts.auto = allRows.filter((row) => row.owner === '系统'
+        || String(row.action || '').indexOf('系统自动') === 0).length
+      const me = String((ctx && ctx.session && ctx.session.accountId) || '')
       const items = rows.slice((page.page - 1) * page.limit, page.page * page.limit).map((row) => ({
         id: row.id,
         type: row.type,
@@ -1009,6 +1104,9 @@ function createInsightsAdminHandlers(deps) {
         detail: row.detail || '',
         status: row.status,
         owner: row.owner || '',
+        /* 领取归属：只有领取人（或转单后的新处理人）可以处置，其他人只能转单 */
+        ownerAccount: row.ownerAccount || '',
+        ownedByMe: !!row.ownerAccount && !!me && row.ownerAccount === me,
         action: row.action || '',
         reason: row.reason || '',
         createdAt: Number(row.createdAt) || 0,
@@ -1035,20 +1133,37 @@ function createInsightsAdminHandlers(deps) {
       }
     },
 
-    /** 风险单处置：认领 / 处理中 / 已处理 / 已忽略，全程留痕 */
+    /**
+     * 风险单处置：领取 / 处理中 / 已处理 / 已忽略，全程留痕。
+     * 领取后只有领取人能继续处置，其他人（含管理员）只能先转单；未领取不允许直接处置。
+     */
     'risk.caseUpdate': async (data, ctx) => {
       const id = str(data.id, { field: '风险单', required: true, max: 64 })
       const row = await repo.get('riskCases', id)
       if (!row) throw new AppError(CODES.NOT_FOUND, '风险单不存在')
       const at = now()
+      const me = String((ctx && ctx.session && ctx.session.accountId) || '')
       const status = data.status ? enumOf(data.status, RISK_CASE_STATUS_LIST, '处置状态') : row.status
-      const owner = data.owner !== undefined ? str(data.owner, { field: '处理人', max: 32 }) : (row.owner || '')
+      /* 待处理 -> 处理中 即视为领取，写入领取人归属 */
+      const isClaim = status === '处理中' && row.status !== '处理中'
+      const currentOwner = String(row.ownerAccount || '')
+      if (currentOwner && currentOwner !== me) {
+        throw new AppError(CODES.CONFLICT, `该风险单已由 ${row.owner || '其他同事'} 领取，请先转单`)
+      }
+      if (!currentOwner && !isClaim) {
+        throw new AppError(CODES.FORBIDDEN, '请先领取该风险单，再进行处理')
+      }
+      const owner = data.owner !== undefined
+        ? str(data.owner, { field: '处理人', max: 32 })
+        : (row.owner || (isClaim ? String((ctx && ctx.session && ctx.session.name) || '') : ''))
       const action = data.action !== undefined ? str(data.action, { field: '处置动作', max: 60 }) : (row.action || '')
       const reason = data.reason !== undefined ? str(data.reason, { field: '处置说明', max: 200 }) : (row.reason || '')
-      const res = await repo.updateWhere('riskCases', { id }, { status, owner, action, reason, updatedAt: at })
+      const res = await repo.updateWhere('riskCases', { id }, {
+        status, owner, ownerAccount: me || currentOwner, action, reason, updatedAt: at
+      })
       if (!res || !res.count) throw new AppError(CODES.CONFLICT, '风险单状态已变更，请刷新后重试')
       await audit(ctx, 'risk.caseUpdate', id, `${status}${reason ? '：' + reason : ''}`)
-      return { id, status, owner, action, reason, updatedAt: at }
+      return { id, status, owner, ownerAccount: me || currentOwner, ownedByMe: true, action, reason, updatedAt: at }
     }
   }
 }

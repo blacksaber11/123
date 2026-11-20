@@ -4,7 +4,7 @@
   <view class="msg-nav" style="padding-top: {{statusBarH}}px">
     <view class="nav-bar" style="height: {{navH}}px">
       <view class="nav-back" bindtap="back">‹</view>
-      <view class="nav-title" bindtap="openPeerHome"><text class="nav-title-name">{{chatTitle}}</text><text wx:if="{{!chatPrivate && chatMember}}" class="nav-member">{{chatMember}}</text><text wx:if="{{!chatPrivate && chatPeerKey}}" class="nav-title-arrow">›</text></view>
+      <view class="nav-title" bindtap="openPeerHome"><text class="nav-title-name">{{chatTitle}}</text><text wx:if="{{!chatPrivate && chatSubject && chatSubject !== chatTitle}}" class="nav-subject">· {{chatSubject}}</text><text wx:if="{{!chatPrivate && chatMember}}" class="nav-member">{{chatMember}}</text><text wx:if="{{!chatPrivate && chatPeerKey}}" class="nav-title-arrow">›</text></view>
     </view>
   </view>
 
@@ -67,7 +67,8 @@
           <view wx:if="{{item.kind === 'image'}}" class="chat-bubble bubble-media">
             <view wx:if="{{item.mediaExpired}}" class="chat-media-dead">图片已过期</view>
             <image wx:else class="chat-img" src="{{item.src || item.image}}" mode="widthFix" show-menu-by-longpress="{{false}}" data-id="{{item.id}}" data-src="{{item.image}}" bindtap="previewImage" />
-            <text wx:if="{{wmOn}}" class="chat-img-wm">{{wmText}}</text>
+            <!-- 水印跟着发送方：我发出的受开关控制，别人发来的固定标对方 -->
+            <text wx:if="{{item.role === 'me' ? wmOn : true}}" class="chat-img-wm">{{item.role === 'me' ? wmText : peerWm}}</text>
           </view>
           <view wx:elif="{{item.kind === 'video'}}" class="chat-bubble bubble-media" data-id="{{item.id}}" bindtap="playVideo">
             <view wx:if="{{item.mediaExpired}}" class="chat-media-dead">视频已过期</view>
@@ -75,7 +76,7 @@
               <view class="cv-play"></view>
               <text class="cv-badge">视频</text>
             </view>
-            <text wx:if="{{wmOn}}" class="chat-img-wm">{{wmText}}</text>
+            <text wx:if="{{item.role === 'me' ? wmOn : true}}" class="chat-img-wm">{{item.role === 'me' ? wmText : peerWm}}</text>
           </view>
           <view wx:elif="{{item.kind === 'card'}}" class="chat-bubble bubble-card">
             <!-- 方形名片：只展示摘要，点击打开名片详情，不在气泡里铺开隐私信息 -->
@@ -149,32 +150,27 @@
       </view>
       </block>
     </view>
-
-    <!-- 整页水印：绑当前账号的 ID + 昵称；设置关闭后不渲染 -->
-    <view wx:if="{{wmOn}}" class="chat-wm">
-      <text wx:for="{{wmTiles}}" wx:key="k" class="chat-wm-t">{{item.t}}</text>
-    </view>
   </view>
 
   <!-- 聊天图片查看器：页内放大并叠水印，不提供长按菜单 / 保存 -->
   <view wx:if="{{imgOpen}}" class="img-pop" bindtap="closeImage">
     <image class="img-pop-img" src="{{imgSrc}}" mode="aspectFit" show-menu-by-longpress="{{false}}" catchtouchmove="stopTap" />
-    <!-- 满屏平铺水印：与页面水印同源（账号 ID + 昵称），放大后依然清晰可追溯 -->
-    <view wx:if="{{wmOn}}" class="img-pop-wms">
-      <text wx:for="{{wmTiles}}" wx:key="k" class="img-pop-wms-t">{{item.t}}</text>
+    <!-- 满屏平铺水印：标这张图的发送方，谁截图都带发送方标识 -->
+    <view wx:if="{{imgWm}}" class="img-pop-wms">
+      <text wx:for="{{imgWmTiles}}" wx:key="k" class="img-pop-wms-t">{{item.t}}</text>
     </view>
-    <text wx:if="{{wmOn}}" class="img-pop-wm">{{wmText}}</text>
-    <text class="img-pop-tip">{{wmOn ? '仅平台内查看 · 画面已叠加你的账号水印' : '仅平台内查看'}}</text>
+    <text wx:if="{{imgWm}}" class="img-pop-wm">{{imgWm}}</text>
+    <text class="img-pop-tip">{{imgWm ? '仅平台内查看 · 画面已叠加发送方水印' : '仅平台内查看'}}</text>
   </view>
 
   <!-- 聊天视频查看器：页内播放并叠水印，不走系统播放器（系统播放器无法加水印） -->
   <view wx:if="{{videoOpen}}" class="video-pop">
     <video class="video-pop-player" id="chatVideo" src="{{videoSrc}}" poster="{{videoPoster}}" autoplay controls object-fit="contain" show-center-play-btn="{{true}}" bindended="closeVideo"></video>
-    <cover-view wx:if="{{wmOn}}" class="video-pop-wm">
-      <cover-view wx:for="{{wmTiles}}" wx:key="k" class="video-pop-wm-t">{{item.t}}</cover-view>
+    <cover-view wx:if="{{videoWm}}" class="video-pop-wm">
+      <cover-view wx:for="{{videoWmTiles}}" wx:key="k" class="video-pop-wm-t">{{item.t}}</cover-view>
     </cover-view>
     <cover-view class="video-pop-close" catchtap="closeVideo">关闭</cover-view>
-    <view class="video-pop-tip">{{wmOn ? '仅平台内播放 · 画面已叠加你的账号水印' : '仅平台内播放'}}</view>
+    <view class="video-pop-tip">{{videoWm ? '仅平台内播放 · 画面已叠加发送方水印' : '仅平台内播放'}}</view>
   </view>
 
   <!-- 名片详情：聊天里点方形名片打开，完整信息在这里看，避免气泡里铺满隐私字段 -->
@@ -221,7 +217,7 @@
       </view>
 
       <view class="cs-tip">名片信息由对方主动发送，请先核验对方身份与资质；签约与付款由双方线下完成，注意保留凭证。</view>
-      <view class="cs-wm">{{wmText}}</view>
+      <view wx:if="{{cardWm}}" class="cs-wm">{{cardWm}}</view>
       <view class="cs-btns">
         <button class="btn sm" bindtap="closeCard">关闭</button>
         <button wx:if="{{cardDetail.phone}}" class="btn sm primary" data-phone="{{cardDetail.phone}}" bindtap="callCardPhone">拨打电话</button>

@@ -190,7 +190,7 @@
   display: block;
   background: #0F1020;
 }
-/* 水印铺满轮播：不点开图片 / 视频也能看到账号标识 */
+/* 水印铺满轮播：不点开图片 / 视频也能看到发布方标识 */
 .ms-wm-wall {
   position: absolute;
   inset: 0;
@@ -1131,7 +1131,7 @@
   border-radius: 10rpx;
   padding: 8rpx 16rpx;
 }
-/* 水印网格：2 列 × 6 行铺满查看层（12 块），保证任意裁剪区域都带账号标识 */
+/* 水印网格：2 列 × 6 行铺满查看层（12 块），保证任意裁剪区域都带发布方标识 */
 .vw-wm {
   position: absolute;
   inset: 0;
@@ -1152,7 +1152,7 @@
   transform: rotate(-24deg);
   white-space: nowrap;
 }
-/* 查看层底部完整水印：用户 + 线索号 + 时间 + 禁止转发下载 */
+/* 查看层底部完整水印：发布方标识 + 仅平台内查看 */
 .vw-id {
   position: absolute;
   left: 0;

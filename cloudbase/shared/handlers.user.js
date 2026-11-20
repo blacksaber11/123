@@ -21,9 +21,16 @@ const {
   VISIBILITY_LABELS,
   PUBLISH_CHANNELS,
   TIERS,
-  CHAT_RETENTION_DAYS
+  CHAT_RETENTION_DAYS,
+  CONSULT_STAGE
 } = require('./constants')
 const { encryptField, decryptField, blindIndex, randomId, sha256Hex, userNoOf } = require('./crypto')
+/* 内置型号库：与服务端同源，接口下发给小程序做滚轮兜底 + 完整目录 */
+const { DEVICE_CATALOG } = require('./device-catalog')
+/* 型号归一：型号库去重按「品类 + 品牌 + 归一化型号」判断，忽略空格与分隔符 */
+const { normModel } = require('./model')
+/* 粘贴文字识别规则：与小程序同一份实现，规则调整只部署云函数即可生效，不用重新提审小程序 */
+const parseRules = require('./publish-parse')
 const { assertAllowed } = require('./restrictions')
 const { createQuota, isExhausted, KINDS: QUOTA_KINDS } = require('./notify-quota')
 const { recordSensitiveRisk } = require('./sensitive')
@@ -52,13 +59,15 @@ const {
   assertNoPlaintextContact,
   assertNoPlaintextContactAllowingPhone
 } = require('./projection')
-const { encryptFields, decryptFieldOf, masked } = require('./secrets')
+const { encryptFields, decryptFieldOf } = require('./secrets')
 const { appendAudit } = require('./audit')
-const { buildProduct, buildDemand, judgeTier, blockedLifecycle, mustForDemand, normalizeMedia } = require('./domain')
-const { notifyNewBizMatch } = require('./market')
+const { buildProduct, buildDemand, judgeTier, blockedLifecycle, normalizeMedia } = require('./domain')
+const { notifyNewBizMatch, countBizMatches } = require('./market')
 const { detectRisk, normalizeModel } = require('./insights')
 const { chatKindOf, mediaState, chatCutoff, DAY_MS } = require('./chatmedia')
 const { createPromoteEngine } = require('./promote')
+/* 用户黑名单：私聊拦截、内容过滤与黑名单管理共用 */
+const { blockIdOf, blockedPeerIds, isBlocked, blockedBetween } = require('./blocks')
 const { CS_STATUS, RATING_TAGS, csStatusOf } = require('./cs')
 const {
   TICKET_STATE,
@@ -339,6 +348,93 @@ function productListSort(sort, hasKeyword) {
   return byCreatedAt
 }
 
+/* 型号目录：内置目录按「品类 / 品牌 / 系列 / 型号」深拷贝，避免平台覆盖记录改动到进程内常量 */
+function cloneDeviceCatalog() {
+  const tree = {}
+  for (const cat of Object.keys(DEVICE_CATALOG || {})) {
+    const brands = DEVICE_CATALOG[cat] || {}
+    const outBrands = (tree[cat] = {})
+    for (const brand of Object.keys(brands)) {
+      const seriesMap = brands[brand] || {}
+      const outSeries = (outBrands[brand] = {})
+      for (const series of Object.keys(seriesMap)) {
+        outSeries[series] = (seriesMap[series] || []).slice()
+      }
+    }
+  }
+  return tree
+}
+
+/** 型号去重键：同一品类 / 品牌下，忽略空格、大小写与分隔符后相同的型号视为同一条 */
+function catalogModelKeyOf(item) {
+  return [normModel(item.cat), normModel(item.brand), normModel(item.model)].join('::')
+}
+
+/** 从目录里摘掉一个型号：同品类 / 品牌下所有同写法（只差空格 / 分隔符）的变体一起摘掉 */
+function removeTreeNode(tree, item) {
+  const brandMap = tree[item.cat] && tree[item.cat][item.brand]
+  if (!brandMap) return
+  const key = catalogModelKeyOf(item)
+  for (const series of Object.keys(brandMap)) {
+    const arr = brandMap[series] || []
+    const keep = arr.filter((model) => catalogModelKeyOf({ cat: item.cat, brand: item.brand, model }) !== key)
+    if (keep.length) brandMap[series] = keep
+    else delete brandMap[series]
+  }
+  if (!Object.keys(brandMap).length) delete tree[item.cat][item.brand]
+  if (tree[item.cat] && !Object.keys(tree[item.cat]).length) delete tree[item.cat]
+}
+
+/**
+ * 型号去重：同一「品类 + 品牌」下，忽略空格、大小写与分隔符后相同的型号只保留一条。
+ * 型号库出现过「FusionServer 2288H V7」与「2288HV7」这类同物异写，
+ * 也出现过同一型号被录在不同系列里；不去重时发布页滚轮会出现两个看起来一样的选项。
+ */
+function dedupeCatalogTree(tree) {
+  /* 先统一写法：同品牌下只差空格 / 分隔符的型号，展示时沿用先出现的规范写法 */
+  const spellings = new Map()
+  const spellKeyOf = (brand, model) => normModel(brand) + '::' + normModel(model)
+  for (const cat of Object.keys(tree)) {
+    for (const brand of Object.keys(tree[cat] || {})) {
+      for (const series of Object.keys(tree[cat][brand] || {})) {
+        for (const model of tree[cat][brand][series] || []) {
+          const key = spellKeyOf(brand, model)
+          if (!spellings.has(key)) spellings.set(key, model)
+        }
+      }
+    }
+  }
+  for (const cat of Object.keys(tree)) {
+    const brands = tree[cat] || {}
+    for (const brand of Object.keys(brands)) {
+      const seriesMap = brands[brand] || {}
+      const seen = new Set()
+      for (const series of Object.keys(seriesMap)) {
+        const keep = []
+        for (const raw of seriesMap[series] || []) {
+          const model = spellings.get(spellKeyOf(brand, raw)) || raw
+          const key = catalogModelKeyOf({ cat, brand, model })
+          if (seen.has(key)) continue
+          seen.add(key)
+          keep.push(model)
+        }
+        if (keep.length) seriesMap[series] = keep
+        else delete seriesMap[series]
+      }
+      if (!Object.keys(seriesMap).length) delete brands[brand]
+    }
+    if (!Object.keys(brands).length) delete tree[cat]
+  }
+  return tree
+}
+
+/* 粘贴识别用的城市索引：行政区划是静态数据，容器内只建一次 */
+let PARSE_CITY_INDEX = null
+function parseCityIndex() {
+  if (!PARSE_CITY_INDEX) PARSE_CITY_INDEX = parseRules.buildCityIndex()
+  return PARSE_CITY_INDEX
+}
+
 function createUserHandlers(deps) {
   const { repo, keys } = deps
   /* 微信订阅消息推送由云函数注入；本地测试 / 未配置环境变量时为 undefined */
@@ -476,32 +572,70 @@ function createUserHandlers(deps) {
     return user
   }
 
+  /**
+   * 社交功能总开关（评论 / 私信 / 对话）：管理端「媒体 → 社交功能」控制，默认关闭。
+   * 关闭后评论与对话全部暂停；历史内容保留，开关打开后恢复。
+   * 兼容旧配置：没有 socialEnabled 时按 chatEnabled 判断。
+   */
+  async function socialFeatureOn() {
+    const doc = (await repo.get('settings', 'site')) || {}
+    if (doc.socialEnabled !== undefined) return doc.socialEnabled === true
+    return doc.chatEnabled === true
+  }
+
+  async function assertChatEnabled() {
+    if (!(await socialFeatureOn())) {
+      throw new AppError(CODES.FORBIDDEN, '该功能暂未开放，请通过平台客服联系')
+    }
+  }
+
   async function readProfile(uid) {
     const rows = await repo.find('profiles', { uid }, { limit: 1 })
     return rows[0] || null
   }
 
   /**
-   * 进入商机池的前置条件：发布内容公开，且个人信息 / 企业信息设为「公开主体」。
-   * 只有公开主体才能发布商机可见内容；不公开主体只能普通发布，否则商机会员拿到的是匿名商机。
+   * 发布识别兜底交易地：账号资料城市 → 本人最近一条商品的交易地 → 平台默认城市，
+   * 保证识别结果不留空城市，用户少选一步（默认城市可用 PUBLISH_DEFAULT_CITY 覆盖）。
    */
-  async function assertCanJoinPool(uid, data) {
-    /* 只有显式选择商机渠道时校验；历史调用未传 channel / bizPool 时保持原行为 */
-    const channel = data.channel || (data.bizPool === true ? PUBLISH_CHANNELS.BOTH : PUBLISH_CHANNELS.NORMAL)
-    if (channel === PUBLISH_CHANNELS.NORMAL) return
-    if ((data.visibility || VISIBILITIES.PUBLIC) === VISIBILITIES.PRIVATE) {
-      throw new AppError(CODES.VALIDATION, '保密发布不能进入商机池，请改为公开或关闭「进入商机池」')
-    }
-    const profile = await readProfile(uid)
-    const exposure = String((profile && profile.exposure) || '').trim()
-    if (exposure !== EXPOSURES.OPEN) {
-      throw new AppError(CODES.VALIDATION, '只有「公开主体」才能进入商机池，请先在个人信息的公开范围中选择公开主体，或关闭「进入商机池」')
-    }
+  async function publishPlaceOf(uid) {
+    if (!uid) return { province: '', city: '' }
+    try {
+      const profile = await readProfile(uid)
+      const place = parseRules.placeOfCity(profile && profile.city)
+      if (place.city) return place
+    } catch (e) { /* 资料读不到就继续用历史发布地 */ }
+    try {
+      const rows = await repo.find('products', { ownerId: uid }, {
+        sort: { field: 'createdAt', dir: 'desc' },
+        limit: 5
+      })
+      for (const row of rows) {
+        const place = parseRules.placeOfCity(row && row.city)
+        if (place.city) return place
+      }
+    } catch (e) { /* 历史商品读不到就用平台默认城市 */ }
+    return parseRules.placeOfCity(String(env.PUBLISH_DEFAULT_CITY || '深圳市'))
   }
 
   /**
-   * 发布即提醒：正式发布且进入商机池的内容，给发布者与匹配会员各发一次提醒。
-   * 草稿、保密内容、普通渠道都不提醒；提醒失败不影响发布结果。
+   * 黑名单对象解析：客户端只可能拿到对方主页的不可逆 ownerKey（不暴露 uid），
+   * 会话内操作则直接传 uid；两者都取不到时按参数错误处理。
+   */
+  async function resolveBlockPeer(data) {
+    const peerUid = str(data.uid, { field: '用户', max: 64 })
+    if (peerUid) return peerUid
+    const ownerKey = str(data.ownerKey, { field: '货主标识', max: 64 })
+    if (!ownerKey) throw new AppError(CODES.VALIDATION, '请选择要拉黑的用户')
+    const hit = await uidByOwnerKey(repo, ownerKey)
+    if (!hit) throw new AppError(CODES.NOT_FOUND, '用户不存在')
+    return hit
+  }
+
+  /**
+   * 发布即提醒：正式发布且进入商机池的内容，给发布者与匹配用户各发一次提醒。
+   * 普通发布（visibility=public）自动进池并提醒；私密发布不进池、不提醒。
+   * 提醒失败不影响发布结果。
    */
   async function notifyBizPool(kind, doc, at) {
     if (!doc || doc.bizPool !== true) return
@@ -513,15 +647,22 @@ function createUserHandlers(deps) {
   }
 
   /* ---------- 直聊会话：会话 id 复用咨询线索 id，双方各持一份消息副本 ---------- */
-  async function peerDisplayName(peerId) {
-    if (!peerId) return '对方'
+  /** 会话对方身份：昵称为主，主体名只作公开时的小字点缀；一次查询同时返回两者 */
+  async function peerIdentity(peerId) {
+    if (!peerId) return { name: '对方', subject: '' }
     try {
       const map = await publicOwnerMap([peerId])
       const info = map.get(peerId)
-      /* 主体未公开时只给中性称呼，绝不把真实主体写进消息表 */
-      if (info && info.subject) return info.subject
-    } catch (err) { /* 称呼失败不影响会话本身 */ }
-    return '用户'
+      return {
+        /* 历史账号没有昵称时回退主体名 */
+        name: (info && (info.nick || info.subject)) || '用户',
+        subject: (info && info.revealed && info.subject) || ''
+      }
+    } catch (err) { return { name: '用户', subject: '' } }
+  }
+
+  async function peerDisplayName(peerId) {
+    return (await peerIdentity(peerId)).name
   }
 
   /** 商机会员判定：已开通且在有效期内；直聊里用于展示「商机会员」标识 */
@@ -871,7 +1012,8 @@ function createUserHandlers(deps) {
       repo.find('users', { id: { $in: ids } }, { limit: ids.length })
     ])
     const usersById = new Map(users.map((u) => [u.id, u]))
-    for (const uid of ids) map.set(uid, { exposure: EXPOSURES.HIDDEN, ownerKey: ownerKeyOf(uid), city: '', verified: false })
+    const nickOf = (uid) => maskSensitiveText(String((usersById.get(uid) || {}).nick || '').trim()).slice(0, 24)
+    for (const uid of ids) map.set(uid, { exposure: EXPOSURES.HIDDEN, ownerKey: ownerKeyOf(uid), city: '', verified: false, nick: nickOf(uid) })
     for (const p of profiles) {
       const exposure = p.exposure === EXPOSURES.OPEN ? EXPOSURES.OPEN : EXPOSURES.HIDDEN
       const revealed = exposure === EXPOSURES.OPEN
@@ -884,6 +1026,8 @@ function createUserHandlers(deps) {
         /* 匿名货主键：任何档位都下发，用于关注；与主体是否公开无关 */
         ownerKey: ownerKeyOf(p.uid),
         city: p.city || '',
+        /* 昵称：任何档位都下发，主页与会话标题以人为主，主体名只作点缀 */
+        nick: nickOf(p.uid),
         label: exposure === EXPOSURES.OPEN ? '公开主体' : '主体已隐藏',
         revealed,
         phonePublic,
@@ -1185,6 +1329,51 @@ function createUserHandlers(deps) {
     }))
   }
 
+  /**
+   * 型号目录（内置 + 平台覆盖）：滚轮下发与粘贴识别共用，
+   * 保证「管理端加的型号」两边都能匹配到；不做缓存，改型号后下一次识别立即生效。
+   */
+  async function mergedCatalog() {
+    const rows = await repo.find('catalog', {}, {
+      sort: { field: 'updatedAt', dir: 'desc' },
+      limit: 5000
+    })
+    const items = rows.map((row) => ({
+      key: [row.cat, row.brand, row.series, row.model].join('::'),
+      cat: row.cat,
+      brand: row.brand,
+      series: row.series,
+      model: row.model,
+      status: row.status || 'active'
+    }))
+    const tree = cloneDeviceCatalog()
+    const activeItems = []
+    const blockedItems = []
+    items.forEach((item) => {
+      if (!item.cat || !item.brand || !item.series || !item.model) return
+      if (item.status !== 'active') blockedItems.push(item)
+      else activeItems.push(item)
+    })
+    /* 停用 / 删除：同型号的所有写法（含只差空格的变体、不同系列）一起摘掉 */
+    const blockedKeys = new Set(blockedItems.map(catalogModelKeyOf))
+    blockedItems.forEach((item) => removeTreeNode(tree, item))
+    activeItems.forEach((item) => {
+      if (blockedKeys.has(catalogModelKeyOf(item))) return
+      const cat = tree[item.cat] || (tree[item.cat] = {})
+      const brand = cat[item.brand] || (cat[item.brand] = {})
+      const series = brand[item.series] || (brand[item.series] = [])
+      if (series.indexOf(item.model) < 0) series.push(item.model)
+    })
+    dedupeCatalogTree(tree)
+    return { tree, items }
+  }
+
+  /* 粘贴识别用的型号索引：与滚轮同一份目录，每次识别按最新目录重建 */
+  async function parseDeviceIndex() {
+    const merged = await mergedCatalog()
+    return parseRules.buildDeviceIndex(merged.tree)
+  }
+
   return {
     /** 用户登录：按 openid 建 / 更新用户，返回不含权限敏感字段的资料 */
     'auth.login': async (data, ctx) => {
@@ -1222,15 +1411,43 @@ function createUserHandlers(deps) {
       /* 登录也拦一道：停用账号不应拿到任何用户端数据 */
       if (user.status === '停用') throw new AppError(CODES.FORBIDDEN, '账号已停用，请联系平台客服')
       /* 分享链接带推广码：登录即自动绑定；已绑定 / 推广者未开通 / 自己的码都静默跳过 */
+      let promoterBind = null
       if (data.ref) {
         try {
-          await promoteEngine.bindOnLogin(user.id, data.ref, str(data.refScene, { field: '来源', max: 24 }) || 'login')
+          promoterBind = await promoteEngine.bindOnLogin(user.id, data.ref, str(data.refScene, { field: '来源', max: 24 }) || 'login')
         } catch (bindErr) {
-          /* 绑定失败不影响登录，下次登录会再试 */
+          /* 绑定失败不影响登录：格式非法等校验错误按终态处理，避免客户端拿着坏码反复重试；
+             其余（临时故障）回执 retry，客户端保留推广码，下次登录再试 */
+          const invalid = bindErr instanceof AppError && bindErr.code === CODES.VALIDATION
+          promoterBind = { bound: false, reason: invalid ? 'invalid-ref' : 'retry' }
         }
       }
       const profile = await readProfile(user.id)
-      return buildProfileView(user, profile)
+      /* 推广码落地埋点：记录最近一次登录带来的推广码与处理结论，
+         用于区分「分享卡片根本没带 ref」和「带了 ref 但没绑上」；同一个码不重复写库 */
+      const refIn = data.ref ? String(data.ref).trim().toUpperCase().slice(0, 16) : ''
+      if (refIn && user.lastRefCode !== refIn) {
+        const patch = {
+          lastRefCode: refIn,
+          lastRefAt: now(),
+          lastRefResult: promoterBind && promoterBind.bound === true
+            ? 'bound'
+            : String((promoterBind && promoterBind.reason) || 'no-ref')
+        }
+        await repo.updateWhere('users', { id: user.id }, patch)
+        user = Object.assign({}, user, patch)
+      }
+      const view = buildProfileView(user, profile)
+      /* 分享归因：所有登录用户都下发自己的推广码，普通用户转发 / 存海报也能带码，
+         这条链路只改服务端、不需要小程序发版。是否产生佣金仍由 promoterStatus 决定；
+         客户端只把 active 当作「可以缓存并使用推广码」的开关，不用于任何佣金展示 */
+      if (!(view.promoter && view.promoter.refCode) && user.promoterStatus !== 'blocked') {
+        const shareCode = String(user.refCode || '') || await promoteEngine.ensureRefCode(user.id)
+        if (shareCode) view.promoter = { active: true, refCode: shareCode }
+      }
+      /* 只回执绑定结论，不带上家身份：客户端据此决定推广码要不要继续保留 */
+      if (promoterBind) view.promoterBind = { bound: promoterBind.bound === true, reason: promoterBind.reason || '' }
+      return view
     },
 
     /**
@@ -1641,7 +1858,6 @@ function createUserHandlers(deps) {
         [data.title, data.note, data.accept, data.requirements, data.limit, data.must, data.nego, data.flow],
         '发布内容'
       )
-      if (!isDraft) await assertCanJoinPool(uid, data)
       const at = now()
       const doc = buildProduct(data, uid, at, { relaxed: isDraft })
       /* 补充手机号（选填）：仅坐席可见，加密落库；编辑回填时解密给属主本人 */
@@ -1691,7 +1907,9 @@ function createUserHandlers(deps) {
           status: patch.status,
           visibility: patch.visibility,
           visibilityLabel: VISIBILITY_LABELS[patch.visibility],
-          stockSynced
+          stockSynced,
+          /* 发布回执：当前有多少条求购与它匹配；草稿保存不算 */
+          matchCount: isDraft ? 0 : await countBizMatches(repo, { kind: 'product', doc: patch })
         }
       }
       /* 先做输出投影的泄漏校验，再落库：脏数据一旦入库会让所有人的列表投影失败 */
@@ -1721,7 +1939,9 @@ function createUserHandlers(deps) {
         status: doc.status,
         visibility: doc.visibility,
         visibilityLabel: VISIBILITY_LABELS[doc.visibility],
-        stockSynced
+        stockSynced,
+        /* 发布回执：当前有多少条求购与它匹配；草稿保存不算 */
+        matchCount: isDraft ? 0 : await countBizMatches(repo, { kind: 'product', doc })
       }
     },
 
@@ -1747,21 +1967,9 @@ function createUserHandlers(deps) {
       /* 草稿字段可能不全：先按宽松口径取回已存内容，再走完整校验 */
       const payload = productPayloadOf(product)
       const checked = buildProduct(payload, uid, now(), { relaxed: false })
-      /* 草稿期间若把主体改为非公开，转正式发布时自动退出商机池（普通发布不受影响） */
-      checked.channel = product.channel || checked.channel
-      checked.bizPool = product.bizPool === true
-      if (checked.visibility === VISIBILITIES.PRIVATE) {
-        checked.channel = PUBLISH_CHANNELS.NORMAL
-        checked.bizPool = false
-      } else if (checked.channel !== PUBLISH_CHANNELS.NORMAL) {
-        const profile = await readProfile(uid)
-        if (String((profile && profile.exposure) || '') !== EXPOSURES.OPEN) {
-          checked.channel = PUBLISH_CHANNELS.NORMAL
-          checked.bizPool = false
-        }
-      }
-      /* 普通发布不进商机池：领取名额同步归零 */
-      if (checked.channel === PUBLISH_CHANNELS.NORMAL) checked.claimLimit = 0
+      /* 普通发布自动进池、私密发布不进池；与主体是否公开无关 */
+      checked.bizPool = checked.visibility !== VISIBILITIES.PRIVATE
+      checked.channel = checked.bizPool ? (product.channel || checked.channel) : PUBLISH_CHANNELS.NORMAL
       const at = now()
       const res = await repo.updateWhere(
         'products',
@@ -1851,7 +2059,6 @@ function createUserHandlers(deps) {
         [data.title, data.note, data.accept, data.requirements, data.limit, data.must, data.nego, data.flow],
         '发布内容'
       )
-      if (!isDraft) await assertCanJoinPool(uid, data)
       const at = now()
       const doc = buildDemand(data, uid, at, { relaxed: isDraft })
       doc.id = doc.id || randomId('D')
@@ -1881,7 +2088,9 @@ function createUserHandlers(deps) {
           tradeMode: doc.tradeMode,
           status: patch.status,
           visibility: patch.visibility,
-          visibilityLabel: VISIBILITY_LABELS[patch.visibility]
+          visibilityLabel: VISIBILITY_LABELS[patch.visibility],
+          /* 发布回执：当前有多少条货源与它匹配；草稿保存不算 */
+          matchCount: isDraft ? 0 : await countBizMatches(repo, { kind: 'demand', doc: patch })
         }
       }
       /* 先校验再落库，避免脏数据入库后拖垮全量列表投影 */
@@ -1906,7 +2115,9 @@ function createUserHandlers(deps) {
         tradeMode: doc.tradeMode,
         status: doc.status,
         visibility: doc.visibility,
-        visibilityLabel: VISIBILITY_LABELS[doc.visibility]
+        visibilityLabel: VISIBILITY_LABELS[doc.visibility],
+        /* 发布回执：当前有多少条货源与它匹配；草稿保存不算 */
+        matchCount: isDraft ? 0 : await countBizMatches(repo, { kind: 'demand', doc })
       }
     },
 
@@ -1927,21 +2138,9 @@ function createUserHandlers(deps) {
       await assertProfileReady(uid)
       const payload = demandPayloadOf(demand)
       const checked = buildDemand(payload, uid, now(), { relaxed: false })
-      /* 草稿期间若把主体改为非公开，转正式发布时自动退出商机池（普通发布不受影响） */
-      checked.channel = demand.channel || checked.channel
-      checked.bizPool = demand.bizPool === true
-      if (checked.visibility === VISIBILITIES.PRIVATE) {
-        checked.channel = PUBLISH_CHANNELS.NORMAL
-        checked.bizPool = false
-      } else if (checked.channel !== PUBLISH_CHANNELS.NORMAL) {
-        const profile = await readProfile(uid)
-        if (String((profile && profile.exposure) || '') !== EXPOSURES.OPEN) {
-          checked.channel = PUBLISH_CHANNELS.NORMAL
-          checked.bizPool = false
-        }
-      }
-      /* 普通发布不进商机池：领取名额同步归零 */
-      if (checked.channel === PUBLISH_CHANNELS.NORMAL) checked.claimLimit = 0
+      /* 普通发布自动进池、私密发布不进池；与主体是否公开无关 */
+      checked.bizPool = checked.visibility !== VISIBILITIES.PRIVATE
+      checked.channel = checked.bizPool ? (demand.channel || checked.channel) : PUBLISH_CHANNELS.NORMAL
       const at = now()
       const res = await repo.updateWhere(
         'demands',
@@ -2527,8 +2726,9 @@ function createUserHandlers(deps) {
         if (data.status) query.status = enumOf(data.status, Object.values(PRODUCT_STATUS), '状态')
       } else {
         query.status = PRODUCT_STATUS.ON_SALE
-        /* 私密发布＝匿名公开：内容照常进公开列表，只隐藏发布者身份与主页入口 */
-        /* 仅商机发布不进入普通列表，只在商机池按型号匹配 */
+        /* 私密发布仅发布者本人与平台可见，不进入公开列表 */
+        query.visibility = { $ne: VISIBILITIES.PRIVATE }
+        /* 历史「仅商机」发布不进普通列表（新发布不再产生该值，仅作兼容） */
         query.channel = { $ne: PUBLISH_CHANNELS.POOL }
       }
       if (data.tradeMode) query.tradeMode = enumOf(data.tradeMode, TRADE_MODE_OPTIONS.supply, '交易方式')
@@ -2553,7 +2753,7 @@ function createUserHandlers(deps) {
       const sortSpec = productListSort(sortKey, !!data.q)
       /* 关键词与首页口径一致：跨标题 / 型号 / 品牌 / 城市 / 品类匹配 */
       const keyword = str(data.q, { field: '关键词', max: 30 }).trim().toLowerCase()
-      /* 基础数据与浏览者无关：保密条目按匿名口径投影，属主归属在下面按请求者叠加 */
+      /* 基础数据与浏览者无关：公开列表已排除私密内容，属主归属在下面按请求者叠加 */
       const loadBase = async () => {
         let total = 0
         let rows = []
@@ -2614,14 +2814,23 @@ function createUserHandlers(deps) {
       const base = mineOnly
         ? await loadBase()
         : await sharedList('products', 'product.list', data, 30, loadBase)
+      /* 拉黑：拉黑者看不到被拉黑者的商品。基础数据是全站共享缓存，只能在这里按浏览者过滤 */
+      const blockedOwners = mineOnly ? null : await blockedPeerIds(repo, uid)
+      const visibleItems = blockedOwners && blockedOwners.size
+        ? base.items.filter((item) => !blockedOwners.has(String(item.ownerId || '')))
+        : base.items
+      const hiddenCount = base.items.length - visibleItems.length
       /* 自己发布的保密内容仍对属主展示主体：仅对命中的极少数条目补一次主体信息 */
-      const ownedPrivate = base.items.filter((item) => item.isPrivate && uid && item.ownerId === uid)
+      const ownedPrivate = visibleItems.filter((item) => item.isPrivate && uid && item.ownerId === uid)
       const ownMap = ownedPrivate.length
         ? await publicOwnerMap(ownedPrivate.map((item) => item.ownerId))
         : null
       const result = {
-        items: base.items.map((item) => {
-          const mine = !!(uid && item.ownerId === uid)
+        items: visibleItems.map((item) => {
+          /* 公开大厅不再标记 mine：旧版小程序首页会按 mine 过滤掉「自己发布的」，
+             服务端去掉标记后，用户不升级也能在大厅看到自己的商品并转发；
+             「我的发布」仍按属主标记，保留私密内容的联系方式可见性 */
+          const mine = mineOnly && !!(uid && item.ownerId === uid)
           const view = Object.assign({}, item.view, { mine })
           if (item.isPrivate) {
             if (mine) {
@@ -2636,7 +2845,8 @@ function createUserHandlers(deps) {
         }),
         page: base.page,
         limit: base.limit,
-        total: base.total,
+        /* 过滤掉被拉黑者的条目后同步修正总数，避免「共 N 条」与实际可见条数不符 */
+        total: Math.max(0, base.total - hiddenCount),
         hasMore: base.hasMore
       }
       assertNoPlaintextContact(result)
@@ -2644,24 +2854,20 @@ function createUserHandlers(deps) {
     },
 
     /**
-     * 产品型号库（用户端）：返回平台新增 / 停用 / 删除的型号，客户端与内置目录合并后供滚轮选择。
-     * 只下发增量记录，避免每次发布都传输整棵静态目录。
-     * removed 也要下发：内置目录里的型号在平台删除后没有本地记录可删，客户端靠这条标记移出滚轮。
+     * 产品型号库（用户端）：下发「内置目录 + 平台覆盖」合并后的完整四级目录。
+     * 小程序滚轮直接渲染 tree，不再依赖打包进包的静态目录，因此管理端新增 / 停用 / 删除型号后
+     * 用户下次进入发布页即可看到，无需重新上传小程序版本。
+     * items 仍保留平台增量记录，兼容旧版本客户端的本地合并逻辑。
      */
     'catalog.tree': async () => {
-      const rows = await repo.find('catalog', {}, {
-        sort: { field: 'updatedAt', dir: 'desc' },
-        limit: 5000
-      })
-      const items = rows.map((row) => ({
-        key: [row.cat, row.brand, row.series, row.model].join('::'),
-        cat: row.cat,
-        brand: row.brand,
-        series: row.series,
-        model: row.model,
-        status: row.status || 'active'
-      }))
-      return { items, total: items.length, at: now() }
+      const { tree, items } = await mergedCatalog()
+      return {
+        tree,
+        cats: Object.keys(tree),
+        items,
+        total: items.length,
+        at: now()
+      }
     },
 
     'product.detail': async (data, ctx) => {
@@ -2676,8 +2882,17 @@ function createUserHandlers(deps) {
       if (!isOwner && !claimed && !PRODUCT_PUBLIC_STATUS.includes(product.status)) {
         throw new AppError(CODES.NOT_FOUND, '商品不存在或已下架')
       }
-      /* 仅商机发布不对普通浏览者开放详情 */
-      if (!isOwner && !claimed && product.channel === PUBLISH_CHANNELS.POOL) {
+      /* 私密发布仅发布者本人与平台可见 */
+      if (!isOwner && product.visibility === VISIBILITIES.PRIVATE) {
+        throw new AppError(CODES.NOT_FOUND, '商品不存在或已下架')
+      }
+      /* 拉黑：拉黑者看不到被拉黑者的商品，已领取的商机也不能从详情页绕过 */
+      if (!isOwner && await isBlocked(repo, ctx && ctx.openid, product.ownerId)) {
+        throw new AppError(CODES.NOT_FOUND, '商品不存在或已下架')
+      }
+      /* 仅商机发布不对普通浏览者开放详情：领取过或商机会员可看，用来从商机池点进详情领取 */
+      const member = isOwner ? true : await bizMemberOf(ctx && ctx.openid)
+      if (!isOwner && !claimed && product.channel === PUBLISH_CHANNELS.POOL && !member) {
         throw new AppError(CODES.NOT_FOUND, '商品不存在或已下架')
       }
       const view = projectProduct(product)
@@ -2689,19 +2904,8 @@ function createUserHandlers(deps) {
         deleted: { $ne: true }
       })
       /* 搜索免费、对接收费：联系电话明文只给发布者本人与商机会员 */
-      const member = isOwner ? true : await bizMemberOf(ctx && ctx.openid)
-      /* 私密发布＝匿名公开：内容照常可看，非属主绝不下发任何发布者身份 */
-      const isPrivate = !isOwner && product.visibility === VISIBILITIES.PRIVATE
-      if (isPrivate) {
-        delete view.ownerLabel
-        view.ownerExposure = EXPOSURES.HIDDEN
-        view.ownerExposureLabel = ANON_LABEL
-        view.contactHidden = true
-        view.privateShare = true
-        view.owner = null
-        view.ownerKey = ''
-        view.ownerSubject = ''
-      } else if (product.platformPublished === true) {
+      /* 平台发布 / 普通发布：属主与非属主都按主体公开档位下发 */
+      if (product.platformPublished === true) {
         /* 平台发布货源：只展示「平台发布」，不关联个人 / 企业主体 */
         view.platformOnly = true
         view.ownerExposure = EXPOSURES.HIDDEN
@@ -2716,6 +2920,8 @@ function createUserHandlers(deps) {
         const ownerMap = await publicOwnerMap([product.ownerId], { revealPhone: member })
         const ownerInfo = ownerMap.get(product.ownerId) || {}
         attachOwnerInfo(view, ownerInfo)
+        /* 对外可见的用户 ID：水印里代替「发布方」字样，便于截图溯源 */
+        view.ownerUserNo = product.ownerId ? userNoOf(product.ownerId) : ''
         view.contactHidden = false
         view.privateShare = false
         /* 非会员：主体照常可见，号码不下发，前端据此引导开通商机会员 */
@@ -2741,8 +2947,9 @@ function createUserHandlers(deps) {
         if (data.status) query.status = enumOf(data.status, Object.values(DEMAND_STATUS), '状态')
       } else {
         query.status = data.status ? enumOf(data.status, DEMAND_PUBLIC_STATUS, '状态') : DEMAND_STATUS.OPEN
-        /* 私密发布＝匿名公开：内容照常进公开列表，只隐藏发布者身份与主页入口 */
-        /* 仅商机发布不进入普通列表，只在商机池按型号匹配 */
+        /* 私密发布仅发布者本人与平台可见，不进入公开列表 */
+        query.visibility = { $ne: VISIBILITIES.PRIVATE }
+        /* 历史「仅商机」发布不进普通列表（新发布不再产生该值，仅作兼容） */
         query.channel = { $ne: PUBLISH_CHANNELS.POOL }
       }
       if (data.tradeMode) query.tradeMode = enumOf(data.tradeMode, TRADE_MODE_OPTIONS.demand, '交易方式')
@@ -2753,7 +2960,7 @@ function createUserHandlers(deps) {
           $options: 'i'
         }
       }
-      /* 基础数据与浏览者无关：保密条目按匿名口径投影，属主归属在下面按请求者叠加 */
+      /* 基础数据与浏览者无关：公开列表已排除私密内容，属主归属在下面按请求者叠加 */
       const loadBase = async () => {
         const total = await repo.count('demands', query)
         const rows = await repo.find('demands', query, {
@@ -2784,12 +2991,18 @@ function createUserHandlers(deps) {
       const base = mineOnly
         ? await loadBase()
         : await sharedList('demands', 'demand.list', data, 30, loadBase)
-      const ownedPrivate = base.items.filter((item) => item.isPrivate && uid && item.ownerId === uid)
+      /* 拉黑：拉黑者看不到被拉黑者的求购。基础数据共享缓存，只能在缓存结果之后按浏览者过滤 */
+      const blockedOwners = mineOnly ? null : await blockedPeerIds(repo, uid)
+      const visibleItems = blockedOwners && blockedOwners.size
+        ? base.items.filter((item) => !blockedOwners.has(String(item.ownerId || '')))
+        : base.items
+      const hiddenCount = base.items.length - visibleItems.length
+      const ownedPrivate = visibleItems.filter((item) => item.isPrivate && uid && item.ownerId === uid)
       const ownMap = ownedPrivate.length
         ? await publicOwnerMap(ownedPrivate.map((item) => item.ownerId))
         : null
       const result = {
-        items: base.items.map((item) => {
+        items: visibleItems.map((item) => {
           const mine = !!(uid && item.ownerId === uid)
           const view = Object.assign({}, item.view, { mine })
           if (item.isPrivate) {
@@ -2805,7 +3018,8 @@ function createUserHandlers(deps) {
         }),
         page: base.page,
         limit: base.limit,
-        total: base.total,
+        /* 过滤掉被拉黑者的求购后同步修正总数 */
+        total: Math.max(0, base.total - hiddenCount),
         hasMore: base.hasMore
       }
       assertNoPlaintextContact(result)
@@ -2824,61 +3038,54 @@ function createUserHandlers(deps) {
       if (!isOwner && !claimed && !DEMAND_PUBLIC_STATUS.includes(demand.status)) {
         throw new AppError(CODES.NOT_FOUND, '求购不存在或已关闭')
       }
-      /* 仅商机发布不对普通浏览者开放详情 */
-      if (!isOwner && !claimed && demand.channel === PUBLISH_CHANNELS.POOL) {
+      /* 私密发布仅发布者本人与平台可见 */
+      if (!isOwner && demand.visibility === VISIBILITIES.PRIVATE) {
+        throw new AppError(CODES.NOT_FOUND, '求购不存在或已关闭')
+      }
+      /* 拉黑：拉黑者看不到被拉黑者的求购，已领取的商机也不能从详情页绕过 */
+      if (!isOwner && await isBlocked(repo, ctx && ctx.openid, demand.ownerId)) {
+        throw new AppError(CODES.NOT_FOUND, '求购不存在或已关闭')
+      }
+      /* 仅商机发布不对普通浏览者开放详情：领取过或商机会员可看，用来从商机池点进详情领取 */
+      const member = isOwner ? true : await bizMemberOf(ctx && ctx.openid)
+      if (!isOwner && !claimed && demand.channel === PUBLISH_CHANNELS.POOL && !member) {
         throw new AppError(CODES.NOT_FOUND, '求购不存在或已关闭')
       }
       const view = projectDemand(demand)
       view.mine = isOwner
       /* 搜索免费、对接收费：联系电话明文只给发布者本人与商机会员 */
-      const member = isOwner ? true : await bizMemberOf(ctx && ctx.openid)
-      /* 私密发布＝匿名公开：内容照常可看，非属主绝不下发任何发布者身份 */
-      const isPrivate = !isOwner && demand.visibility === VISIBILITIES.PRIVATE
-      if (isPrivate) {
-        delete view.publisherLabel
-        view.ownerExposure = EXPOSURES.HIDDEN
-        view.ownerExposureLabel = ANON_LABEL
-        view.contactHidden = true
-        view.privateShare = true
-        view.owner = null
-        view.ownerKey = ''
-        view.ownerSubject = ''
-      } else {
-        const ownerMap = await publicOwnerMap([demand.ownerId], { revealPhone: member })
-        const ownerInfo = ownerMap.get(demand.ownerId) || {}
-        attachOwnerInfo(view, ownerInfo)
-        view.contactHidden = false
-        view.privateShare = false
-        /* 非会员：主体照常可见，号码不下发，前端据此引导开通商机会员 */
-        view.memberOnlyContact = !member && ownerInfo.phoneShared === true
-      }
+      /* 普通发布：属主与非属主都按主体公开档位下发 */
+      const ownerMap = await publicOwnerMap([demand.ownerId], { revealPhone: member })
+      const ownerInfo = ownerMap.get(demand.ownerId) || {}
+      attachOwnerInfo(view, ownerInfo)
+      view.contactHidden = false
+      view.privateShare = false
+      /* 非会员：主体照常可见，号码不下发，前端据此引导开通商机会员 */
+      view.memberOnlyContact = !member && ownerInfo.phoneShared === true
       assertNoPlaintextContactAllowingPhone(view, 'ownerPhone')
       return view
     },
 
     /**
-     * 货主主页：只展示对方公开发布的货源与需求。
-     * 联系电话只有货主自己开启「公开主体 + 公开联系电话」时才给明文，
-     * 其余情况一律走平台坐席对接，页面只给脱敏值或标签。
+     * 货主主页：展示对方公开发布的货源、需求与资讯，未公开主体同样可访问。
+     * 主体未公开时只打码主体与联系方式；电话仅对商机会员给出明文。
      */
     'owner.home': async (data, ctx) => {
       await mustUser(ctx)
       const ownerKey = str(data.ownerKey || data.id, { field: '货主标识', required: true, max: 64 })
-      /* 从资讯作者头像进入时允许查看未公开主体的公开内容：只聚合公开在架货源 / 需求 / 资讯，不暴露主体与电话 */
-      const allowHidden = data.allowHidden === true
-      /* 货主键是不可逆哈希：先用它反查本人，再决定给不给主页 */
+      /* 货主键是不可逆哈希：反查成功后按公开档位返回主页 */
       const ownerId = await uidByOwnerKey(repo, ownerKey)
       if (!ownerId) throw new AppError(CODES.NOT_FOUND, '货主主页不存在')
+      /* 拉黑：我拉黑对方后主页整体不可见，避免从主页绕过商品 / 资讯屏蔽 */
+      const blocked = await isBlocked(repo, ctx && ctx.openid, ownerId)
+      if (blocked) throw new AppError(CODES.NOT_FOUND, '货主主页不存在')
 
       /* 搜索免费、对接收费：号码明文只给商机会员，主体与在架内容不受限 */
       const viewerMember = await bizMemberOf(ctx && ctx.openid)
       const ownerMap = await publicOwnerMap([ownerId], { revealPhone: viewerMember })
       const info = ownerMap.get(ownerId) || {}
       const hidden = !info.revealed
-      /* 主体未公开时不提供主页：避免从「同主体货源」反推出隐藏主体；资讯作者入口除外 */
-      if (hidden && !allowHidden) {
-        throw new AppError(CODES.NOT_FOUND, '该商家未公开主体，请通过咨询由平台对接')
-      }
+      /* 主体未公开也提供主页：只聚合公开在架内容，主体 / 联系方式打码 */
 
       const productRows = await repo.find('products', {
         ownerId,
@@ -2937,6 +3144,8 @@ function createUserHandlers(deps) {
         memberLabel: member ? '商机会员' : '',
         /* 认证徽标：未公开主体的货主不对外声明任何认证信息 */
         verified: !hidden && info.verified === true,
+        /* 昵称：主页主标题永远是人，主体名只做副标题点缀；未公开主体也不影响昵称 */
+        nick: info.nick || '',
         ownerSubject: hidden ? '' : (info.subject || ''),
         ownerContactName: hidden ? '' : (info.contactName || ''),
         ownerExposure: info.exposure || EXPOSURES.HIDDEN,
@@ -3520,10 +3729,21 @@ function createUserHandlers(deps) {
     'chat.open': async (data, ctx) => {
       const uid = ctx.openid
       const user = await mustUser(ctx)
+      /* 对话总开关：审核期间由管理端关闭，任何账号都不能发起私聊 */
+      await assertChatEnabled()
       /* 直聊属于「发起对话」：受限期间不允许新开会话，已有会话仍可回复 */
       assertAllowed(user, 'chat')
       const { productId, demandId } = allowedTargetQuery(data)
       const target = await loadTarget(productId, demandId, uid)
+      /* 拉黑：任一方拉黑后都不能再发起私聊；统一用中性回执，不向对方暴露被拉黑 */
+      if (target && target.doc && await blockedBetween(repo, uid, target.doc.ownerId)) {
+        return {
+          leadId: '',
+          threadId: '',
+          chatReady: false,
+          receipt: '暂时无法与该用户发起私聊'
+        }
+      }
       /* 从商机池 / 商机详情发起：给会话打来源标记，消息页展示「商机」标签 */
       const fromBiz = data.fromBiz === true
 
@@ -3771,7 +3991,9 @@ function createUserHandlers(deps) {
         phoneMasked: secret ? '' : (info.phoneMasked || ''),
         /* 货主公开了电话但本人不是会员：前端引导开通 */
         memberOnlyContact: !secret && !myMember && info.phoneShared === true,
-        ownerSubject: secret ? '' : (info.revealed ? (info.subject || '') : '')
+        ownerSubject: secret ? '' : (info.revealed ? (info.subject || '') : ''),
+        /* 昵称旁的小字点缀：仅主体公开时给出 */
+        peerSubject: secret ? '' : (info.revealed ? (info.subject || '') : '')
       }
       assertNoPlaintextContactAllowingPhone(result, 'phone')
       return result
@@ -3890,11 +4112,14 @@ function createUserHandlers(deps) {
       const result = {
         /* 自助恢复标识只回给属主：不在公共投影里下发 openid */
         products: products.map((row) => Object.assign(projectProduct(row), {
-          selfOffline: !!row.offlineBy && row.offlineBy === uid
+          selfOffline: !!row.offlineBy && row.offlineBy === uid,
+          /* 仅发商机池：属主列表据此标注「仅商机池」，公共投影不下发该字段 */
+          channel: row.channel || ''
         })),
         demands: demands.map((row) => Object.assign(projectDemand(row), {
           selfClosed: !!row.closedBy && row.closedBy === uid,
-          closeReason: row.closeReason || ''
+          closeReason: row.closeReason || '',
+          channel: row.channel || ''
         })),
         /* 我投稿的资讯：只回展示所需字段，正文仍从资讯详情读取 */
         news: news.map((row) => ({
@@ -3923,8 +4148,11 @@ function createUserHandlers(deps) {
       /* 注销 / 停用后不再提供站内信读取，避免停用账号继续使用平台能力 */
       await mustUser(ctx)
       const paging = normalizePaging(data)
+      /* 对话总开关关闭时只下发系统 / 业务通知，私聊会话不再出现在消息列表 */
+      const chatOn = await socialFeatureOn()
+      const chatFilter = chatOn ? {} : { type: { $ne: 'direct.chat' }, 'payload.channel': { $ne: 'direct' } }
       /* 服务端只保留 30 天聊天记录：更早的消息不再查询 / 下发 */
-      const query = { 'payload.uid': uid, createdAt: { $gte: chatCutoff(now()) } }
+      const query = Object.assign({ 'payload.uid': uid, createdAt: { $gte: chatCutoff(now()) } }, chatFilter)
       const total = await repo.count('outbox', query)
       const rows = await repo.find('outbox', query, {
         sort: { field: 'createdAt', dir: 'desc' },
@@ -3991,6 +4219,8 @@ function createUserHandlers(deps) {
             /* 代采代售咨询：会话标题用委托名称，消息页按 threadId 独立成一条会话 */
             targetTitle: p.targetType === 'agency' ? (p.title || '代采代售咨询') : '',
             csStatus: p.csStatus || '',
+            /* 平台客服咨询（用户直接留言）：即便领取后带上 threadId，也归入「平台客服」会话，不另起一条 */
+            platformChat: p.platformChat === true,
             /* 私密发布会话：前端隐藏「查看主页」与主体信息 */
             private: p.private === true,
             /* 对方为商机会员时，消息列表直接在名字后展示标识 */
@@ -4050,6 +4280,8 @@ function createUserHandlers(deps) {
      */
     'msg.thread': async (data, ctx) => {
       const uid = ctx.openid
+      /* 对话总开关关闭时不提供会话内容读取，历史记录保留但暂不可见 */
+      await assertChatEnabled()
       const threadId = str(data.threadId || data.id, { field: '会话', required: true, max: 64 })
       const lead = await repo.get('leads', threadId)
       if (!lead) throw new AppError(CODES.NOT_FOUND, '会话不存在')
@@ -4182,7 +4414,10 @@ function createUserHandlers(deps) {
       /* 私密发布：买家侧不展示发布人主体、主页入口与联系方式 */
       const isPrivateTarget = !!(target && target.visibility === VISIBILITIES.PRIVATE)
       const buyerView = isPrivateTarget && lead.uid === uid
-      const peerName = buyerView ? '私密发布' : await peerDisplayName(peerId)
+      const identity = buyerView ? { name: '私密发布', subject: '' } : await peerIdentity(peerId)
+      const peerName = identity.name
+      /* 昵称旁的小字：仅在对方公开主体时给出公司 / 主体名 */
+      const peerSubject = identity.subject
       /* 私密发布会话：买家侧不暴露对方是否为商机会员 */
       const [myMember, peerMember] = await Promise.all([bizMemberOf(uid), buyerView ? false : bizMemberOf(peerId)])
       const revealRows = await repo.find('chatReveals', { threadId }, { limit: 4 })
@@ -4230,6 +4465,8 @@ function createUserHandlers(deps) {
       const result = {
         threadId,
         peerName,
+        /* 主体名点缀：昵称才是会话对象，公司名只在昵称旁小字展示 */
+        peerSubject,
         /* 对方匿名主页键：会话头像点击进入对方主页用，不可反推 openid */
         peerKey: buyerView ? '' : (peerId ? ownerKeyOf(peerId) : ''),
         title: (target && target.title) || lead.formSummary || '',
@@ -4279,9 +4516,66 @@ function createUserHandlers(deps) {
     'msg.send': async (data, ctx) => {
       const uid = ctx.openid
       const user = await mustUser(ctx)
+      /* 对话总开关关闭时不允许发送任何消息，避免通过旧入口继续私聊 */
+      await assertChatEnabled()
       /* 消息类型：文本 / 图片 / 视频 / 个人名片；媒体与名片不参与文本内容校验 */
       const kind = data.kind ? enumOf(data.kind, ['text', 'image', 'video', 'card'], '消息类型') : 'text'
       const at = now()
+      /* 平台留言统一入口：先生成「待领取」工单，客服领取后才接入消息中心 */
+      const createLeaveTicket = async (items, title) => {
+        const list = (Array.isArray(items) ? items : []).filter(Boolean)
+        const first = list[0] || {}
+        const text = String(first.body || '').trim()
+        const doc = {
+          id: randomId('LD'),
+          uid,
+          targetType: 'agency',
+          targetId: '',
+          agencyId: '',
+          agencyTitle: String(title || '平台客服咨询').slice(0, 60),
+          source: 'kf_leave',
+          formSummary: (text || '平台客服咨询').slice(0, 200),
+          status: LEAD_STATUS.PENDING,
+          threadId: '',
+          ticketState: TICKET_STATE.TICKETED,
+          csStatus: CS_STATUS.WAITING,
+          intakeBody: text.slice(0, 1500),
+          intakeMedia: list
+            .filter((item) => item.kind === 'image' || item.kind === 'video')
+            .map((item) => ({
+              fileId: String(item.image || item.video || ''),
+              kind: item.kind,
+              name: '',
+              type: '',
+              size: 0
+            })),
+          intakeMessages: list,
+          intakeAt: at,
+          serviceStage: CONSULT_STAGE.COMMUNICATING,
+          stageAt: at,
+          stageBy: '',
+          stageVersion: 0,
+          stageHistory: [{ stage: CONSULT_STAGE.COMMUNICATING, at, by: '', note: '用户发起平台留言' }],
+          createdAt: at,
+          updatedAt: at
+        }
+        await repo.insert('leads', doc)
+        return doc
+      }
+      /* 待领取期间继续发言：合并到同一张平台留言工单，避免刷出多张待办 */
+      const appendLeaveMessage = async (lead, item) => {
+        const messages = (Array.isArray(lead.intakeMessages) ? lead.intakeMessages.slice() : []).concat([item])
+        const media = (Array.isArray(lead.intakeMedia) ? lead.intakeMedia.slice() : [])
+        if (item.kind === 'image') media.push({ fileId: item.image, kind: 'image', name: '', type: '', size: 0 })
+        if (item.kind === 'video') media.push({ fileId: item.video, kind: 'video', name: '', type: '', size: 0 })
+        await repo.updateWhere('leads', { id: lead.id }, {
+          intakeBody: String([lead.intakeBody, item.body].filter(Boolean).join('\n')).slice(-1500),
+          intakeMedia: media.slice(0, 20),
+          intakeMessages: messages.slice(0, 50),
+          intakeAt: item.at,
+          updatedAt: item.at
+        })
+      }
       let body = ''
       let image = ''
       let video = ''
@@ -4322,10 +4616,87 @@ function createUserHandlers(deps) {
           if (lead.uid !== uid) throw new AppError(CODES.FORBIDDEN, '无权在该会话中发言')
           const csState = csStatusOf(lead)
           if (csState === CS_STATUS.WAITING) {
+            /* 平台留言还没被领取：继续发言合并进同一张待领取工单，领取后一次接入消息中心 */
+            if (String(lead.source || '') === 'kf_leave' && !lead.assignedAccount) {
+              await appendLeaveMessage(lead, { at, kind, body, image, video, poster, card })
+              return {
+                id: 'M' + sha256Hex(`kf-leave:${threadId}:${at}`).slice(0, 22),
+                threadId,
+                kind,
+                body,
+                image,
+                video,
+                poster,
+                card: card ? Object.assign({}, card, { phone: decryptOwnPhone(user) || '' }) : null,
+                createdAt: at,
+                waiting: true
+              }
+            }
             throw new AppError(CODES.CONFLICT, '正在等待平台客服处理，暂不能发送消息')
           }
           if (csState === CS_STATUS.ENDED) {
-            throw new AppError(CODES.CONFLICT, '本次咨询服务已结束，不能再发送消息')
+            /* 会话已结束：用户再次发言视为重新发起咨询，工单回到「待领取」，需客服重新领取后才进入消息中心。
+               已完成成交的工单不能回退，改为新开一张平台留言工单，避免把已归档的交易重新打开。 */
+            const item = { at, kind, body, image, video, poster, card }
+            const done = consultStageOf(lead) === CONSULT_STAGE.DONE
+            if (done) {
+              const fresh = await createLeaveTicket([item], lead.agencyTitle || '平台客服咨询')
+              return {
+                id: 'M' + sha256Hex(`kf-leave:${fresh.id}:0`).slice(0, 22),
+                threadId: fresh.id,
+                kind,
+                body,
+                image,
+                video,
+                poster,
+                card: card ? Object.assign({}, card, { phone: decryptOwnPhone(user) || '' }) : null,
+                createdAt: at,
+                waiting: true
+              }
+            }
+            const messages = (Array.isArray(lead.intakeMessages) ? lead.intakeMessages.slice() : []).concat([item])
+            const stageHistory = (Array.isArray(lead.stageHistory) ? lead.stageHistory : []).slice()
+            stageHistory.push({ stage: CONSULT_STAGE.COMMUNICATING, at, by: 'system', note: '用户重新发起咨询' })
+            const res = await repo.updateWhere('leads', { id: threadId }, {
+              assignedAccount: '',
+              assignedTo: '',
+              assignedAt: 0,
+              csId: '',
+              csName: '',
+              csStatus: CS_STATUS.WAITING,
+              csClaimedAt: 0,
+              csLastReplyAt: 0,
+              csEndedAt: 0,
+              csEndedBy: '',
+              csEndedByName: '',
+              autoEnded: false,
+              closeReason: '',
+              status: LEAD_STATUS.PENDING,
+              ticketState: TICKET_STATE.TICKETED,
+              serviceStage: CONSULT_STAGE.COMMUNICATING,
+              stageAt: at,
+              stageBy: 'system',
+              stageNote: '',
+              stageVersion: (Number(lead.stageVersion) || 0) + 1,
+              stageHistory,
+              intakeBody: String([lead.intakeBody, body].filter(Boolean).join('\n')).slice(-1500),
+              intakeMessages: messages,
+              intakeAt: at,
+              updatedAt: at
+            })
+            if (!res || !res.count) throw new AppError(CODES.CONFLICT, '会话状态已变化，请刷新后重试')
+            return {
+              id: 'M' + sha256Hex(`kf-leave:${threadId}:${at}`).slice(0, 22),
+              threadId,
+              kind,
+              body,
+              image,
+              video,
+              poster,
+              card: card ? Object.assign({}, card, { phone: decryptOwnPhone(user) || '' }) : null,
+              createdAt: at,
+              waiting: true
+            }
           }
           const csDoc = {
             id: randomId('M'),
@@ -4345,7 +4716,9 @@ function createUserHandlers(deps) {
               threadId,
               targetType: 'agency',
               targetId: lead.targetId || lead.agencyId || '',
-              csStatus: csState
+              csStatus: csState,
+              /* 平台客服咨询：用户端始终归入「平台客服」会话，不按 threadId 另起 */
+              platformChat: String(lead.source || '') === 'kf_leave'
             },
             status: 'pending',
             readByUser: true,
@@ -4382,6 +4755,10 @@ function createUserHandlers(deps) {
         if (!isBuyer && ownerId !== uid) throw new AppError(CODES.FORBIDDEN, '无权在该会话中发言')
         const peerId = isBuyer ? ownerId : lead.uid
         if (!peerId) throw new AppError(CODES.NOT_FOUND, '对方账号不存在')
+        /* 拉黑：任一方拉黑后，双方都不能再通过该会话发消息（双向静默，中性提示） */
+        if (await blockedBetween(repo, uid, peerId)) {
+          throw new AppError(CODES.FORBIDDEN, '暂时无法给对方发送消息')
+        }
         const senderName = await peerDisplayName(uid)
         const privateForUid = target && target.visibility === VISIBILITIES.PRIVATE ? lead.uid : ''
         const mine = await insertDirectChat({
@@ -4434,32 +4811,84 @@ function createUserHandlers(deps) {
           createdAt: at
         }
       }
-      const doc = {
-        id: randomId('M'),
-        type: 'kf.chat',
-        payload: {
-          uid,
-          channel: 'kf',
-          from: 'user',
-          title: '用户留言',
-          body,
+      /* 平台留言：先生成「待领取」工单，客服领取后才进入消息中心，避免工作台与消息同时提示。
+         待领取期间同一用户继续发言合并进同一张工单，不会刷出多张待办。 */
+      const item = { at, kind, body, image, video, poster, card }
+      /* 客服已领取、正在服务：用户继续在「平台客服」里发言时直接并入该客服的会话，
+         不再另开一张待领取工单，否则客服每次回复后用户的追问都会变成新工单。
+         这里按 csStatusOf 归一判断，兼容升级前领取、库里没有 csStatus 字段的历史工单。 */
+      const myLeads = await repo.find('leads', {
+        uid,
+        targetType: 'agency',
+        source: 'kf_leave'
+      }, { sort: { field: 'updatedAt', dir: 'desc' }, limit: 5 })
+      const active = myLeads.filter((row) =>
+        !!row.assignedAccount && csStatusOf(row) === CS_STATUS.SERVING
+      )[0]
+      if (active) {
+        const threadId = active.threadId || active.id
+        const chatDoc = {
+          id: randomId('M'),
+          type: 'kf.chat',
+          payload: {
+            uid,
+            channel: 'kf',
+            from: 'user',
+            title: active.agencyTitle || '平台客服咨询',
+            body,
+            kind,
+            image,
+            video,
+            poster,
+            card,
+            staffName: active.csName || '',
+            threadId,
+            targetType: 'agency',
+            targetId: active.targetId || active.agencyId || '',
+            csStatus: CS_STATUS.SERVING,
+            platformChat: true
+          },
+          status: 'pending',
+          readByUser: true,
+          readByStaff: false,
+          createdAt: at
+        }
+        await repo.insert('outbox', chatDoc)
+        if (kind === 'text') {
+          try {
+            await recordSensitiveRisk({
+              repo, at, type: '对话', targetId: threadId,
+              targetLabel: '平台客服咨询 ' + (active.agencyTitle || threadId),
+              uid, text: body
+            })
+          } catch (riskErr) { /* 风险登记不影响消息发送 */ }
+        }
+        return {
+          id: chatDoc.id,
+          threadId,
           kind,
+          body,
           image,
           video,
           poster,
-          card,
-          staffName: '',
-          /* 委托 / 商品上下文：管理端按 targetId 汇总对话，用户详情也能按对象归组 */
-          targetType: ['agency', 'product', 'demand'].includes(String(data.targetType || '')) ? String(data.targetType) : '',
-          targetId: String(data.targetId || '').slice(0, 64),
-          targetTitle: String(data.targetTitle || '').slice(0, 120)
-        },
-        status: 'pending',
-        readByUser: true,
-        readByStaff: false,
-        createdAt: at
+          card: card ? Object.assign({}, card, { phone: decryptOwnPhone(user) || '' }) : null,
+          createdAt: at,
+          platformChat: true
+        }
       }
-      await repo.insert('outbox', doc)
+      /* 仍在等待领取的留言：同样按 csStatusOf 归一，历史工单没有 csStatus 时也能合并，
+         避免一个用户因为一张老单被反复视为「新留言」而刷出多张待办 */
+      const pending = myLeads.filter((row) =>
+        !row.assignedAccount && csStatusOf(row) === CS_STATUS.WAITING
+      )[0]
+      let leaveId = ''
+      if (pending) {
+        await appendLeaveMessage(pending, item)
+        leaveId = pending.id
+      } else {
+        const fresh = await createLeaveTicket([item], '平台客服咨询')
+        leaveId = fresh.id
+      }
       /* 客服留言命中敏感词：写入风险单，平台必须人工查看处理 */
       if (kind === 'text') {
         try {
@@ -4471,7 +4900,8 @@ function createUserHandlers(deps) {
         } catch (riskErr) { /* 风险登记不影响消息发送 */ }
       }
       return {
-        id: doc.id,
+        id: 'M' + sha256Hex(`kf-leave:${leaveId}:${at}`).slice(0, 22),
+        threadId: leaveId,
         kind,
         body,
         image,
@@ -4479,7 +4909,67 @@ function createUserHandlers(deps) {
         poster,
         /* 回显给发送人：卡片带上本人当前号码，号码只回显不落库 */
         card: card ? Object.assign({}, card, { phone: decryptOwnPhone(user) || '' }) : null,
-        createdAt: at
+        createdAt: at,
+        waiting: true
+      }
+    },
+
+    /**
+     * 黑名单：拉黑 / 移出 / 列表。
+     * 拉黑是单向关系，但私聊双向静默：任一方拉黑后双方都不能再发起或继续私聊；
+     * 屏蔽内容是单向的：拉黑者看不到被拉黑者的商品、资讯与主页，被拉黑者仍可浏览对方内容。
+     */
+    'block.add': async (data, ctx) => {
+      const uid = ctx.openid
+      await mustUser(ctx)
+      const peerUid = await resolveBlockPeer(data)
+      if (peerUid === uid) throw new AppError(CODES.VALIDATION, '不能拉黑自己')
+      const peer = await repo.get('users', peerUid)
+      if (!peer) throw new AppError(CODES.NOT_FOUND, '用户不存在')
+      const at = now()
+      const id = blockIdOf(uid, peerUid)
+      if (!(await repo.get('userBlocks', id))) {
+        await repo.insert('userBlocks', { id, uid, peerUid, createdAt: at, updatedAt: at })
+        /* 资讯列表按浏览者缓存：拉黑后立刻失效，避免 30 秒内仍看到对方资讯 */
+        if (cacheLayer && typeof cacheLayer.bump === 'function') cacheLayer.bump('news')
+      }
+      return { uid: peerUid, blocked: true }
+    },
+
+    'block.remove': async (data, ctx) => {
+      const uid = ctx.openid
+      await mustUser(ctx)
+      const peerUid = await resolveBlockPeer(data)
+      const res = await repo.removeWhere('userBlocks', { id: blockIdOf(uid, peerUid) })
+      if (res && res.count && cacheLayer && typeof cacheLayer.bump === 'function') cacheLayer.bump('news')
+      return { uid: peerUid, blocked: false }
+    },
+
+    /**
+     * 黑名单列表：只回昵称与主页标识，不下发对方手机号等敏感字段。
+     * 空昵称统一显示「平台用户」，避免暴露「未公开主体」以外的账号信息。
+     */
+    'block.list': async (data, ctx) => {
+      const uid = ctx.openid
+      await mustUser(ctx)
+      const rows = await repo.find('userBlocks', { uid }, {
+        sort: { field: 'createdAt', dir: 'desc' },
+        limit: 200
+      })
+      const ownerMap = rows.length ? await publicOwnerMap(rows.map((row) => row.peerUid)) : new Map()
+      return {
+        items: rows.map((row) => {
+          const info = ownerMap.get(row.peerUid) || {}
+          const nick = String(info.nick || '').trim() || '平台用户'
+          return {
+            uid: row.peerUid,
+            ownerKey: info.ownerKey || '',
+            nick,
+            short: nick.slice(-1),
+            meta: '拉黑于 ' + shortDate(row.createdAt)
+          }
+        }),
+        total: rows.length
       }
     },
 
@@ -4770,8 +5260,13 @@ function createUserHandlers(deps) {
      * 平台公开配置：小程序「商机」页展示企微活码、套餐价格与客服信息。
      * 只读、不含任何管理字段；未配置时返回空活码，由前端显示占位提示。
      */
-    'site.get': async () => {
+    'site.get': async (data) => {
       const doc = (await repo.get('settings', 'site')) || {}
+      /* 社交功能总开关：没有 socialEnabled 的旧配置按 chatEnabled 判断 */
+      let socialOn = doc.socialEnabled !== undefined ? doc.socialEnabled === true : doc.chatEnabled === true
+      /* 审核期隔离：后台打开「审核期隐藏社交」后，只对上报了版本号的新版本隐藏社交入口，
+         线上老版本不带版本号照常展示；过审发布后关掉该项即恢复，无需重新发版 */
+      if (doc.reviewHideSocial === true && String((data && data.ver) || '').trim()) socialOn = false
       return {
         site: {
           qrUrl: doc.qrUrl || '',
@@ -4795,7 +5290,11 @@ function createUserHandlers(deps) {
                 title: String(x.title).slice(0, 60),
                 content: String(x.content || '').slice(0, 2000)
               }))
-          }
+          },
+          /* 社交功能总开关（评论 / 私信 / 对话）：审核期间默认关闭，管理端打开后小程序展示相关入口 */
+          socialEnabled: socialOn,
+          /* 兼容旧版客户端：按同一个开关下发 */
+          chatEnabled: socialOn
         }
       }
     },
@@ -4810,6 +5309,24 @@ function createUserHandlers(deps) {
         rentLimits: RENT_LIMITS.slice(),
         mustConditions: MUST_CONDITIONS.slice()
       }
+    },
+
+    /**
+     * 粘贴文字识别：规则在 _shared/publish-parse.js（真源仍是 miniprogram/utils/publish-parse.js），
+     * 以后新增 / 调整识别规则只需 npm run sync + 重新部署云函数，不用重新提审小程序；
+     * 小程序端保留同一份规则做离线兜底。
+     */
+    'parse.publish': async (data, ctx) => {
+      const text = String((data && data.text) || '').slice(0, 20000)
+      if (!text.trim()) return { records: [] }
+      const result = parseRules.parseText(text, {
+        deviceIndex: await parseDeviceIndex(),
+        cityIndex: parseCityIndex()
+      })
+      /* 旧版小程序只回填不改规则：价格缺省 → 现场沟通，交易地缺省 → 账号城市，
+         都在服务端补上，用户少填两项，老版本不发版也能生效 */
+      const place = await publishPlaceOf(ctx && ctx.openid)
+      return { records: parseRules.fillDefaults(result.records || [], place) }
     }
   }
 }

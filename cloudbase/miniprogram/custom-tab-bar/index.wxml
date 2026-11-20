@@ -1,5 +1,6 @@
-<view class="tabbar" wx:if="{{!hidden}}">
-  <view class="tb-item {{selected === 0 ? 'on' : ''}}" data-index="0" bindtap="switchTab">
+<view class="tabbar {{socialOn ? '' : 'is-simple'}}" wx:if="{{!hidden}}">
+  <!-- 社交功能关闭：只保留「资讯 / 我的」两个入口，首页与发布按钮一并隐藏 -->
+  <view wx:if="{{socialOn}}" class="tb-item {{selected === 0 ? 'on' : ''}}" data-index="0" bindtap="switchTab">
     <view class="tb-ico-wrap">
       <image class="ico" src="{{selected === 0 ? '/assets/icons/tab-home-on.png' : '/assets/icons/tab-home.png'}}" mode="aspectFit" />
       <text wx:if="{{bizBadge > 0}}" class="tb-badge">{{bizBadge > 99 ? '99+' : bizBadge}}</text>
@@ -12,6 +13,8 @@
     <text class="lb">资讯</text>
   </view>
 
+  <!-- 社交功能关闭：发布按钮与消息入口一起隐藏，只保留 资讯 / 我的 -->
+  <block wx:if="{{socialOn}}">
   <view class="fab" bindtap="goPublish">
     <image class="fab-ico" src="/assets/icons/fab-plus.png" mode="aspectFit" />
   </view>
@@ -23,6 +26,7 @@
     </view>
     <text class="lb">消息</text>
   </view>
+  </block>
 
   <view class="tb-item {{selected === 4 ? 'on' : ''}}" data-index="4" bindtap="switchTab">
     <image class="ico" src="{{selected === 4 ? '/assets/icons/tab-mine-on.png' : '/assets/icons/tab-mine.png'}}" mode="aspectFit" />

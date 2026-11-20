@@ -1,6 +1,7 @@
 /* 功耗与机柜测算：从平台预设设备里选型号 + 台数，估总功率、机柜数与电费。
    单台功耗来自 device-spec（单卡 TDP × 卡数 + 系统开销），PUE 用于折算机房总用电。 */
 const D = require('../../utils/device-spec')
+const catalog = require('../../utils/catalog')
 const guard = require('../../utils/guard')
 const sharePoster = require('../../utils/share-poster')
 
@@ -44,6 +45,15 @@ Page({
     /* 默认落在主流 8 卡整机，避免一进来就是最贵的机型 */
     const first = this.devices.filter((x) => x.cards > 1 && /H100/.test(x.model))[0] || this.devices[0]
     this.setData({ deviceKey: first ? first.key : '', device: first || null })
+    /* 型号目录以服务端为准：管理端新增 / 停用型号后自动刷新可选设备 */
+    catalog.loadCatalog().then(() => {
+      this.devices = D.buildDevices().filter((x) => x.power > 0)
+      const keep = this.devices.filter((x) => x.key === this.data.deviceKey)[0] || this.devices[0] || null
+      this.setData({ deviceKey: keep ? keep.key : '', device: keep }, () => {
+        this.refreshList()
+        this.recalc()
+      })
+    }).catch(() => {})
     this.refreshList()
     this.recalc()
   },
@@ -56,7 +66,7 @@ Page({
 
   onShareAppMessage() {
     return {
-      title: '功耗与机柜测算 · 一台机器吃多少电',
+      title: '功耗与机柜测算 · 电费与配电一次算清',
       desc: '整机功耗、机柜数量、月电费与配电容量一次算清',
       imageUrl: sharePoster.cached('tool', sharePoster.toolSpec('power')) || '/assets/share/card-home.png',
       path: '/pages/power/power'
@@ -65,7 +75,7 @@ Page({
 
   onShareTimeline() {
     return {
-      title: '功耗与机柜测算 · 一台机器吃多少电',
+      title: '功耗与机柜测算 · 电费与配电一次算清',
       query: '',
       imageUrl: sharePoster.cached('tool', sharePoster.toolSpec('power')) || '/assets/share/card-home.png'
     }

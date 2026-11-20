@@ -2,6 +2,7 @@
    单台吞吐由「显存带宽 ÷ 单个 token 需读取的激活权重」自动折算，单台月产出是确定值；
    用户只填电价、使用率、设备采购价和卖价，就能得到每百万 token 电费成本、单位价差与回本周期。 */
 const D = require('../../utils/device-spec')
+const catalog = require('../../utils/catalog')
 const guard = require('../../utils/guard')
 const sharePoster = require('../../utils/share-poster')
 
@@ -172,6 +173,20 @@ Page({
       price: first ? priceOf(first) : '20'
     })
     this.recalc()
+    /* 型号目录以服务端为准：管理端新增 / 停用型号后自动刷新可选设备 */
+    catalog.loadCatalog().then(() => {
+      this.devices = D.buildDevices().filter((x) => x.kind === 'gpu' && x.power > 0 && x.bw > 0)
+      const cats = []
+      this.devices.forEach((x) => {
+        if (cats.indexOf(x.cat) < 0) cats.push(x.cat)
+      })
+      const keep = this.devices.filter((x) => x.key === this.data.deviceKey)[0] || this.devices[0] || null
+      this.setData({
+        deviceCats: ['全部'].concat(cats),
+        deviceKey: keep ? keep.key : '',
+        device: keep ? this.cardOf(keep) : null
+      }, () => this.recalc())
+    }).catch(() => {})
   },
 
   /* 工具页是公开内容：允许分享给朋友，也允许分享到朋友圈 */
@@ -182,7 +197,7 @@ Page({
 
   onShareAppMessage() {
     return {
-      title: '回本收益测算 · 本地部署多久回本',
+      title: '回本收益测算 · 本地部署多久回本，一算就清楚',
       desc: '对比官方 API 的 token 价差，算电费成本与回本周期',
       imageUrl: sharePoster.cached('tool', sharePoster.toolSpec('roi')) || '/assets/share/card-home.png',
       path: '/pages/roi/roi'
@@ -191,7 +206,7 @@ Page({
 
   onShareTimeline() {
     return {
-      title: '回本收益测算 · 本地部署多久回本',
+      title: '回本收益测算 · 本地部署多久回本，一算就清楚',
       query: '',
       imageUrl: sharePoster.cached('tool', sharePoster.toolSpec('roi')) || '/assets/share/card-home.png'
     }

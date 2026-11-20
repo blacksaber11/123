@@ -4,6 +4,7 @@
    - 关注复用本地 + 云端关注列表，私信回到原会话，不新建会话。 */
 const fav = require('../../utils/fav')
 const { request } = require('../../utils/request')
+const features = require('../../utils/features')
 
 Page({
   data: {
@@ -32,6 +33,8 @@ Page({
     /* 作者发布的资讯：从资讯详情点头像进入时展示 */
     news: [],
     following: false,
+    /* 发消息 / 对话总开关：关闭时底部不展示「发私信」 */
+    chatEnabled: false,
     tab: 'all'
   },
 
@@ -39,8 +42,9 @@ Page({
     const key = decodeURIComponent((options && options.key) || '')
     const nick = decodeURIComponent((options && options.nick) || '')
     const threadId = decodeURIComponent((options && options.thread) || '')
-    /* 资讯作者入口：未公开主体也允许查看公开在架内容 */
+    /* 资讯作者 / 商机发布者入口：未公开主体也允许查看公开在架内容 */
     this.fromNews = (options && options.from) === 'news'
+    this.fromBiz = (options && options.from) === 'biz'
     if (!key) {
       this.setData({ loading: false, error: '主页不存在' })
       return
@@ -51,9 +55,23 @@ Page({
       nick: nick || '对方',
       avatar: String(nick || '对方').slice(0, 1),
       threadId,
-      following: fav.isFollowing(key)
+      following: fav.isFollowing(key),
+      /* 开关已拉到用真实值，没拉到先用缓存 */
+      chatEnabled: features.chatEnabled()
     })
+    /* 开关回来后立即跟随，避免停留本页时仍显示旧状态 */
+    this.offFlags = features.onChange((on) => {
+      if (this.data && on !== this.data.chatEnabled) this.setData({ chatEnabled: on })
+    })
+    features.ensure()
     this.load()
+  },
+
+  onUnload() {
+    if (this.offFlags) {
+      this.offFlags()
+      this.offFlags = null
+    }
   },
 
   onShow() {
@@ -65,17 +83,13 @@ Page({
     let res = null
     try {
       res = await request('user', 'owner.home', {
-        ownerKey: this.data.key,
-        allowHidden: this.fromNews === true
+        ownerKey: this.data.key
       }, { silent: true })
     } catch (err) {
       res = null
-      /* 主体未公开是正常状态，不是加载失败 */
       const msg = String((err && err.message) || '')
-      if (!/未公开主体|不存在/.test(msg)) {
-        this.setData({ loading: false, error: msg || '暂时无法加载该主页' })
-        return
-      }
+      this.setData({ loading: false, error: msg || '暂时无法加载该主页' })
+      return
     }
     if (!res) {
       this.setData({ loading: false, hidden: true })
@@ -98,9 +112,9 @@ Page({
       views: Number(it.views) || 0,
       published: it.published || ''
     }))
-    /* 未公开主体时保留外部传入的昵称（资讯作者为脱敏名），但公开内容照常展示 */
+    /* 昵称永远是主标题：公司 / 主体名只作为副标题点缀；历史账号无昵称时回退主体名 */
     const hidden = res.hidden === true
-    const nick = hidden ? this.data.nick : (res.ownerSubject || this.data.nick)
+    const nick = res.nick || this.data.nick || (hidden ? '平台用户' : (res.ownerSubject || '平台用户'))
     this.setData({
       loading: false,
       hidden,
@@ -137,8 +151,8 @@ Page({
     if (!key) return
     const on = fav.toggleFollow({
       id: key,
-      nick: this.data.ownerSubject || this.data.nick || '平台用户',
-      short: String(this.data.ownerSubject || this.data.nick || '用').slice(-1),
+      nick: this.data.nick || this.data.ownerSubject || '平台用户',
+      short: String(this.data.nick || this.data.ownerSubject || '用').slice(-1),
       city: this.data.city,
       /* 认证状态只认服务端下发，不能用「是否可见」推断 */
       verified: !!this.data.verified
@@ -157,7 +171,32 @@ Page({
     wx.navigateTo({
       url: '/pages/report/report?targetType=owner'
         + '&targetId=' + encodeURIComponent(key)
-        + '&targetTitle=' + encodeURIComponent(this.data.ownerSubject || this.data.nick || '用户')
+        + '&targetTitle=' + encodeURIComponent(this.data.nick || this.data.ownerSubject || '用户')
+    })
+  },
+
+  /* 拉黑该用户：拉黑后对方无法给我发私信，我也看不到对方的商品、资讯与主页；
+     移出黑名单在「我的 - 设置 - 隐私与安全 - 黑名单管理」 */
+  blockUser() {
+    const key = this.data.key
+    if (!key) return
+    wx.showModal({
+      title: '拉黑该用户',
+      content: '拉黑后对方无法给你发私信，你也看不到对方发布的商品与资讯。可在「我的 - 设置 - 黑名单管理」移出。',
+      confirmText: '拉黑',
+      confirmColor: '#DC2626',
+      success: async (r) => {
+        if (!r.confirm) return
+        try {
+          await request('user', 'block.add', { ownerKey: key }, { silent: true })
+          wx.showToast({ title: '已拉黑', icon: 'none' })
+          setTimeout(() => {
+            wx.navigateBack({ fail: () => wx.switchTab({ url: '/pages/home/home' }) })
+          }, 600)
+        } catch (err) {
+          wx.showToast({ title: (err && err.message) || '操作失败，请稍后重试', icon: 'none' })
+        }
+      }
     })
   },
 

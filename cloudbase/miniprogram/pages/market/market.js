@@ -209,8 +209,8 @@ Page({
 
   onShareAppMessage() {
     return {
-      title: '实时货盘 · 在售与求购价差一目了然',
-      desc: '按品类与型号汇总买卖盘口，价格与城市公开，委托方身份不公开',
+      title: '今日实时货盘 · 在售与求购价差，登录看完整盘口',
+      desc: '按品类与型号汇总买卖盘口，登录查看报价、城市与对接条件',
       imageUrl: guard.shareImage('biz'),
       path: '/pages/market/market'
     }
@@ -218,7 +218,7 @@ Page({
 
   onShareTimeline() {
     return {
-      title: '实时货盘 · 在售与求购价差一目了然',
+      title: '今日实时货盘 · 在售与求购价差，登录看完整盘口',
       imageUrl: guard.shareImage('biz')
     }
   }

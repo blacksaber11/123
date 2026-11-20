@@ -5,13 +5,19 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#0f172a">
 <title>算力聚合 · 运营中台</title>
-<link rel="stylesheet" href="../assets/console.css?v=202611172110">
+<!--
+  管理端版本号：每次改动管理端后，把下面的「日期-时分」换成当前时间，
+  三处资源引用同步替换（css / core.js / pages.js），并在 docs/部署说明.md 的版本记录里补一行。
+  页面右上角会显示这个版本号，用户报问题时先核对版本。
+-->
+<script>window.CONSOLE_VERSION = '2026.11.20-1611'</script>
+<link rel="stylesheet" href="../assets/console.css?v=2026.11.20-1715">
 </head>
 <body>
 <div id="root" class="root"></div>
 <div id="toast" class="toast-wrap" aria-live="polite"></div>
 <div id="modal" class="modal-root" hidden></div>
-<script src="../assets/console.core.js?v=202611172110"></script>
-<script src="../assets/console.pages.js?v=202611172110"></script>
+<script src="../assets/console.core.js?v=2026.11.20-1715"></script>
+<script src="../assets/console.pages.js?v=2026.11.20-1715"></script>
 </body>
 </html>

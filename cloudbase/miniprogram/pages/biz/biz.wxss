@@ -59,6 +59,16 @@
   color: #D9F7E7;
   font-weight: 600;
 }
+/* 主体信息筛选提示：偶发显示在概览卡内 */
+.bz-hidden {
+  margin-top: 18rpx;
+  padding: 10rpx 16rpx;
+  border-radius: 10rpx;
+  background: rgba(255, 255, 255, .16);
+  font-size: 21rpx;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, .92);
+}
 
 /* 囤货榜单 */
 .bz-board {
@@ -263,6 +273,23 @@
 .gate-btn {
   margin-top: 24rpx;
 }
+/* 7 天体验：次级按钮，描边区分于主开通按钮 */
+.gate-trial {
+  margin-top: 16rpx;
+  background: #fff;
+  border: 1rpx solid var(--brand);
+  color: var(--brand);
+}
+.gate-trial:active {
+  background: var(--line-2);
+}
+.gate-trial-tip {
+  margin-top: 12rpx;
+  text-align: center;
+  font-size: 21rpx;
+  line-height: 1.6;
+  color: var(--muted);
+}
 .gate-foot {
   margin-top: 16rpx;
   text-align: center;
@@ -382,14 +409,27 @@
   color: var(--muted);
   white-space: nowrap;
 }
-/* 第三行：脱敏主体 */
+/* 第三行：脱敏主体 + 发布者主页入口 */
 .tes-bot {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
   margin-top: 4rpx;
   font-size: 20rpx;
   line-height: 26rpx;
   color: var(--muted);
+}
+.tes-bot-t {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tes-home {
+  flex: none;
+  color: var(--brand);
+  font-weight: 600;
   white-space: nowrap;
 }
 .teaser-foot {
@@ -1256,6 +1296,60 @@
   color: var(--brand);
   font-weight: 600;
 }
+/* 指定城市多选：分组小标题 + 城市胶囊，选中态与维度选项保持同一套视觉 */
+.pf-cities {
+  margin-top: 12rpx;
+  padding: 14rpx 16rpx;
+  border-radius: 12rpx;
+  background: #fafafb;
+  border: 1rpx solid var(--line-2);
+}
+.pf-city-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+}
+.pf-city-s {
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.pf-city-clear {
+  flex: none;
+  font-size: 20rpx;
+  color: var(--brand);
+}
+.pf-city-grp {
+  margin-top: 14rpx;
+}
+.pf-city-grp-t {
+  font-size: 20rpx;
+  color: var(--muted);
+}
+.pf-city-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  margin-top: 8rpx;
+}
+.pf-city {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 52rpx;
+  padding: 0 16rpx;
+  border-radius: 999rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+  font-size: 21rpx;
+  color: var(--muted);
+}
+.pf-city.on {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  color: var(--brand);
+  font-weight: 600;
+}
 .pf-note {
   margin-top: 16rpx;
   padding: 14rpx 16rpx;
@@ -1294,4 +1388,66 @@
    卡片本体样式统一在 app.wxss，商机列表只在卡片下方多一行「匹配依据」 */
 .opp-list .gcard {
   margin-bottom: 18rpx;
+}
+
+/* 卡片顶部的主页入口：主体脱敏不影响查看发布者主页 */
+.opp-list .top-home {
+  flex: none;
+  margin-right: 12rpx;
+  font-size: 21rpx;
+  line-height: 1.4;
+  color: var(--brand);
+  white-space: nowrap;
+}
+
+/* 我的商机：删除与浏览量同一行（.foot 里 align-items: center 保证同高），
+   只靠右推到底，不和浏览量挤在一起 */
+.opp-list .foot .foot-del {
+  margin-left: auto;
+}
+
+/* 新增商机「新」标：只在本次进入时出现，与类型标签同排 */
+.opp-list .pill-tag.new {
+  background: var(--warn);
+  margin-right: 8rpx;
+}
+
+/* 微信商机提醒：额度用完 / 未开启时置顶提示，点一下直接开通或续订 */
+.notify-tip {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin: 20rpx 24rpx 0;
+  padding: 20rpx 24rpx;
+  border-radius: 20rpx;
+  background: var(--brand-soft);
+  border: 1rpx solid var(--brand-line);
+}
+.notify-tip:active {
+  opacity: 0.75;
+}
+.nt-ico {
+  width: 40rpx;
+  height: 40rpx;
+  flex: none;
+  display: block;
+}
+.nt-body {
+  flex: 1;
+  min-width: 0;
+}
+.nt-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--brand);
+}
+.nt-sub {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.nt-go {
+  flex: none;
+  font-size: 24rpx;
+  color: var(--brand);
 }

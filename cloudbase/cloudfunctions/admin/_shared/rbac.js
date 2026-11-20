@@ -18,8 +18,24 @@ const ROLE_ACTIONS = Object.freeze({
     'admin.session',
     'product.list',
     'product.detail',
+    /* 商品管理：客服负责日常审核、上下架与状态调整（客服是商品池的一线运营） */
+    'product.review',
+    'product.setStatus',
+    'product.offline',
+    'product.online',
+    /* 商品转移归属：客服 / 管理员可把商品从 A 用户名下批量移到 B 用户名下 */
+    'product.transfer',
+    'product.transferTargets',
     'demand.list',
     'demand.detail',
+    /* 需求转移归属：和商品一致，可把需求批量移到别人名下 */
+    'demand.transfer',
+    'demand.transferTargets',
+    /* 需求管理：客服负责审核、关闭与下架，保证求购池内容可用 */
+    'demand.review',
+    'demand.setStatus',
+    'demand.close',
+    'demand.offline',
     'lead.list',
     /* 从消息中心生成咨询工单：客服确认需求后直接建单，进入待领取 */
     'lead.create',
@@ -51,10 +67,11 @@ const ROLE_ACTIONS = Object.freeze({
     'consult.complete',
     /* 合同上传后、审核前确定唯一对接方：跟进客服一键结束同委托的其他对接 */
     'contract.lock',
-    /* 我的工资：分享开通提成 + 代采代售佣金，按自然月汇总 */
+    /* 我的工资：只含代采代售委托佣金，按自然月汇总 */
     'cs.salary',
-    /* 客服业务：查看本人绑定用户、生效比例、业绩提成与评价档案（比例配置归管理员） */
+    /* 客服业务：查看本人绑定用户、生效委托佣金比例、委托佣金流水与评价档案（比例配置归管理员） */
     'cs.settings',
+    'cs.daily',
     'cs.commissions',
     'cs.ratings',
     /* 分配 / 转派需要坐席列表；客服只能在自己与同事之间流转工单 */
@@ -72,11 +89,16 @@ const ROLE_ACTIONS = Object.freeze({
     'favorite.list',
     'follow.list',
     /* 交易服务：客服负责上传代采 / 代售打款凭证与商机权限开通 / 续费，
-       服务费到账确认归财务；关闭委托、停用权限、资讯发布与下架属于管理员动作 */
+       服务费到账确认归财务；停用权限、资讯审核仍归管理员 */
     'price.levels',
     'agency.list',
     'agency.confirm',
     'agency.reject',
+    /* 代采 / 代售商品管理：客服是委托一线运营，可直接修改、下架、关闭委托并在成交后确认完成 */
+    'agency.update',
+    'agency.offline',
+    'agency.close',
+    'agency.complete',
     /* 代采 / 代购工单：客服审核通过 / 驳回，通过后按工单联系方式对接用户 */
     'agency.reveal',
     'agency.review',
@@ -111,23 +133,35 @@ const ROLE_ACTIONS = Object.freeze({
     'insights.board',
     'insights.searches',
     'insights.boards',
-    /* 风险页只读：客服能看风险单与内容池，处置（risk.handle）仍归管理员 */
+    /* 风险页只读：客服能看风险单与内容池，处置（risk.handle）仍归管理员；
+       但风险单可以转单给其他客服 / 管理员继续处理 */
     'risk.list',
     'risk.cases',
-    /* 举报 / 投诉 / 意见反馈由客服先受理并回复，管理员同样可用 */
+    'risk.assign',
+    /* 举报 / 投诉 / 意见反馈由客服先受理并回复，管理员同样可用；也支持转单 */
     'report.list',
     'report.handle',
-    /* 媒体页资讯列表只读：发布 / 审核 / 下架归管理员 */
+    'report.assign',
+    /* 媒体页资讯列表只读 */
     'news.list',
-    /* 资讯发布与下架交给客服（日常运营），审核仍归管理员 */
+    /* 资讯发布 / 立即发布 / 下架交给客服（日常运营），审核与定时发布设置仍归管理员 */
     'news.create',
+    'news.publish',
     'news.offline',
     /* 媒体页「提醒会员续费」与提醒文案 / 时间 / 次数配置 */
     'biz.remindSetting',
-    /* 客服服务记录与数据看板：只看汇总，不做配置 */
+    /* 客服服务记录：只看本人汇总，不做配置；数据看板只对管理员开放 */
     'service.records',
-    'stats.overview',
-    'stats.trend',
+    /* 推广中心：客服可查看推广者、提现单并做审核；打款领取 / 凭证回填归财务 */
+    'promote.list',
+    'promote.detail',
+    'promote.commissions',
+    'promote.withdrawList',
+    'promote.withdrawApprove',
+    'promote.withdrawReject',
+    'promote.stats',
+    /* 规则只读：客服查看当前佣金比例 / 手续费即可 */
+    'promote.settings',
     /* 工作台待办与作业记录：只读汇总，三类角色都可查看自己的窗口数据 */
     'admin.todos',
     'workbench.data'
@@ -156,9 +190,14 @@ const ROLE_ACTIONS = Object.freeze({
     /* 委托服务费账单确认到账：财务核对银行回单后确认，确认后自动计提客服佣金 */
     'payment.feeConfirm',
     'payment.refund',
+    /* 入账记录可追溯、可修正：备注 / 凭证编辑与线下补录 */
+    'payment.updateNote',
+    'payment.manual',
     /* 用户发起的退款申请：财务核对后通过 / 驳回 */
     'refund.list',
     'refund.handle',
+    /* 佣金台账：客服分享提成 / 委托佣金 / 推广佣金统一查询 */
+    'finance.commissions',
     /* 退款处理与开通会员需要检索用户 */
     'user.list',
     'user.detail',
@@ -198,8 +237,14 @@ const ROLE_ACTIONS = Object.freeze({
     'product.setStatus',
     'product.offline',
     'product.online',
+    /* 商品转移归属：管理员可把商品从 A 用户名下批量移到 B 用户名下 */
+    'product.transfer',
+    'product.transferTargets',
     'demand.list',
     'demand.detail',
+    /* 需求转移归属：和商品一致，可把需求批量移到别人名下 */
+    'demand.transfer',
+    'demand.transferTargets',
     'demand.review',
     'demand.setStatus',
     'demand.close',
@@ -229,18 +274,19 @@ const ROLE_ACTIONS = Object.freeze({
     'contract.review',
     /* 确定唯一对接方：合同上传后、审核前手动锁定，其余对接方一键结束 */
     'contract.lock',
-    /* 客服业务：绑定用户、提成比例（全局 + 单独覆盖）、提成流水与评价档案 */
+    /* 客服业务：绑定用户、委托佣金比例（全局 + 单独覆盖）、委托佣金流水与评价档案 */
     'cs.settings',
     'cs.saveSettings',
-    'cs.saveRate',
-    /* 代采代售佣金比例：全局默认 + 客服单独覆盖 */
+    /* 代采代售委托佣金比例：全局默认 + 客服单独覆盖 */
     'cs.saveAgencyRate',
     'cs.salary',
+    'cs.daily',
     'cs.bind',
     'cs.unbind',
     'cs.commissions',
     'cs.ratings',
     'contact.reveal',
+    /* 数据看板：概览指标只对管理员开放 */
     'stats.overview',
     'blocked.list',
     'rules.list',
@@ -321,6 +367,10 @@ const ROLE_ACTIONS = Object.freeze({
     'news.create',
     'news.review',
     'news.offline',
+    /* 官方资讯发布与自动发布时段：处理器只允许管理员操作 */
+    'news.publish',
+    'news.schedule.get',
+    'news.schedule.save',
     'quote.list',
     'quote.remove',
     'biz.list',
@@ -335,18 +385,27 @@ const ROLE_ACTIONS = Object.freeze({
     /* 委托服务费账单确认到账：财务 / 超管可操作 */
     'payment.feeConfirm',
     'payment.refund',
+    /* 入账记录可追溯、可修正：备注 / 凭证编辑与线下补录 */
+    'payment.updateNote',
+    'payment.manual',
     /* 用户发起的退款申请：财务核对后通过 / 驳回 */
     'refund.list',
     'refund.handle',
+    /* 佣金台账：客服分享提成 / 委托佣金 / 推广佣金统一查询 */
+    'finance.commissions',
     'finance.summary',
     /* 增长看板：趋势、漏斗与日快照 */
     'stats.trend',
+    /* 宏观经营概览：实时在线 / 平均停留 / 整体营收 */
+    'stats.macro',
     /* 风险单：四类视图（商品 / 用户 / 咨询 / 系统）与处置 */
     'risk.cases',
     'risk.caseUpdate',
-    /* 举报 / 投诉 / 意见反馈处置 */
+    'risk.assign',
+    /* 举报 / 投诉 / 意见反馈处置与转单 */
     'report.list',
     'report.handle',
+    'report.assign',
     /* 账号注销申请：审核并停用账号 */
     'accountRequest.list',
     'accountRequest.handle',
@@ -357,7 +416,6 @@ const ROLE_ACTIONS = Object.freeze({
     'role.list',
     'role.save',
     'role.remove',
-    'permission.list',
     'permission.save',
     /* 运营洞察与风险池：管理员可看实时在线、榜单，并处置风险内容 */
     'insights.board',
@@ -383,6 +441,8 @@ const ROLE_ACTIONS = Object.freeze({
     'promote.settings',
     'promote.saveSettings',
     'promote.setStatus',
+    /* 管理端手动为任意用户开通推广（未开通账号一次性授权） */
+    'promote.openByAdmin',
     'promote.reverseCommission',
     'promote.appleSettle',
     'promote.runSettle'
@@ -391,8 +451,8 @@ const ROLE_ACTIONS = Object.freeze({
 
 /** 客服可见的管理端页面（前端导航与后端 RBAC 用同一份） */
 const ROLE_PAGES = Object.freeze({
-  /* 客服首页即工作台：日常对接、工单、媒体资讯与看板都开放，审批 / 财务 / 系统设置仍归管理员 */
-  [ROLES.CS]: Object.freeze(['workbench', 'stats', 'products', 'demands', 'leads', 'consult', 'messages', 'service', 'users', 'biz', 'news', 'boards', 'risk', 'cs']),
+  /* 客服首页即工作台：日常对接、工单、消息、服务记录与媒体资讯；看板只对管理员开放 */
+  [ROLES.CS]: Object.freeze(['workbench', 'products', 'demands', 'leads', 'consult', 'messages', 'service', 'users', 'biz', 'news', 'boards', 'risk', 'cs', 'promote']),
   /* 财务：工作台 + 财务中心 + 推广提现出款，避免误入业务页面 */
   [ROLES.FINANCE]: Object.freeze(['workbench', 'finance', 'promote']),
   /* 电销：只有线索页，手机号与拨号都在这一页完成 */

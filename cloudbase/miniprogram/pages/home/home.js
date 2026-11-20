@@ -1,23 +1,25 @@
 /* 首页：三个视图（在售货源 / 求购需求 / 资讯圈）+ 工具入口 + 搜索 + 排序筛选条 */
 const { gate, getUser } = require('../../utils/auth')
 const guard = require('../../utils/guard')
-const M = require('../../utils/mock')
 const fav = require('../../utils/fav')
 const shop = require('../../utils/shop')
-const { request } = require('../../utils/request')
+const { request, uploadFile } = require('../../utils/request')
+const features = require('../../utils/features')
 const { CITY_TREE, CITY_FLAT, matchKeyword } = require('../../utils/board')
+const catalog = require('../../utils/catalog')
 
 const SELL_SORTS = ['综合', '价格升序', '价格降序', '最新', '成交优先']
 const DEMAND_SORTS = ['最新发布', '预算从高到低', '预算从低到高']
 
 /* 设备类型与品牌直接取自设备目录，目录里新增品类后筛选面板自动跟上 */
-const DEVICE_CATS = Object.keys(M.DEVICE_TREE || {})
+const DEVICE_CATS = catalog.currentCats()
 const DEFAULT_BRAND_CATS = ['GPU 服务器', 'GPU 加速卡', 'AI 一体机']
 function brandOptsOf(cats) {
   const list = []
+  const tree = catalog.currentTree()
   const src = (cats && cats.length) ? cats : DEFAULT_BRAND_CATS
   src.forEach((c) => {
-    Object.keys(M.DEVICE_TREE[c] || {}).forEach((b) => { if (list.indexOf(b) < 0) list.push(b) })
+    Object.keys(tree[c] || {}).forEach((b) => { if (list.indexOf(b) < 0) list.push(b) })
   })
   return list
 }
@@ -75,6 +77,16 @@ function matchFilter(x, f, isDemand) {
 
 const NEWS_SORTS = ['最新发布', '官方优先']
 
+/* 社交总开关的本地缓存：关闭时首页只留资讯 + 工具栏，避免货源 / 求购在审核期露出。
+   冷启动先用上次值渲染，拉到最新配置后由 syncSocial 校正。 */
+function cachedSocial() {
+  try {
+    const v = wx.getStorageSync('featureFlags')
+    if (v && typeof v.chatEnabled === 'boolean') return v.chatEnabled
+  } catch (e) {}
+  return false
+}
+
 /* 同城口径：取账号资料里的所在城市；未设置时不再给默认城市（按全国口径展示） */
 function localCity() {
   try {
@@ -87,11 +99,13 @@ function localCity() {
 
 Page({
   data: {
-    tab: 'sell',
+    /* 社交总开关关闭：只展示资讯视图，隐藏在售货源 / 求购需求列表与商机入口 */
+    socialOn: cachedSocial(),
+    tab: cachedSocial() ? 'sell' : 'news',
     /* 朋友圈单页模式：只做浏览，底部提示从右上角进入完整小程序 */
     singlePage: false,
-    sortOptions: SELL_SORTS,
-    sort: '综合',
+    sortOptions: cachedSocial() ? SELL_SORTS : NEWS_SORTS,
+    sort: cachedSocial() ? '综合' : NEWS_SORTS[0],
     search: '',
     filterOpen: false,
     filterGroups: [],
@@ -113,6 +127,8 @@ Page({
     /* 商机按钮副标题：只显示「N 条商机」，不罗列型号；没商机时回落文案 */
     bizHint: '',
     /* 资讯圈：全国 / 同城 / 指定城市，按发布地址筛选 */
+    /* 评论总开关：后台关闭后隐藏评论框、评论区与评论数 */
+    commentEnabled: true,
     newsScope: 'all',
     newsLocalCity: '',
     newsCity: '',
@@ -121,6 +137,12 @@ Page({
     newsStats: { city: '全国' },
     newsPubOpen: false,
     newsPub: { title: '', content: '', city: '' },
+    /* 资讯媒体：图片最多 9 张、视频最多 1 段，上传后随正文一起提交 */
+    newsMedia: [],
+    newsMediaUrls: [],
+    newsMediaImgCount: 0,
+    newsMediaVideoCount: 0,
+    newsUploading: false,
     /* 资讯私密发布：默认关闭；开启后不显示发布人、不进主页 */
     newsPrivate: false,
     newsSubmitting: false,
@@ -142,7 +164,7 @@ Page({
       wx.onKeyboardHeightChange(this.onKbChange)
     }
     this.registerHomeSwitch()
-    this.setData(Object.assign(this.filterPatch('sell'), { newsLocalCity: localCity() }))
+    this.setData(Object.assign(this.filterPatch(this.data.tab), { newsLocalCity: localCity() }))
     /* 分享落地链接带 tab 参数：直接落到对应视图（货源 / 求购 / 资讯） */
     const want = String((options && options.tab) || '')
     /* 旧版货盘链接：货盘已独立成页，转发出去的旧链接也要能打开 */
@@ -151,10 +173,34 @@ Page({
       return
     }
     if (want && ['sell', 'buy', 'news'].indexOf(want) >= 0) {
-      this.setData({ tab: want, sortOptions: this.sortOptionsOf(want), sort: this.sortStore[want] })
+      /* 开关关闭时货源 / 求购不对外展示：旧的分享链接统一落到资讯 */
+      const target = this.data.socialOn ? want : 'news'
+      this.setData({ tab: target, sortOptions: this.sortOptionsOf(target), sort: this.sortStore[target] })
+      this.syncNavTitle(target)
     }
     this.loadList()
     this.loadBanner()
+    this.refreshCatalog()
+  },
+
+  /* 型号目录以服务端为准：管理端增删型号后，设备类型 / 品牌筛选项自动跟上 */
+  refreshCatalog() {
+    catalog.loadCatalog().then((res) => {
+      if (!res || !res.tree) return
+      const cats = (res.cats && res.cats.length) ? res.cats : Object.keys(res.tree)
+      if (cats.join('|') !== DEVICE_CATS.join('|')) {
+        DEVICE_CATS.splice(0, DEVICE_CATS.length)
+        cats.forEach((c) => DEVICE_CATS.push(c))
+      }
+      /* 品牌随目录变化：已选品牌不在新目录里时移除，避免筛出空列表 */
+      const tab = this.data.tab
+      const f = this.filters && this.filters[tab]
+      if (f && (f.cat || []).length) {
+        const allow = brandOptsOf(f.cat)
+        f.brand = (f.brand || []).filter((b) => allow.indexOf(b) >= 0)
+      }
+      this.setData(this.filterPatch(tab))
+    }).catch(() => {})
   },
 
   /* 各视图的排序选项：与 goTab 保持同一份口径 */
@@ -178,6 +224,8 @@ Page({
   onShow() {
     this.initState()
     gate(this.route || 'pages/home/home', this.options)
+    /* 社交总开关：关闭后只留资讯视图；切换开关后回到本页即生效 */
+    this.syncSocial()
     /* 底部导航带来的落点会自己触发一次加载，避免和下面的刷新重复请求 */
     const switched = this.applyHomeTab()
     this.syncTabBar()
@@ -195,35 +243,61 @@ Page({
     if (!switched) this.loadList(true)
     this.loadBanner()
     this.loadBizBadge()
+    this.refreshCatalog()
     this.startBizTimer()
     /* 在线心跳：登录后回到首页时 app.onShow 不会再触发，这里补一次 */
     const me = getUser()
     if (me && me.uid) request('user', 'online.ping', {}, { silent: true }).catch(() => {})
   },
 
+  /* 分享标题取自当前视图第一条真实内容：型号随列表变化，不会永远固定某个型号 */
+  shareSample() {
+    const head = (this.data.items || [])[0] || {}
+    const model = [head.brand, head.model].filter(Boolean).join(' ')
+    const cover = String(head.cover || '')
+    return {
+      model: String(model || '').trim(),
+      title: String(head.title || '').trim(),
+      cover: /^https?:\/\//.test(cover) ? cover : ''
+    }
+  },
+
   /* 分享卡片：首页三个视图（货源 / 求购 / 资讯）文案各不相同 */
-  onShareAppMessage() {
+  onShareAppMessage(res) {
+    /* 信息流里的「转发」按钮带资讯 id：直接分享到这条资讯详情 */
+    const ds = (res && res.target && res.target.dataset) || {}
+    if (ds.id) {
+      return {
+        title: ds.title || '算力聚合 · 资讯',
+        path: '/pages/news/news?id=' + encodeURIComponent(ds.id)
+      }
+    }
     const tab = this.data.tab
+    const s = this.shareSample()
     if (tab === 'news') {
       return {
-        title: '算力聚合 · 行情与避坑指南',
-        desc: 'H100 / A100 报价行情、机房清退与交易避坑',
-        imageUrl: '/assets/share/card-home.png',
+        title: guard.scrubContact(s.title ? s.title + '｜行情与避坑，点开看全文' : '算力行情速递 · 今日报价与交易避坑，点开就看'),
+        desc: '今日报价、机房清退与交易避坑，登录看同行都在聊什么',
+        imageUrl: s.cover || '/assets/share/card-home.png',
         path: '/pages/home/home?tab=news'
       }
     }
     if (tab === 'buy') {
       return {
-        title: '算力聚合 · 正在求购的算力需求',
-        desc: '求购与租赁需求持续更新，条件对齐即可直接响应',
-        imageUrl: '/assets/share/card-demand.png',
+        title: guard.scrubContact(s.model
+          ? '同行正在求购 ' + s.model + '，登录抢占对接先机'
+          : '同行正在集中求购，登录抢占对接先机'),
+        desc: '求购与租赁需求持续更新，登录查看需求方与条件',
+        imageUrl: s.cover || '/assets/share/card-demand.png',
         path: '/pages/home/home?tab=buy'
       }
     }
     return {
-      title: '算力聚合 · 算力货源直连',
-      desc: 'GPU 服务器 / 内存 / 整机，先确认条件再与货主直接对话',
-      imageUrl: '/assets/share/card-product.png',
+      title: guard.scrubContact(s.model
+        ? s.model + ' 现货在售，登录看货主实价'
+        : '今日现货货源持续更新，登录看货主实价'),
+      desc: 'GPU 服务器 / 内存 / 整机实时挂牌，登录查看货主与实时报价',
+      imageUrl: s.cover || '/assets/share/card-product.png',
       path: '/pages/home/home?tab=sell'
     }
   },
@@ -231,13 +305,30 @@ Page({
   /* 分享到朋友圈：单页模式只能浏览，title / query 与好友分享保持同一口径 */
   onShareTimeline() {
     const tab = this.data.tab
+    const s = this.shareSample()
     if (tab === 'news') {
-      return { title: '算力聚合 · 行情与避坑指南', query: 'tab=news', imageUrl: '/assets/share/card-home.png' }
+      return {
+        title: guard.scrubContact(s.title ? s.title + '｜行情与避坑，点开看全文' : '算力行情速递 · 今日报价与交易避坑，点开就看'),
+        query: 'tab=news',
+        imageUrl: s.cover || '/assets/share/card-home.png'
+      }
     }
     if (tab === 'buy') {
-      return { title: '算力聚合 · 正在求购的算力需求', query: 'tab=buy', imageUrl: '/assets/share/card-demand.png' }
+      return {
+        title: guard.scrubContact(s.model
+          ? '同行正在求购 ' + s.model + '，登录抢占对接先机'
+          : '同行正在集中求购，登录抢占对接先机'),
+        query: 'tab=buy',
+        imageUrl: s.cover || '/assets/share/card-demand.png'
+      }
     }
-    return { title: '算力聚合 · 算力货源直连', query: 'tab=sell', imageUrl: '/assets/share/card-product.png' }
+    return {
+      title: guard.scrubContact(s.model
+        ? s.model + ' 现货在售，登录看货主实价'
+        : '今日现货货源持续更新，登录看货主实价'),
+      query: 'tab=sell',
+      imageUrl: s.cover || '/assets/share/card-product.png'
+    }
   },
 
   /* 底部导航「首页 / 资讯」共用本页：首页把切视图的方法注册到全局，
@@ -261,8 +352,29 @@ Page({
     const want = (app && app.globalData && app.globalData.homeTab) || ''
     if (!want) return false
     app.globalData.homeTab = ''
-    this.goTab(want)
+    this.goTab(this.data.socialOn ? want : 'news')
     return true
+  },
+
+  /* 社交总开关：关闭时只保留资讯视图。
+     开关还没从服务端拉到时先按完整版展示，拉到真实值后再切换，
+     避免完整版用户每次冷启动先被锁成资讯页。 */
+  syncSocial() {
+    if (!features.loaded()) {
+      /* 还没拿到开关：保持当前（缓存）判断，同时补拉一次，回来后 app 会再调本方法 */
+      features.ensure().catch(() => {})
+      return
+    }
+    const on = features.chatEnabled()
+    /* 评论也是社交内容：总开关关闭时卡片上的评论框与评论区一起隐藏 */
+    const commentOn = this.newsCommentBase !== false && on
+    if (commentOn !== this.data.commentEnabled) this.setData({ commentEnabled: commentOn })
+    if (on === this.data.socialOn) return
+    const wasOff = this.data.socialOn === false
+    this.setData({ socialOn: on })
+    /* 关闭：强制回到资讯；打开：此前被强制停在资讯的，回到在售货源 */
+    if (!on && this.data.tab !== 'news') this.goTab('news')
+    if (on && wasOff && this.data.tab === 'news') this.goTab('sell')
   },
 
   // 自定义 tabBar 的选中态由页面自己同步：首页 / 资讯 共用一页，按目标视图区分
@@ -270,7 +382,20 @@ Page({
   syncTabBar(tab) {
     const t = tab || this.data.tab
     const bar = typeof this.getTabBar === 'function' ? this.getTabBar() : null
-    if (bar && bar.setData) bar.setData({ selected: t === 'news' ? 1 : 0 })
+    if (!bar || !bar.setData) return
+    bar.setData({ selected: t === 'news' ? 1 : 0 })
+    /* 切回首页时页面是复用的，tabBar 的 pageLifetimes.show 不一定触发：
+       主动同步一次社交开关，避免管理端打开后仍停在两项导航 */
+    if (typeof bar.syncSocial === 'function') bar.syncSocial()
+    /* 未读角标同理：各 tab 页各有一份 tabBar 实例，不复用消息页刚清掉的那份，
+       这里重读一次缓存，避免已读消息切页后又亮起来 */
+    if (typeof bar.refreshUnread === 'function') bar.refreshUnread()
+  },
+
+  // 导航栏标题随视图切换：资讯页显示「资讯」，货源 / 求购仍为「算力聚合」
+  syncNavTitle(tab) {
+    const t = tab || this.data.tab
+    wx.setNavigationBarTitle({ title: t === 'news' ? '资讯' : '算力聚合', fail: () => {} })
   },
 
   // 从详情页返回时同步收藏状态（资讯没有收藏）
@@ -299,6 +424,7 @@ Page({
     this.initState()
     /* 先同步高亮：即使目标视图与当前一致，点击也要有可见反馈 */
     this.syncTabBar(target)
+    this.syncNavTitle(target)
     if (target === this.data.tab) return
     this.keywords[this.data.tab] = this.data.search
     this.sortStore[this.data.tab] = this.data.sort
@@ -497,35 +623,56 @@ Page({
   },
 
   /**
-   * 首页横幅：管理端在「设置 - 首页横幅」维护内容与速度。
+   * 首页横幅：管理端在「设置 - 首页横幅」维护内容与速度，保存后即时生效（无需重新上传小程序）。
    * 多条标题用分隔符连成一条滚动文案；速度是像素 / 秒，换算成单次循环时长。
-   * 三分钟内不重复拉取，切回首页不会每次都打接口。
+   * 15 秒内不重复拉取（onLoad / onShow 会连续触发）；关闭开关后横幅展位整体消失。
    */
-  loadBanner() {
+  async loadBanner(force) {
     const now = Date.now()
-    if (this.bannerAt && now - this.bannerAt < 180000 && this.data.bannerText) return
+    if (!force && this.bannerAt && now - this.bannerAt < 15000 && this.data.bannerText) return
+    /* 并发合并：onLoad 与 onShow 同时触发时只发一次请求 */
+    if (this.bannerLoading) return
+    this.bannerLoading = true
     this.bannerAt = now
-    request('user', 'site.get', {}, { silent: true })
-      .then((res) => {
-        const b = (res && res.site && res.site.banner) || {}
-        const items = b.enabled === false ? [] : (b.items || []).filter((x) => x && x.title)
-        if (!items.length) {
-          if (this.data.bannerText || this.data.bannerOpen) {
-            this.setData({ bannerText: '', bannerItems: [], bannerOpen: false })
-          }
-          return
+    try {
+      const res = await request('user', 'site.get', {}, { silent: true })
+      this.bannerTries = 0
+      const b = (res && res.site && res.site.banner) || {}
+      const items = b.enabled === false ? [] : (b.items || []).filter((x) => x && x.title)
+      if (!items.length) {
+        if (this.data.bannerText || this.data.bannerOpen) {
+          this.setData({ bannerText: '', bannerItems: [], bannerOpen: false })
         }
-        const speed = Math.min(200, Math.max(10, Number(b.speed) || 40))
-        const text = items.map((x) => x.title).join('　　·　　')
-        /* 估算宽度 = 字数 × 14px + 间隔，除以速度得到一整轮时长（秒） */
-        const dur = Math.min(90, Math.max(6, (text.length * 14 + 48) / speed))
-        this.setData({
-          bannerText: text,
-          bannerItems: items,
-          bannerDur: Math.round(dur * 10) / 10
-        })
+        return
+      }
+      const speed = Math.min(200, Math.max(10, Number(b.speed) || 40))
+      const text = items.map((x) => x.title).join('　　·　　')
+      /* 估算宽度 = 字数 × 14px + 间隔，除以速度得到一整轮时长（秒） */
+      const dur = Math.min(90, Math.max(6, (text.length * 14 + 48) / speed))
+      this.setData({
+        bannerText: text,
+        bannerItems: items,
+        bannerDur: Math.round(dur * 10) / 10
       })
-      .catch(() => {})
+    } catch (err) {
+      /* 失败不缓存：登录尚未完成 / 网络抖动时自动补拉，避免首屏永久缺失横幅 */
+      this.bannerAt = 0
+      this.retryBanner()
+    } finally {
+      this.bannerLoading = false
+    }
+  },
+
+  /** 首屏拉取失败后补拉两次（1.5s / 3s），覆盖静默登录尚未完成的空窗期 */
+  retryBanner() {
+    if (this.bannerTimer) return
+    const tries = Number(this.bannerTries) || 0
+    if (tries >= 2) return
+    this.bannerTries = tries + 1
+    this.bannerTimer = setTimeout(() => {
+      this.bannerTimer = null
+      this.loadBanner(true)
+    }, 1500 * (tries + 1))
   },
 
   openBanner() {
@@ -711,6 +858,11 @@ Page({
       this.applyNews([], true)
       return
     }
+    /* 评论总开关：后台关闭或社交总开关（含审核期隐藏）关闭后，卡片上不再渲染评论框与评论区 */
+    if (newsRes) {
+      this.newsCommentBase = newsRes.commentEnabled !== false
+      this.setData({ commentEnabled: this.newsCommentBase && features.chatEnabled() })
+    }
     const pending = mine
       .filter((n) => n.status === '待审核' || n.status === '已驳回')
       .map((n) => Object.assign({}, n, {
@@ -738,6 +890,22 @@ Page({
       if (city && cityOf({ city: n.city }) !== city) return false
       const hay = [n.title, n.summary, n.cat, n.city, n.author].join(' ').toLowerCase()
       return words.every((w) => hay.indexOf(w.toLowerCase()) >= 0)
+    })
+    /* 朋友圈式媒体：补预览图集合与互动默认值，模板直接用 */
+    list = list.map((n) => {
+      const media = Array.isArray(n.media) ? n.media.filter((m) => m && m.fileId) : []
+      return Object.assign({
+        likes: 0,
+        liked: false,
+        commentCount: 0,
+        commentOpen: false,
+        commentDraft: '',
+        hasFull: String(n.content || '').length > String(n.summary || '').length
+      }, n, {
+        media,
+        mediaCount: media.length,
+        mediaUrls: media.filter((m) => m.kind !== 'video').map((m) => m.fileId)
+      })
     })
     if (this.data.sort === '官方优先') {
       list = list.slice().sort((a, b) => (b.official ? 1 : 0) - (a.official ? 1 : 0))
@@ -807,6 +975,103 @@ Page({
       newsPrivate: false,
       newsPub: { title: '', content: '', city: city }
     })
+    this.setNewsMedia([])
+  },
+
+  /* 媒体集合统一入口：同步九宫格预览与「还能传几张」 */
+  setNewsMedia(list) {
+    const media = Array.isArray(list) ? list : []
+    this.setData({
+      newsMedia: media,
+      newsMediaUrls: media.filter((m) => m.kind !== 'video').map((m) => m.fileId),
+      newsMediaImgCount: media.filter((m) => m.kind === 'image').length,
+      newsMediaVideoCount: media.filter((m) => m.kind === 'video').length
+    })
+  },
+
+  /* 从相册选图：最多 9 张，单张 10MB 以内 */
+  chooseNewsImage() {
+    if (this.data.newsUploading) return
+    const remain = 9 - this.data.newsMediaImgCount
+    if (remain <= 0) return wx.showToast({ title: '最多上传 9 张图片', icon: 'none' })
+    wx.chooseMedia({
+      count: remain,
+      mediaType: ['image'],
+      sizeType: ['compressed'],
+      success: (res) => this.addNewsMedia('image', (res && res.tempFiles) || [])
+    })
+  },
+
+  /* 选视频：最多 1 段，60 秒以内，50MB 以内 */
+  chooseNewsVideo() {
+    if (this.data.newsUploading) return
+    if (this.data.newsMediaVideoCount >= 1) return wx.showToast({ title: '最多上传 1 段视频', icon: 'none' })
+    wx.chooseMedia({
+      count: 1,
+      mediaType: ['video'],
+      maxDuration: 60,
+      success: (res) => this.addNewsMedia('video', (res && res.tempFiles) || [])
+    })
+  },
+
+  async addNewsMedia(kind, files) {
+    const limit = { image: 9, video: 1 }
+    const maxBytes = kind === 'image' ? 10 * 1024 * 1024 : 50 * 1024 * 1024
+    const current = this.data.newsMedia || []
+    const room = limit[kind] - current.filter((m) => m.kind === kind).length
+    const picked = []
+    let oversize = 0
+    for (const f of files) {
+      if (picked.length >= room) break
+      const size = Number(f && f.size) || 0
+      if (size > maxBytes) { oversize += 1; continue }
+      picked.push({ f, size })
+    }
+    if (oversize) wx.showToast({ title: kind === 'image' ? '单张图片不能超过 10MB' : '视频不能超过 50MB', icon: 'none' })
+    if (!picked.length) return
+    this.setData({ newsUploading: true })
+    wx.showLoading({ title: '上传中', mask: true })
+    const added = []
+    try {
+      for (let i = 0; i < picked.length; i += 1) {
+        const { f, size } = picked[i]
+        const path = f.tempFilePath
+        const ext = (String(path).match(/\.([a-z0-9]+)$/i) || [])[1] || (kind === 'video' ? 'mp4' : 'jpg')
+        const type = kind === 'video'
+          ? (ext === 'mov' ? 'video/quicktime' : 'video/mp4')
+          : ({ png: 'image/png', gif: 'image/gif', webp: 'image/webp' }[ext] || 'image/jpeg')
+        const up = await uploadFile(path, { cloudPath: 'news/' + kind + '/' + Date.now() + '-' + i + '.' + ext })
+        const fileId = typeof up === 'string' ? up : ((up && (up.fileId || up.url)) || '')
+        if (!fileId) throw new Error('上传失败')
+        added.push({
+          key: 'nm' + Date.now() + i,
+          kind,
+          name: String(f.name || (kind === 'video' ? '视频' : '图片')).slice(0, 30),
+          type,
+          size,
+          fileId
+        })
+      }
+      this.setNewsMedia(current.concat(added))
+    } catch (err) {
+      if (added.length) this.setNewsMedia(current.concat(added))
+      wx.showToast({ title: (err && err.message) || '上传失败，请重试', icon: 'none' })
+    } finally {
+      wx.hideLoading()
+      this.setData({ newsUploading: false })
+    }
+  },
+
+  removeNewsMedia(e) {
+    const key = e.currentTarget.dataset.key
+    this.setNewsMedia((this.data.newsMedia || []).filter((m) => m.key !== key))
+  },
+
+  previewNewsImage(e) {
+    const src = e.currentTarget.dataset.src
+    const list = e.currentTarget.dataset.list || []
+    if (!src) return
+    wx.previewImage({ current: src, urls: list.length ? list : [src] })
   },
 
   closeNewsPub() {
@@ -837,6 +1102,7 @@ Page({
 
   submitNews() {
     if (this.data.newsSubmitting) return
+    if (this.data.newsUploading) return wx.showToast({ title: '媒体还在上传，请稍候', icon: 'none' })
     const d = this.data.newsPub
     const title = String(d.title || '').trim()
     const content = String(d.content || '').trim()
@@ -852,10 +1118,17 @@ Page({
       title,
       content,
       city,
+      media: (this.data.newsMedia || []).map((m) => ({
+        name: m.name,
+        type: m.type,
+        size: m.size,
+        fileId: m.fileId
+      })),
       visibility: this.data.newsPrivate ? 'private' : 'public'
     }, { silent: true })
       .then(() => {
         this.setData({ newsSubmitting: false, newsPubOpen: false, newsScope: 'all', newsLocalCity: city })
+        this.setNewsMedia([])
         this.setTabBarHidden(false)
         this.tabCache.news = null
         this.loadList(true)
@@ -952,6 +1225,107 @@ Page({
     wx.navigateTo({ url: '/pages/news/news?id=' + encodeURIComponent(id) })
   },
 
+  /* 信息流互动：只更新当前卡片，不整页重渲染 */
+  newsIndex(id) {
+    return (this.data.items || []).findIndex((n) => n.id === id)
+  },
+
+  patchNewsItem(id, patch) {
+    const idx = this.newsIndex(id)
+    if (idx < 0) return -1
+    const data = {}
+    Object.keys(patch).forEach((k) => { data['items[' + idx + '].' + k] = patch[k] })
+    this.setData(data)
+    const cache = this.tabCache && this.tabCache.news
+    if (cache && Array.isArray(cache.items)) {
+      const ci = cache.items.findIndex((n) => n.id === id)
+      if (ci >= 0) cache.items[ci] = Object.assign({}, cache.items[ci], patch)
+    }
+    return idx
+  },
+
+  async toggleNewsLike(e) {
+    const id = e.currentTarget.dataset.id
+    const idx = this.newsIndex(id)
+    if (idx < 0 || this.newsLiking) return
+    const item = this.data.items[idx]
+    this.newsLiking = true
+    try {
+      const res = await request('user', 'news.like', { id, on: !item.liked }, { silent: true })
+      this.patchNewsItem(id, { liked: !!(res && res.liked), likes: Number(res && res.likes) || 0 })
+    } catch (err) {
+      wx.showToast({ title: (err && err.message) || '操作失败，请重试', icon: 'none' })
+    } finally {
+      this.newsLiking = false
+    }
+  },
+
+  async toggleNewsComments(e) {
+    if (!this.data.commentEnabled) return
+    const id = e.currentTarget.dataset.id
+    const idx = this.newsIndex(id)
+    if (idx < 0) return
+    if (this.data.items[idx].commentOpen) {
+      this.patchNewsItem(id, { commentOpen: false })
+      return
+    }
+    this.patchNewsItem(id, { commentOpen: true, commentLoading: true })
+    await this.loadNewsComments(id)
+  },
+
+  async loadNewsComments(id) {
+    if (!this.data.commentEnabled) return
+    try {
+      const res = await request('user', 'news.comment.list', { id, page: 1, limit: 20 }, { silent: true })
+      const items = (res && res.items) || []
+      const total = Number(res && res.total)
+      this.patchNewsItem(id, {
+        comments: items,
+        commentCount: Number.isFinite(total) ? total : items.length,
+        commentLoading: false
+      })
+    } catch (err) {
+      this.patchNewsItem(id, { commentLoading: false })
+      wx.showToast({ title: (err && err.message) || '评论加载失败', icon: 'none' })
+    }
+  },
+
+  onNewsCommentInput(e) {
+    if (!this.data.commentEnabled) return
+    const id = e.currentTarget.dataset.id
+    this.patchNewsItem(id, { commentDraft: e.detail.value })
+  },
+
+  /* 点评论框时展开评论列表（已展开则不重复拉取） */
+  onNewsCommentFocus(e) {
+    if (!this.data.commentEnabled) return
+    const id = e.currentTarget.dataset.id
+    const idx = this.newsIndex(id)
+    if (idx < 0 || this.data.items[idx].commentOpen) return
+    this.patchNewsItem(id, { commentOpen: true, commentLoading: true })
+    this.loadNewsComments(id)
+  },
+
+  async sendNewsComment(e) {
+    if (!this.data.commentEnabled) return
+    const id = e.currentTarget.dataset.id
+    const idx = this.newsIndex(id)
+    if (idx < 0 || this.newsCommentSending) return
+    const content = String(this.data.items[idx].commentDraft || '').trim()
+    if (!content) return wx.showToast({ title: '请先输入评论内容', icon: 'none' })
+    this.newsCommentSending = true
+    try {
+      await request('user', 'news.comment.add', { id, content }, { silent: true })
+      this.patchNewsItem(id, { commentDraft: '' })
+      await this.loadNewsComments(id)
+      wx.showToast({ title: '评论成功', icon: 'none' })
+    } catch (err) {
+      wx.showToast({ title: (err && err.message) || '评论失败，请重试', icon: 'none' })
+    } finally {
+      this.newsCommentSending = false
+    }
+  },
+
   goPublish() {
     wx.navigateTo({ url: '/pages/publish/publish' })
   },
@@ -959,6 +1333,8 @@ Page({
   onPullDownRefresh() {
     this.loadList(true)
     this.loadBizBadge()
+    /* 下拉即拉取最新横幅：后台改完内容 / 开关，下拉一次就生效 */
+    this.loadBanner(true)
     if (this.pullTimer) clearTimeout(this.pullTimer)
     this.pullTimer = setTimeout(() => {
       this.pullTimer = null
@@ -989,6 +1365,10 @@ Page({
     if (this.pullTimer) {
       clearTimeout(this.pullTimer)
       this.pullTimer = null
+    }
+    if (this.bannerTimer) {
+      clearTimeout(this.bannerTimer)
+      this.bannerTimer = null
     }
   }
 })

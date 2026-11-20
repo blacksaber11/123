@@ -6,6 +6,7 @@ const catalog = require('../../utils/catalog')
 const { normalizePhone, isValidContactPhone, contactPhoneError } = require('../../utils/validate')
 const { ensureProfileReady } = require('../../utils/profile-ready')
 const { normSearch, searchHit } = require('../../utils/model')
+const parse = require('../../utils/publish-parse')
 const M = require('../../utils/mock')
 
 // 表单选项：multi 为多选，def 为默认选中项
@@ -44,9 +45,66 @@ const CITY_TREE = M.CITY_TREE
 const PROVINCES = Object.keys(CITY_TREE)
 
 // 设备目录：设备类型 → 品牌 → 系列 → 型号，四级滚轮
-// 内置目录 + 管理端「产品型号库」的平台增量，联网后在 refreshCatalog 中合并
-let DEVICE_TREE = M.DEVICE_TREE
-let DEVICE_CATS = Object.keys(DEVICE_TREE)
+// 优先用服务端完整目录（含管理端型号库增删）；首次渲染先用本机缓存 / 内置目录兜底，
+// 联网后在 refreshCatalog 中替换为最新目录
+let DEVICE_TREE = catalog.currentTree()
+let DEVICE_CATS = catalog.currentCats()
+
+/* 粘贴识别的索引：设备目录 2271 条、城市别名 746 条，首次识别时才建，目录刷新后置空重建 */
+let PARSE_DEVICE_INDEX = null
+let PARSE_CITY_INDEX = null
+
+/* 入口页识别出的批量队列：入口页写入，压入的表单页 onLoad 读取后逐条发布（同模块共享） */
+let PASTE_BATCH = null
+
+/* 已发布过的同型号内容：识别时默认排除，避免重复发布；缓存 60 秒 */
+let PUBLISHED_KEYS = null
+let PUBLISHED_AT = 0
+
+function loadPublishedKeys() {
+  const now = Date.now()
+  if (PUBLISHED_KEYS && now - PUBLISHED_AT < 60 * 1000) return Promise.resolve(PUBLISHED_KEYS)
+  return request('user', 'mine.publish.list', { page: 1, limit: 50 }, { silent: true })
+    .then((res) => {
+      const set = new Set()
+      ;((res && res.products) || []).forEach((p) => {
+        const m = normSearch(p.model || '')
+        if (m) set.add('sell|' + m)
+      })
+      ;((res && res.demands) || []).forEach((d) => {
+        const m = normSearch(d.model || '')
+        if (m) set.add('buy|' + m)
+      })
+      PUBLISHED_KEYS = set
+      PUBLISHED_AT = now
+      return set
+    })
+    .catch(() => new Set())
+}
+
+/* 同侧（商品 / 需求）+ 同型号就算重复；出售 / 出租不区分，识别阶段拿不到最终模式 */
+function dupKeyOf(rec) {
+  const model = normSearch((rec && rec.device && rec.device.model) || '')
+  if (!model) return ''
+  return (rec.type === 'buy' ? 'buy' : 'sell') + '|' + model
+}
+
+/**
+ * 粘贴识别优先走云函数：规则放在服务端（cloudfunctions/user/_shared/publish-parse.js），
+ * 以后新增 / 调整识别规则只需重新部署云函数，不用重新提审小程序；
+ * 云函数不可用（未登录 / 网络异常 / 超时）时回落到本地同一份规则。
+ */
+function parseByCloud(text) {
+  return request('user', 'parse.publish', { text: text }, { silent: true })
+    .then((res) => (res && Array.isArray(res.records) ? res : null))
+    .catch(() => null)
+}
+
+function ensureParseIndex() {
+  if (!PARSE_DEVICE_INDEX) PARSE_DEVICE_INDEX = parse.buildDeviceIndex(DEVICE_TREE)
+  if (!PARSE_CITY_INDEX) PARSE_CITY_INDEX = parse.buildCityIndex(CITY_TREE)
+  return { deviceIndex: PARSE_DEVICE_INDEX, cityIndex: PARSE_CITY_INDEX }
+}
 
 function brandsOf(cat) {
   return Object.keys(DEVICE_TREE[cat] || {})
@@ -182,8 +240,8 @@ function agencyFee(amount, rental, side) {
       deferredFee: true,
       rule: '100 万元以上：0.5%，上不封顶（成交后支付）',
       note: side === 'buy'
-        ? '提交采购意向函、委托授权书、联系人身份证，资料核验后上架；订单只对平台可见；成交后支付 0.5% 服务费。'
-        : '提交营业执照、货源证明、委托授权书、联系人身份证，资料核验后上架；成交后支付 0.5% 服务费。'
+        ? '提交采购意向函、验资证明、联系人身份证，委托授权书可选；资料核验后上架；订单只对平台可见；成交后支付 0.5% 服务费。'
+        : '提交营业执照、物权证明、联系人身份证，委托授权书可选；资料核验后上架；成交后支付 0.5% 服务费。'
     }
   }
 
@@ -238,14 +296,6 @@ Page({
     condLevels: ['95新', '9成新', '8成新', '7成新及以下'],
     /* 更多要求默认收起：条件与流程不预设，用户自己添加 */
     moreOpen: false,
-    /* 主体信息统一取自「我的 · 个人信息」，发布页不再逐条设置公开 / 保密 */
-    profileSubject: '',
-    profileSubjectType: '',
-    profileKindLabel: '企业主体',
-    profileExposureLabel: '不公开主体',
-    profileOpen: false,
-    profileQualDone: 0,
-    profileQualTotal: 0,
     /* 币种：默认人民币 */
     currency: 'CNY',
     currencyIndex: 0,
@@ -262,7 +312,7 @@ Page({
       { code: 'BTC', symbol: '₿', label: '比特币' }
     ],
     currencyLabels: ['人民币 ¥', '美元 $', 'USDT ₮', '港币 HK$', '欧元 €', '英镑 £', '日元 ¥', '新加坡元 S$', '迪拉姆 د.إ', '比特币 ₿'],
-    form: { title: '', qty: '', minQty: '', price: '', priceMax: '', priceMode: 'fixed', accept: '', limit: '', note: '', cat: '', brand: '', series: '', model: '', device: '', devicePath: '', province: '', city: '', subject: '', phone: '' },
+    form: { title: '', qty: '', minQty: '', maxQty: '', price: '', priceMax: '', priceMode: 'fixed', accept: '', limit: '', note: '', cat: '', brand: '', series: '', model: '', device: '', devicePath: '', province: '', city: '' },
     modeOptions: ['出售', '出租'],
     /* 设备列在 onLoad 里计算：模块加载阶段算会让缺键 / 空目录直接白屏 */
     deviceCols: [],
@@ -296,14 +346,9 @@ Page({
     stepDesc: '',
     /* 出售商品可同步一条私库存，参与平台新需求的商机匹配 */
     syncStock: true,
-    /* 发布渠道：仅普通 / 仅商机 / 二者都发；需公开主体信息 */
-    channel: 'both',
-    poolDisabled: false,
-    /* 私密发布＝匿名公开：默认关闭，商品照常实名公开；需求同样默认关闭 */
-    privatePublish: false,
-    /* 主体信息公开范围以「我的信息」为准，这里只读展示 */
-    subjectExposure: 'hidden',
-    profileExposureLabel: '不公开主体',
+    /* 发布方式：默认公开并自动进入商机匹配，可切换为仅发商机池 */
+    /* 仅发商机池：只进匹配池，首页 / 搜索 / 货架都看不到；默认关闭，由用户自行选择 */
+    poolOnly: false,
     /* 代采 / 代售设备：只能从平台预设型号库选择，支持搜索或展开目录 */
     agDeviceCols: [],
     agDeviceIndex: [0, 0, 0, 0],
@@ -323,6 +368,8 @@ Page({
     editKind: 'product',
     editStatus: '',
     editLoading: false,
+    /* 是否由「发布类型选择」压入：返回 / 发布成功都退回上一层入口页 */
+    fromEntry: false,
     /* 代采 / 代售委托：独立于普通发布流程，不影响原有表单与校验 */
     agencyType: '', // buy / sell
     /* 重新提交：被驳回的委托带 id 回到本页预填，提交时原地覆盖并重新排队审核 */
@@ -337,7 +384,7 @@ Page({
     agencyDeadlineMin: dateStr(1),
     agencyDeadlineMax: dateStr(365),
     agencySubjectType: 'company', // company 企业 / person 个人
-    agencyForm: { item: '', qty: '', price: '', subject: '', creditCode: '', legal: '', idCard: '', phone: '', authPhone: '' },
+    agencyForm: { item: '', qty: '', price: '', subject: '', creditCode: '', legal: '', idCard: '', phone: '' },
     agencyAgree: false,
     /* 代采 / 代售的条件与流程：常显，条件逐项添加、流程可增删排序 */
     agencyCondSide: 'buyer',
@@ -361,11 +408,22 @@ Page({
     feeAmountText: '—',
     feeText: '0',
     feeRule: '填写金额后自动试算',
-    feeNote: '发布、审核、上架都不收费，成交后再支付服务费。'
+    feeNote: '发布、审核、上架都不收费，成交后再支付服务费。',
+    /* 粘贴文字自动填表：在入口页一次识别多条，出→商品、收→需求，逐条发布 */
+    pasteOpen: true,
+    pasteText: '',
+    pasteRecords: [],
+    pasteSellCount: 0,
+    pasteBuyCount: 0,
+    pasteQueue: [],
+    pasteTotal: 0,
+    pasteDone: 0
   },
 
   onLoad(options) {
     const opts = options || {}
+    /* entry=1：本页是从「发布类型选择」压进来的表单页，返回时退回上一层入口页 */
+    this.setData({ fromEntry: opts.entry === '1' })
     /* 自定义导航尺寸：状态栏高度 + 与胶囊对齐的标题栏高度 */
     let statusBarH = 20
     let navH = 44
@@ -393,6 +451,7 @@ Page({
       if (opts.agencyId) this.loadAgencyResubmit(String(opts.agencyId))
       return
     }
+    /* entry=1：本页是从「发布类型选择」压进来的表单页，返回时退回上一层入口页 */
     this.setData({ type: opts.type || '' })
     this.setData({ deviceCols: deviceColumns([0, 0, 0, 0]).cols })
     /* 平台型号库会在后台合并进来，编辑回填前会等待 catalogReady */
@@ -413,85 +472,38 @@ Page({
       this.syncTitle()
       this.resetCondFlow()
       this.loadEdit()
-      /* 编辑页同样按个人信息展示主体，避免已填过还提示「去填写」 */
-      this.loadProfileSubject()
       return
     }
     if (opts.type === 'sell') {
-      /* 商品默认实名公开：内容进列表，展示发布者身份 */
-      this.setData({ mode: '出售', privatePublish: false })
+      /* 商品默认公开展示：内容进列表，展示发布者身份 */
+      this.setData({ mode: '出售' })
     } else if (opts.type === 'buy') {
-      this.setData({ mode: '求购', privatePublish: false })
+      this.setData({ mode: '求购' })
     }
     this.initSelected()
     this.checkRent()
     this.syncModeOptions()
     this.syncTitle()
     this.resetCondFlow()
-    /* 主体信息默认取个人信息里已设置的；个人档案为空时留待本次发布回填 */
-    this.loadProfileSubject()
+    /* 入口页点「逐条发布」：取队列第一条填表，其余发布成功后自动接着载入 */
+    if (opts.paste === '1' && PASTE_BATCH) {
+      const batch = PASTE_BATCH
+      PASTE_BATCH = null
+      this.setData({
+        pasteQueue: batch.list.slice(1),
+        pasteTotal: batch.total,
+        pasteDone: 0
+      })
+      this.applyPasteRecord(batch.list[0])
+    }
   },
 
   onShow() {
     gate(this.route || 'pages/publish/publish', this.options)
-    /* 从「我的 · 我的信息」修改公开范围后返回，立即刷新只读展示 */
-    if (this.data.type) this.loadProfileSubject()
+    /* 管理端刚增删过型号：返回本页时静默刷新目录（60s 内直接用内存缓存，不重复请求） */
+    this.refreshCatalog()
     /* 返回本页后恢复离开提醒（跳去个人信息时临时关闭过） */
     this.syncLeaveGuard()
-  },
-
-  /* 主体信息统一取「我的 · 我的信息」：名称、类别、公开范围、资质完成情况 */
-  async loadProfileSubject() {
-    if (this.profileLoading) return
-    this.profileLoading = true
-    let profile = null
-    try {
-      profile = await request('user', 'profile.get', {}, { silent: true })
-    } catch (e) {
-      this.profileLoading = false
-      return
-    }
-    this.profileLoading = false
-    if (!profile) return
-    const subject = String(profile.subject || '').trim()
-    const kind = profile.subjectKind === 'person' ? 'person' : 'company'
-    const subjectType = String(profile.subjectType || '')
-    const exposure = String(profile.exposure || 'hidden')
-    const open = exposure === 'open'
-    const defs = kind === 'person' ? ['身份证'] : ['营业执照', '法定代表人身份证']
-    const rows = Array.isArray(profile.quals) ? profile.quals : []
-    const done = defs.filter((n) => rows.some((q) => q && q.name === n && q.fileId)).length
-    /* 公开范围以「我的信息」为准：本页只读展示，不再让用户在发布流程里另选一份 */
-    const shown = open ? 'open' : 'hidden'
-    const labelMap = { open: '公开主体', hidden: '不公开主体' }
-    this.profileSubjectEmpty = !subject
-    this.profileOpen = open
-    const patch = {
-      profileSubject: subject,
-      profileKindLabel: kind === 'person' ? '个人主体' : '企业主体',
-      profileSubjectType: subjectType || (kind === 'person' ? '个人' : ''),
-      subjectExposure: shown,
-      profileExposureLabel: labelMap[shown],
-      profileOpen: open,
-      profileQualDone: done,
-      profileQualTotal: defs.length,
-      /* 只有「公开主体」才能发布商机可见内容，其余只能普通发布；私密发布固定仅普通 */
-      poolDisabled: !open,
-      channel: (open && !this.data.privatePublish) ? (this.data.channel || 'both') : 'normal'
-    }
-    if (subject && !String(this.data.form.subject || '').trim()) patch['form.subject'] = subject
-    this.setData(patch)
-  },
-
-  goProfile() {
-    /* 去个人信息页补主体：临时关闭离开提醒，避免被当成「放弃发布」 */
-    this._leaveGuard = false
-    if (wx.disableAlertBeforeUnload) {
-      try { wx.disableAlertBeforeUnload() } catch (e) {}
-    }
-    /* 主体为空时带 focus 参数，个人信息页会定位并高亮主体名称 */
-    const focus = this.profileSubjectEmpty ? '?focus=subject' : ''
-    wx.navigateTo({ url: '/pages/profile/profile' + focus })
   },
 
   /* ---------- 离开提醒：已填写内容时，返回前先问是否存草稿 ---------- */
@@ -501,6 +513,8 @@ Page({
     if (String(f.device || '').trim()) return true
     if (String(f.price || '').trim() || String(f.qty || '').trim()) return true
     if (String(f.note || '').trim()) return true
+    if (String(this.data.pasteText || '').trim()) return true
+    if ((this.data.pasteQueue || []).length) return true
     if ((this.data.imgList || []).length) return true
     if ((this.data.videoList || []).length) return true
     return false
@@ -511,15 +525,19 @@ Page({
     if (this.data.agencyType) return
     const inForm = !!this.data.type
     const on = inForm && (this.data.editing || this.hasDraftContent())
-    if (on === this._leaveGuard) return
+    const pending = (this.data.pasteQueue || []).length
+    /* 剩余待发布条数变化时也要重注册，提示里带上「另有 N 条待发布」 */
+    if (on === this._leaveGuard && pending === this._leavePending) return
     this._leaveGuard = on
+    this._leavePending = pending
     if (!wx.enableAlertBeforeUnload) return
+    const tail = pending ? '（另有 ' + pending + ' 条待发布）' : ''
     try {
       if (on) {
         wx.enableAlertBeforeUnload({
           message: this.data.editing
             ? '修改还没保存：点「取消」留在本页继续编辑；点「确定」直接退出，修改不保存。'
-            : '内容还没保存：点「取消」留在本页，可点底部「存草稿」保留；点「确定」直接退出，内容不保存。'
+            : '内容还没保存：点「取消」留在本页，可点底部「存草稿」保留；点「确定」直接退出，内容不保存。' + tail
         })
       } else {
         wx.disableAlertBeforeUnload()
@@ -530,22 +548,6 @@ Page({
   onUnload() {
     if (!wx.disableAlertBeforeUnload) return
     try { wx.disableAlertBeforeUnload() } catch (e) {}
-  },
-
-  /**
-   * 首次在发布页填写主体名称时回填到个人信息。
-   * 个人信息已有主体名称则不再写入，后续商品内修改不回写。
-   */
-  async syncProfileSubject() {
-    if (!this.profileSubjectEmpty) return
-    const subject = String(this.data.form.subject || '').trim()
-    if (!subject) return
-    this.profileSubjectEmpty = false
-    try {
-      await request('user', 'profile.bootstrapSubject', { subject }, { silent: true })
-    } catch (e) {
-      /* 回填失败不影响发布结果 */
-    }
   },
 
   // 交易方式候选：发布商品 → 出售/出租；发布需求 → 求购/租赁
@@ -829,9 +831,8 @@ Page({
     })
   },
 
-  /* 点搜索结果：反算四级下标，同步滚轮位置后回填表单，并把型号显示在同一个输入框里 */
-  pickDeviceSearch(e) {
-    const item = (this.data.deviceResults || [])[Number(e.currentTarget.dataset.i)]
+  /* 选中一个设备：反算四级下标，同步滚轮位置后回填表单，并把型号显示在同一个输入框里 */
+  applyDevice(item) {
     if (!item) return
     const cat = DEVICE_CATS[Math.max(0, DEVICE_CATS.indexOf(item.cat))] || ''
     const brands = brandsOf(cat)
@@ -854,36 +855,318 @@ Page({
       'form.device': item.model,
       'form.devicePath': [cat, brand, series].join(' · ')
     })
+  },
+
+  pickDeviceSearch(e) {
+    const item = (this.data.deviceResults || [])[Number(e.currentTarget.dataset.i)]
+    if (!item) return
+    this.applyDevice(item)
     this.syncLeaveGuard()
   },
 
-  /* 发布渠道：仅普通 / 仅商机 / 二者都发；只有「公开主体」才能进商机池 */
-  pickChannel(e) {
-    const v = String(e.currentTarget.dataset.v || '')
-    if (v !== 'normal' && v !== 'pool' && v !== 'both') return
-    /* 匿名发布固定仅普通：渠道置灰不可选 */
-    if (this.data.privatePublish) {
-      wx.showToast({ title: '匿名发布只能普通发布，关闭匿名发布后可选择渠道', icon: 'none' })
-      return
-    }
-    if (v !== 'normal' && !this.data.profileOpen) {
-      wx.showToast({ title: '请先在「我的信息」把主体设为公开', icon: 'none' })
-      return
-    }
-    this.setData({ channel: v })
+  /* ---------- 粘贴文字自动填表 ---------- */
+  togglePaste() {
+    this.setData({ pasteOpen: !this.data.pasteOpen })
   },
 
-  /* 匿名发布开关：开启后内容照常公开、发布者匿名，渠道强制仅普通 */
-  togglePrivate(e) {
+  onPasteInput(e) {
+    this.setData({ pasteText: String((e.detail && e.detail.value) || '') })
+  },
+
+  onPasteClear() {
+    PASTE_BATCH = null
+    this.setData({
+      pasteText: '',
+      pasteRecords: [],
+      pasteSellCount: 0,
+      pasteBuyCount: 0,
+      pasteQueue: [],
+      pasteTotal: 0,
+      pasteDone: 0
+    })
+    this.syncLeaveGuard()
+  },
+
+  /* 识别：出→商品、收→需求；多条先列成清单勾选，再逐条进入对应表单发布 */
+  async onPasteParse() {
+    const text = String(this.data.pasteText || '').trim()
+    if (!text) {
+      wx.showToast({ title: '请先粘贴文字', icon: 'none' })
+      return
+    }
+    /* 等平台型号目录合并完，型号匹配更准 */
+    if (this.catalogReady) {
+      try { await this.catalogReady } catch (e) { /* 目录拉取失败用内置目录继续 */ }
+    }
+    /* 识别的规则在云端：先调云函数，失败再用本地规则兜底 */
+    wx.showLoading({ title: '识别中', mask: true })
+    let res = await parseByCloud(text)
+    if (!res) {
+      try {
+        res = parse.parseText(text, ensureParseIndex())
+      } catch (e) {
+        wx.hideLoading()
+        wx.showToast({ title: '识别失败，请手动填写', icon: 'none' })
+        return
+      }
+    }
+    wx.hideLoading()
+    /* 云端已补过缺省值；本地兜底时在这里补：没价格→现场沟通，避免用户再选一次 */
+    const records = parse.fillDefaults((res && res.records) || [], {})
+    if (!records.length) {
+      wx.showToast({ title: '没有识别到可发布的内容', icon: 'none' })
+      return
+    }
+    /* 已经发布过的同款同型号默认排除，避免重复发布 */
+    let published = new Set()
+    try { published = await loadPublishedKeys() } catch (e) { /* 拉取失败就不做去重 */ }
+    let dupCount = 0
+    records.forEach((r) => {
+      const key = dupKeyOf(r)
+      if (key && published.has(key)) {
+        r.checked = false
+        r.duplicate = true
+        r.warnings = ['已发布过同型号，已默认排除'].concat(r.warnings || [])
+        dupCount++
+      }
+    })
+    const checkedCount = records.filter((r) => r.checked).length
+    this.setData({
+      pasteRecords: records,
+      pasteSellCount: records.filter((r) => r.type !== 'buy' && r.checked).length,
+      pasteBuyCount: records.filter((r) => r.type === 'buy' && r.checked).length,
+      pasteQueue: [],
+      pasteTotal: 0,
+      pasteDone: 0
+    })
+    if (!checkedCount) {
+      wx.showToast({ title: '识别到的内容均已发布过，已默认排除', icon: 'none' })
+      return
+    }
+    if (dupCount && checkedCount < records.length) {
+      wx.showToast({ title: '已排除 ' + dupCount + ' 条同型号内容', icon: 'none' })
+    }
+    /* 只识别到一条：直接进表单，少点一步 */
+    if (records.length === 1) this.onPasteConfirm()
+  },
+
+  onPasteToggleAll() {
+    const records = this.data.pasteRecords || []
+    const allOn = records.length > 0 && records.every((r) => r.checked)
+    this.setData({
+      pasteRecords: records.map((r) => Object.assign({}, r, { checked: !allOn }))
+    })
+  },
+
+  onPasteToggle(e) {
+    const i = Number(e.currentTarget.dataset.i)
+    const records = (this.data.pasteRecords || []).map((r, idx) => (
+      idx === i ? Object.assign({}, r, { checked: !r.checked }) : r
+    ))
+    this.setData({ pasteRecords: records })
+  },
+
+  onPasteRemove(e) {
+    const i = Number(e.currentTarget.dataset.i)
+    const records = (this.data.pasteRecords || []).filter((r, idx) => idx !== i)
+    this.setData({ pasteRecords: records })
+  },
+
+  /* 勾选确认：入口页把整批队列交给压入的表单页；表单页内则直接填当前表单 */
+  onPasteConfirm() {
+    const picked = (this.data.pasteRecords || []).filter((r) => r.checked)
+    if (!picked.length) {
+      wx.showToast({ title: '请至少勾选一条', icon: 'none' })
+      return
+    }
+    if (this.data.type) {
+      this.setData({
+        pasteRecords: [],
+        pasteQueue: picked.slice(1),
+        pasteTotal: picked.length,
+        pasteDone: 0
+      })
+      this.applyPasteRecord(picked[0])
+      if (picked.length > 1) {
+        wx.showToast({ title: '已载入第 1 条，共 ' + picked.length + ' 条', icon: 'none' })
+      }
+      return
+    }
+    PASTE_BATCH = { list: picked, total: picked.length }
+    this.setData({ pasteRecords: [], pasteQueue: [], pasteTotal: 0, pasteDone: 0 })
+    const type = picked[0].type === 'buy' ? 'buy' : 'sell'
+    wx.navigateTo({ url: '/pages/publish/publish?entry=1&type=' + type + '&paste=1' })
+  },
+
+  /* 结束批量：丢弃剩余队列，当前这条照常发布 */
+  onPasteCancelQueue() {
+    this.setData({ pasteQueue: [], pasteTotal: 0, pasteDone: 0 })
+    this.syncLeaveGuard()
+  },
+
+  /* 把一条识别结果整体写入表单：先回到空表单基线，再按识别结果覆盖 */
+  applyPasteRecord(rec) {
+    if (!rec) return
+    const isBuy = this.data.type === 'buy'
+    const isRent = this.data.isRent
+    const side = sideOf(this.data.type, isRent)
+    const f = rec.fields || {}
+
+    /* 选项组：默认值打底，识别到的值覆盖（多选键如 rentTerm 本身就是数组） */
+    const selected = {}
+    Object.keys(GROUPS).forEach((k) => {
+      selected[k] = GROUPS[k].multi ? GROUPS[k].def.slice() : GROUPS[k].def
+    })
+    Object.keys(rec.picked || {}).forEach((k) => {
+      if (!GROUPS[k]) return
+      selected[k] = GROUPS[k].multi
+        ? (Array.isArray(rec.picked[k]) ? rec.picked[k].slice() : [])
+        : rec.picked[k]
+    })
+
+    /* 能默认的直接用默认值：现货 / 含税 / 3 天内；原文写到的再覆盖 */
+    const condType = f.condType === 'used' ? 'used' : 'new'
+
+    /* 交易地缺省内已由服务端用账号城市补齐，这里直接回填 */
+    const province = String(f.province || '')
+    const city = String(f.city || '')
+    const qty = String(f.qty || '')
+    /* 起订量不兜底：原文没写就留空，避免把 100 台起订写成 1 台起订 */
+    const minQty = isBuy ? '' : String(f.minQty || '')
+
+    const form = this.data.form && this.data.form.title !== undefined
+      ? Object.assign({}, this.data.form)
+      : {}
+    form.title = String(rec.title || '')
+    form.qty = qty
+    form.minQty = minQty
+    /* 每批上限只在出售时有意义：直接发布时另写入「可承接数量」 */
+    form.maxQty = isBuy || isRent ? '' : String(f.maxQty || '')
+    /* 价格：原文没给金额时默认「现场沟通」，不公开金额也不拦发布 */
+    const priceNum = Number(String(f.price == null ? '' : f.price).replace(/,/g, ''))
+    const priceMaxNum = Number(String(f.priceMax == null ? '' : f.priceMax).replace(/,/g, ''))
+    let priceMode = f.priceMode || 'fixed'
+    if (!(priceNum > 0)) priceMode = 'nego'
+    /* 区间只给了一头：按固定单价处理，避免卡在「请填写最高价」 */
+    else if (priceMode === 'range' && !(priceMaxNum > 0)) priceMode = 'fixed'
+    form.price = priceNum > 0 ? String(f.price) : ''
+    form.priceMode = priceMode
+    form.priceMax = priceMode === 'range' ? String(f.priceMax) : ''
+
+    form.accept = ''
+    form.limit = ''
+    form.note = String(rec.note || '')
+    form.cat = ''
+    form.brand = ''
+    form.series = ''
+    form.model = ''
+    form.device = ''
+    form.devicePath = ''
+    form.province = province
+    form.city = city
+
+    const presets = M.COND_PRESETS
+    const mustList = presets[side] || []
+    const negoList = (isRent ? presets.negoRent : presets.nego) || []
+    const mustOpts = mergeOptions(mustList, rec.must || [])
+    const negoOpts = mergeOptions(negoList, rec.nego || [])
+    const flow = (rec.flow || []).slice(0, 12).map((s, i) => ({ id: 's' + (i + 1), n: s.n, d: s.d }))
+    /* 币种：识别到「75 万美金」这类写法时切到对应币种，否则保持人民币 */
+    const curList = this.data.currencyOptions || []
+    const curCode = f.currency || 'CNY'
+    const curIndex = Math.max(0, curList.findIndex((c) => c.code === curCode))
+
+    this.setData({
+      form,
+      currency: curList[curIndex] ? curList[curIndex].code : 'CNY',
+      currencyIndex: curIndex,
+      condType: condType || '',
+      condLevel: f.condLevel || '9成新',
+      cities: province ? (CITY_TREE[province] || []).slice() : [],
+      deviceKeyword: '',
+      deviceResults: [],
+      deviceSearchOpen: false,
+      acceptOpts: ACCEPT_OPTIONS.map((v) => ({ v, on: false })),
+      selected,
+      groups: this.buildGroups(selected),
+      condSide: side,
+      mustTitle: SIDE_TITLE[side].must,
+      negoTitle: SIDE_TITLE[side].nego,
+      flowTitle: SIDE_TITLE[side].flow,
+      mustOpts,
+      negoOpts,
+      flow,
+      stepSeq: flow.length,
+      mustInput: '',
+      negoInput: '',
+      stepName: '',
+      stepDesc: '',
+      /* 识别到条件或流程时自动展开「更多要求」，用户能直接看到并复核 */
+      moreOpen: mustOpts.some((o) => o.on) || negoOpts.some((o) => o.on) || flow.length > 0,
+      imgList: [],
+      videoList: [],
+      mediaSeq: 0,
+      draftId: ''
+    })
+
+    this.applyDevice(rec.device)
+    this.syncLeaveGuard()
+
+    const warns = (rec.warnings || []).slice()
+    if (warns.length) {
+      wx.showModal({
+        title: '已自动填写，请核对',
+        content: warns.slice(0, 3).join('\n'),
+        showCancel: false,
+        confirmText: '去核对',
+        success: () => {
+          try { wx.pageScrollTo({ scrollTop: 0, duration: 200 }) } catch (e) {}
+        }
+      })
+    }
+  },
+
+  /* 批量里可能既有出（商品）又有收（需求）：下一条类型变了就原地切表单 */
+  switchPasteType(rec) {
+    const nextType = rec && rec.type === 'buy' ? 'buy' : 'sell'
+    if (nextType === this.data.type) return
+    this.setData({
+      type: nextType,
+      mode: nextType === 'buy' ? '求购' : '出售',
+      isRent: false
+    })
+    this.syncModeOptions()
+    this.syncTitle()
+    this.resetCondFlow()
+  },
+
+  /* 批量发布：一条成功后自动载入下一条，全部完成再回入口页 */
+  continueQueueAfterPublish() {
+    const queue = (this.data.pasteQueue || []).slice()
+    if (queue.length) {
+      this.setData({
+        pasteQueue: queue.slice(1),
+        pasteDone: this.data.pasteDone + 1
+      })
+      this.switchPasteType(queue[0])
+      this.applyPasteRecord(queue[0])
+      wx.showToast({ title: '已载入下一条（剩 ' + (queue.length - 1) + ' 条）', icon: 'none' })
+      return
+    }
+    if (this.data.pasteTotal > 0) {
+      const total = this.data.pasteTotal
+      this.setData({ pasteTotal: 0, pasteDone: 0 })
+      wx.showToast({ title: '全部 ' + total + ' 条已发布', icon: 'none' })
+    }
+    this.backToEntry()
+  },
+
+  /* 仅发商机池开关：只进匹配池，不在首页、搜索与货架展示 */
+  togglePoolOnly(e) {
     const on = e && e.detail && typeof e.detail.value === 'boolean'
       ? e.detail.value
-      : !this.data.privatePublish
-    /* 开启前记住原渠道，关闭后恢复用户此前的选择 */
-    if (on) this.privatePrevChannel = this.data.channel || 'both'
-    this.setData({
-      privatePublish: on,
-      channel: on ? 'normal' : (this.data.profileOpen ? (this.privatePrevChannel || 'both') : 'normal')
-    })
+      : !this.data.poolOnly
+    this.setData({ poolOnly: on })
   },
 
   /* 代采 / 代售设备搜索：输入型号 / 品牌 / 系列，下面列出匹配项，点选即回填到同一个框 */
@@ -1020,8 +1303,9 @@ Page({
       if (!res || !res.tree) return
       DEVICE_TREE = res.tree
       DEVICE_CATS = res.cats
-      /* 目录变了，搜索索引必须重建 */
+      /* 目录变了，搜索索引与粘贴识别的型号索引都必须重建 */
       this.deviceFlat = null
+      PARSE_DEVICE_INDEX = null
       const next = deviceColumns(this.data.deviceIndex)
       this.setData({
         catOptions: DEVICE_CATS,
@@ -1145,9 +1429,8 @@ Page({
       condType,
       condLevel,
       editStatus: doc.status || '',
-      /* 编辑回填：按已保存的可见范围还原开关，公开商品不会被误改私密 */
-      privatePublish: doc.visibility === 'private',
-      channel: doc.visibility === 'private' ? 'normal' : this.data.channel,
+      /* 发布方式：仅发商机池为 channel=pool，其余为公开并同时进池 */
+      poolOnly: doc.channel === 'pool',
       selected,
       groups: this.buildGroups(selected),
       mustOpts: mergeOptions(mustList, doc.must),
@@ -1193,9 +1476,7 @@ Page({
         device: model,
         devicePath: [cat, brand, seriesName].filter(Boolean).join(' · '),
         province,
-        city,
-        subject: this.data.form.subject || '',
-        phone: String(doc.phone || '')
+        city
       }
     })
     this.checkRent()
@@ -1206,6 +1487,8 @@ Page({
   backToMine() {
     /* 保存 / 发布成功后退出：先解除返回询问，避免自己弹自己 */
     this._leaveGuard = false
+    /* 新增内容后下次识别要重新拉取已发布列表，避免把刚发的又当重复排除 */
+    PUBLISHED_KEYS = null
     if (wx.disableAlertBeforeUnload) {
       try { wx.disableAlertBeforeUnload() } catch (e) {}
     }
@@ -1386,12 +1669,13 @@ Page({
       ? (sel.closed === '闭口价（不议价）' ? '接受闭口价' : '只接受可议价')
       : sel.closed
 
-    /* 私密发布只看用户开关：开启后内容照常公开，但发布者完全匿名 */
-    const secret = this.data.privatePublish === true
+    /* 发布方式只看用户开关：普通发布内容公开并自动进入商机匹配；仅发商机池只进匹配不公开 */
+    /* 仅发商机池：channel=pool 只出现在他人匹配里，首页 / 搜索 / 货架均不展示 */
+    const poolOnly = this.data.poolOnly === true
     const payload = {
       tradeMode,
-      visibility: secret ? 'private' : 'public',
-      channel: secret ? 'normal' : (this.data.channel || 'both'),
+      visibility: 'public',
+      channel: poolOnly ? 'pool' : 'both',
       currency: this.data.currency || 'CNY',
       title: String(f.title || '').trim(),
       cat,
@@ -1411,7 +1695,7 @@ Page({
         .map((s) => {
           const name = String(s.n).trim()
           const desc = String(s.d || '').trim()
-          return (desc ? name + '｜' + desc : name).slice(0, 40)
+          return (desc ? name + '｜' + desc : name).slice(0, 120)
         }),
       /* 媒体元信息 + 上传得到的 fileId：管理端据此直接展示原件。
          编辑时同样整份提交（列表已回填原件的 fileId）：服务端按此保留未删的原件、
@@ -1426,10 +1710,13 @@ Page({
     }
     /* 商品展示信息：验收标准 / 可承接数量 / 交易说明，均由发布者填写 */
     if (!isBuy) {
-      /* 补充手机号：仅平台坐席可见，服务端加密落库；留空表示沿用我的信息里已绑定的号码 */
-      payload.phone = String(f.phone || '').trim()
       payload.accept = String(f.accept || '').trim()
-      payload.limit = String(f.limit || '').trim()
+      /* 每批上限单独一个输入框，服务端没有对应字段：并进「可承接数量」展示 */
+      const maxQty = String(f.maxQty || '').trim()
+      const limitText = String(f.limit || '').trim()
+      payload.limit = maxQty
+        ? ('每批最多 ' + maxQty + ' 台' + (limitText ? '；' + limitText : ''))
+        : limitText
       payload.note = String(f.note || '').trim()
     } else {
       /* 需求验收方式：现场压测 / 第三方报告 */
@@ -1512,9 +1799,8 @@ Page({
             app.globalData.minePub = isBuy ? 'demand' : 'product'
           }
         } catch (e) {}
-        this.reset()
-        /* 留在发布页入口卡片：用户从「＋」进来，提交完就回到「＋」之后的界面，
-           由系统返回键回到进入时的 tab 页，不再把用户丢到「我的」 */
+        /* 存草稿后回到「发布类型选择」，由用户决定继续发布或退出 */
+        this.backToEntry()
       }
     })
   },
@@ -1565,8 +1851,13 @@ Page({
     }
     if (!this.data.isRent && !f.city) return err(isBuy ? '请选择交付城市' : '请选择交易地/发货地')
     if (this.data.isRent && !(this.data.selected.rentTerm || []).length) return err('请选择租期')
-    /* 本页「联系人手机号」只是补充说明，不会随发布上送（平台用「我的信息」里已绑定的号码），
-       因此不做格式拦截：填了座机、分机或国内外号码都不该挡住发布。 */
+    /* 现货/期货、税费、成色、交付时间：原文没写就留空，必须由用户自己确认 */
+    const sel = this.data.selected || {}
+    if (!sel.supply) return err('请选择' + (isBuy ? '期望供给' : (this.data.isRent ? '供给状态' : '供给类型')))
+    if (!sel.tax) return err('请选择税费')
+    if (!this.data.isRent && !this.data.condType) return err(isBuy ? '请选择成色要求' : '请选择成色')
+    if (!sel.deliver) return err(isBuy ? '请选择期望交付时间' : (this.data.isRent ? '请选择可起租时间' : '请选择交付时间'))
+    /* 联系方式统一使用「我的信息」中已绑定的手机号，发布页不再填写 */
     const must = this.data.mustOpts.filter((o) => o.on).map((o) => o.v)
     const nego = this.data.negoOpts.filter((o) => o.on).map((o) => o.v)
     const flow = this.data.flow.filter((s) => String(s.n || '').trim())
@@ -1574,7 +1865,6 @@ Page({
 
     /* 发布 / 编辑前先确认资料齐全：缺主体信息或联系方式时弹窗引导补齐 */
     if (!(await ensureProfileReady())) return
-    /* 主体公开范围由「我的信息」统一设置，本页只读展示，不再重复写入 */
 
     /* 编辑：原地更新内容，状态不变（在售仍上架、草稿仍是草稿），也不申请发布订阅 */
     if (this.data.editing) {
@@ -1613,8 +1903,6 @@ Page({
     }
 
     // 自动过审：发布即上架，不再有「平台审核中」的等待环节
-    /* 个人档案还没有主体名称时，把本次填写的主体名称回填一次（不影响发布结果） */
-    await this.syncProfileSubject()
     const typeLabel = isBuy
       ? (this.data.isRent ? '租赁需求' : '求购需求')
       : (this.data.isRent ? '出租设备' : '出售商品')
@@ -1624,14 +1912,24 @@ Page({
     if (nego.length) extra.push('可协商条件 ' + nego.length + ' 条')
     if (flow.length) extra.push('交易流程 ' + flow.length + ' 步')
     const extraText = extra.length ? '（' + extra.join(' / ') + '）' : ''
-    /* 私密发布＝匿名公开：内容照常进列表，成功文案必须与真实可见范围一致 */
-    const secretPublish = this.data.privatePublish === true
-    const successText = secretPublish
-      ? '你的' + typeLabel + '已匿名发布' + extraText + '。\n\n内容会正常出现在首页、在售货源与需求列表中，但不会显示你的头像、主体与主页入口，别人也无法通过这条内容进入你的主页；主页列表中也不会出现这条内容。只有你在站内对话里主动告知，对方才知道发布人是谁。可在「我的 · 我发布的」中查看与管理（会标注「匿名发布」）。材料已加密存储，仅平台内可见，查看时叠加账号与昵称水印。'
-      : '你的' + typeLabel + '已发布并上架到「' + (isBuy ? '求购需求' : '在售货源') + '」' + extraText + '。\n\n有用户满足必须条件即可与你直接对话，并会通过站内消息通知你。可在「我的 · 我发布的」中查看与管理。材料已加密存储，仅平台内可见，查看时叠加账号与昵称水印。\n\n平台不审核交易流程，只做信息撮合，发现违规内容时按规则处置。'
+    /* 发布回执：让用户立刻看到「上传一次就够了」——刚发布就能匹配到多少条对方内容。
+       保密发布不进商机池、编辑旧内容不算新发布，都不显示这句 */
+    const matchCount = published && typeof published.matchCount === 'number' ? published.matchCount : 0
+    const matchNoun = isBuy ? '货源' : '求购'
+    const privatePublish = published && published.visibility === 'private'
+    const receipt = (!this.data.editing && !privatePublish)
+      ? (matchCount > 0
+        ? '已进入商机池。目前有 ' + matchCount + ' 条' + matchNoun + '与它匹配。\n有新的匹配' + matchNoun + '，会直接提醒你，不用天天盯群。\n\n'
+        : '已进入商机池。未来有新' + matchNoun + '匹配，会第一时间提醒你，不用天天盯群。\n\n')
+      : ''
+    /* 两种发布方式：普通发布公开并进匹配；仅发商机池只进匹配不公开 */
+    const poolPublish = this.data.poolOnly === true
+    const successText = poolPublish
+      ? '你的' + typeLabel + '已发布到商机池' + extraText + '。\n\n内容只进入商机匹配，不会出现在首页、搜索、货架与需求列表中：只有匹配到你的会员才能在「商机」里看到，并可直接与你对话。可在「我的 · 我发布的」中查看与管理（会标注「仅商机池」）。材料已加密存储，仅平台内可见，查看时叠加账号与昵称水印。'
+      : '你的' + typeLabel + '已发布并上架到「' + (isBuy ? '求购需求' : '在售货源') + '」' + extraText + '。\n\n内容公开，并已自动进入商机匹配；有用户满足必须条件即可与你直接对话，并会通过站内消息通知你。可在「我的 · 我发布的」中查看与管理。材料已加密存储，仅平台内可见，查看时叠加账号与昵称水印。\n\n平台不审核交易流程，只做信息撮合，发现违规内容时按规则处置。'
     wx.showModal({
       title: '发布成功',
-      content: successText +
+      content: receipt + successText +
         (published && published.stockSynced ? '\n\n已同步到「我的库存」：平台新发布的求购需求会与这条货源匹配，匹配结果在「商机」中查看。' : ''),
       showCancel: false,
       confirmText: '知道了',
@@ -1644,9 +1942,9 @@ Page({
             app.globalData.minePub = isBuy ? 'demand' : 'product'
           }
         } catch (e) {}
-        /* 留在发布页入口卡片（「＋」之后的界面），返回键回原 tab 页；
-           首页信息流在 onShow 会重新拉取，新发布内容返回即可看到 */
-        this.reset()
+        /* 发布成功后回到「发布类型选择」，不留在表单、也不跳回首页；
+           粘贴批量发布时先载入下一条待发布记录 */
+        this.continueQueueAfterPublish()
       }
     })
   },
@@ -1664,7 +1962,7 @@ Page({
       condType: 'new',
       condLevel: '9成新',
       moreOpen: false,
-      form: { title: '', qty: '', minQty: '', price: '', priceMax: '', priceMode: 'fixed', accept: '', limit: '', note: '', cat: '', brand: '', series: '', model: '', device: '', devicePath: '', province: '', city: '', subject: '', phone: '' },
+      form: { title: '', qty: '', minQty: '', maxQty: '', price: '', priceMax: '', priceMode: 'fixed', accept: '', limit: '', note: '', cat: '', brand: '', series: '', model: '', device: '', devicePath: '', province: '', city: '' },
       cities: [],
       deviceIndex: [0, 0, 0, 0],
       deviceCols: deviceColumns([0, 0, 0, 0]).cols,
@@ -1673,13 +1971,18 @@ Page({
       deviceSearchOpen: false,
       acceptOpts: ACCEPT_OPTIONS.map((v) => ({ v, on: false })),
       syncStock: true,
-      privatePublish: false,
-      subjectExposure: 'hidden',
-      profileExposureLabel: '不公开主体',
+      poolOnly: false,
       imgList: [],
       videoList: [],
       mediaSeq: 0,
       draftId: '',
+      /* 粘贴识别与批量队列一并清空，避免下次进入残留 */
+      pasteOpen: false,
+      pasteText: '',
+      pasteRecords: [],
+      pasteQueue: [],
+      pasteTotal: 0,
+      pasteDone: 0,
       /* 清空后回到「点加号之后」的入口卡片：从哪进来就停在哪，不再跳首页 / 我的 */
       type: '',
       mode: '',
@@ -1700,7 +2003,7 @@ Page({
   /* ---------- 代采 / 代售委托 ---------- */
   openAgency(e) {
     const t = e.currentTarget.dataset.type === 'sell' ? 'sell' : 'buy'
-    this.enterAgency(t, '')
+    wx.navigateTo({ url: '/pages/publish/publish?entry=1&agency=' + t })
   },
 
   enterAgency(t, target) {
@@ -1716,7 +2019,7 @@ Page({
       agencyDeadlineMin: dateStr(1),
       agencyDeadlineMax: dateStr(365),
       agencySubjectType: 'company',
-      agencyForm: { item: target || '', qty: '', price: '', subject: '', creditCode: '', legal: '', idCard: '', phone: '', authPhone: '' },
+      agencyForm: { item: target || '', qty: '', price: '', subject: '', creditCode: '', legal: '', idCard: '', phone: '' },
       agencyTerm: '6 个月',
       agencyAgree: false,
       /* 代采 / 代售直接对接平台：不公开展示、不进商机池；设备只能从平台预设型号库选择 */
@@ -1817,8 +2120,7 @@ Page({
           creditCode: d.creditCode || '',
           legal: d.legal || '',
           idCard: d.idCard || '',
-          phone: d.phone || '',
-          authPhone: d.authPhone || ''
+          phone: d.phone || ''
         },
         currency,
         currencyIndex: Math.max(0, currencyList.findIndex((c) => c.code === currency)),
@@ -1885,11 +2187,13 @@ Page({
   },
 
   closeAgency() {
+    /* 从入口页压入的委托表单：退回下面的入口页 */
+    if (this.data.fromEntry) return this.backToEntry()
     this.setData({ agencyType: '', agencyResubmitId: '', agencyRent: false, agencyAgree: false, agencyDeadline: '' })
     this.syncTitle()
   },
 
-  /* 提交委托后直达「我的委托」，让用户立即看到进度时间线 */
+  /* 提交委托后直达「我的订单 - 代采代售」，让用户立即看到进度时间线 */
   goMineAgency() {
     this.setData({ agencyType: '', agencyResubmitId: '', agencyRent: false, agencyAgree: false })
     try {
@@ -2092,7 +2396,7 @@ Page({
       }
       const labelMap = {
         license: '营业执照',
-        proof: this.data.agencyType === 'buy' ? '资金 / 验资证明' : '货源 / 产权证明',
+        proof: this.data.agencyType === 'buy' ? '验资证明' : '物权证明',
         loi: '采购意向函',
         authorization: '委托授权书',
         idcard: '联系人身份证'
@@ -2161,6 +2465,16 @@ Page({
     this.setData({ agencyAgree: !this.data.agencyAgree })
   },
 
+  /* 服务费规则 / 委托流程说明页：navigateTo 打开，返回后表单内容不丢失 */
+  openAgencyDoc(e) {
+    const kind = e.currentTarget.dataset.kind === 'flow' ? 'flow' : 'fee'
+    wx.navigateTo({
+      url: '/pages/agencydoc/agencydoc?kind=' + kind +
+        '&side=' + (this.data.agencyType === 'sell' ? 'sell' : 'buy') +
+        '&rental=' + (this.data.agencyRent ? 1 : 0)
+    })
+  },
+
   async submitAgency() {
     if (this.submitting) return
     const f = this.data.agencyForm
@@ -2189,25 +2503,16 @@ Page({
     /* 联系电话先归一化（去空格 / 短横线 / +86 前缀）再校验：
        手机、座机、400 都允许，只拦空值和带 * 的脱敏号码 */
     const phone = normalizePhone(String(f.phone || ''))
-    const authPhone = normalizePhone(String(f.authPhone || ''))
-    if (phone !== String(f.phone || '') || authPhone !== String(f.authPhone || '')) {
-      this.setData({ agencyForm: Object.assign({}, f, { phone, authPhone }) })
+    if (phone !== String(f.phone || '')) {
+      this.setData({ agencyForm: Object.assign({}, f, { phone }) })
     }
     if (!isValidContactPhone(phone)) return err('联系人电话：' + contactPhoneError(String(f.phone || '')))
-    /* 代采 / 代售直接对接平台：委托授权书、被委托人身份证、授权书联系人电话必传 */
-    if (!this.data.agAuthorization) return err('请上传委托授权书')
-    if (!this.data.agIdcard) return err('请上传被委托人身份证')
-    if (!isValidContactPhone(authPhone)) return err('授权书联系人电话：' + contactPhoneError(String(f.authPhone || '')))
-    /* 授权书联系人与预留手机号是否一致，交给客服在审核环节核验，提交时不拦截 */
-    /* 1000 万元及以上：代采补采购意向函，代售补货源证明 */
+    /* 代采 / 代售：验资（代采）/ 物权证明（代售）与联系人身份证必传；委托授权书作为补充材料选填 */
+    if (!this.data.agIdcard) return err('请上传联系人身份证')
+    if (!this.data.agProof) return err(isBuy ? '请上传验资证明' : '请上传物权证明')
+    /* 1000 万元及以上代采：补采购意向函；代售的物权证明已在上面统一必传 */
     const largeAmount = this.data.feeLarge === true
-    if (largeAmount) {
-      if (isBuy) {
-        if (!this.data.agLoi) return err('请上传采购意向函')
-      } else if (!this.data.agProof) {
-        return err('请上传货源证明')
-      }
-    }
+    if (largeAmount && isBuy && !this.data.agLoi) return err('请上传采购意向函')
     if (!this.data.agencyAgree) return err('请先阅读并勾选服务费规则')
 
     /* 代采 / 代售也是对外发布：提交前先确认主体信息与联系方式齐全 */
@@ -2245,7 +2550,6 @@ Page({
       legal: isCompany ? String(f.legal || '').trim() : '',
       idCard: isCompany ? '' : String(f.idCard || '').trim(),
       phone,
-      authPhone,
       serviceFee: fee,
       /* 后付费：发布时 payAmount 恒为 0，成交后再付服务费 */
       payAmount: 0,
@@ -2266,16 +2570,16 @@ Page({
       wx.showModal({
         title: resubmit ? '已重新提交' : '已提交，等待审核',
         content: resubmit
-          ? '已按退回原因修改并重新提交，将在 1 个工作日内重新审核，结果通过站内信通知。\n进度可在「我的 - 我的委托」查看。'
+          ? '已按退回原因修改并重新提交，将在 1 个工作日内重新审核，结果通过站内信通知。\n进度可在「我的 - 我的订单 - 代采代售」查看。'
           : (this.data.agencyRent
-            ? '你的租赁委托已提交，将在 1 个工作日内完成审核。\n审核通过后即上架；成交后支付半个月租金（服务费为一个月租金，买卖双方各承担 50%）。\n进度可在「我的 - 我的委托」查看，审核前可随时撤销。'
+            ? '你的租赁委托已提交，将在 1 个工作日内完成审核。\n审核通过后即上架；成交后支付半个月租金（服务费为一个月租金，买卖双方各承担 50%）。\n进度可在「我的 - 我的订单 - 代采代售」查看，审核前可随时撤销。'
             : (largeAmount
               ? (isBuy
                 ? '本单代采金额达到 1000 万元，成交后按 0.5% 支付服务费，订单只对平台可见。\n将在 1 个工作日内完成审核，通过后直接在平台内发布，有人咨询时客服与你对接交易条件。'
-                : '本单代售金额达到 1000 万元，成交后按 0.5% 支付服务费。\n客服将在 1 个工作日内核对营业执照、货源证明、委托授权书与联系人信息，通过后上架。')
+                : '本单代售金额达到 1000 万元，成交后按 0.5% 支付服务费。\n客服将在 1 个工作日内核对营业执照、物权证明、联系人身份证与联系人信息（委托授权书可选），通过后上架。')
               : (isBuy
-                ? '你的代采委托已提交，将在 1 个工作日内完成审核。\n审核通过后直接在平台内发布，有人咨询时客服对接；成交后支付服务费。\n进度可在「我的 - 我的委托」查看，审核前可随时撤销。'
-                : '你的代售委托已提交，将在 1 个工作日内完成审核。\n审核通过后即上架，成交后支付服务费。\n进度可在「我的 - 我的委托」查看，审核前可随时撤销。'))),
+                ? '你的代采委托已提交，将在 1 个工作日内完成审核。\n审核通过后直接在平台内发布，有人咨询时客服对接；成交后支付服务费。\n进度可在「我的 - 我的订单 - 代采代售」查看，审核前可随时撤销。'
+                : '你的代售委托已提交，将在 1 个工作日内完成审核。\n审核通过后即上架，成交后支付服务费。\n进度可在「我的 - 我的订单 - 代采代售」查看，审核前可随时撤销。'))),
         showCancel: false,
         confirmText: '查看进度',
         success: () => this.goMineAgency()
@@ -2291,29 +2595,43 @@ Page({
   noop() {},
 
   /* ---------- 入口页跳转 ---------- */
+  /* 入口页不原地切成表单，而是压入新的表单页：
+     这样系统返回 / 侧滑返回时，落点是下面的「发布类型选择」，不会直接回到首页 */
   goSell() {
-    /* 商品默认实名公开：内容进列表，展示发布者身份 */
-    this.setData({ type: 'sell', mode: '出售', privatePublish: false })
-    this.checkRent()
-    this.syncModeOptions()
-    this.syncTitle()
-    this.resetCondFlow()
-    /* 入口卡片不经过 onLoad / onShow，必须在这里主动取一次主体信息 */
-    this.loadProfileSubject()
-    this.syncLeaveGuard()
+    wx.navigateTo({ url: '/pages/publish/publish?entry=1&type=sell' })
   },
 
   goBuy() {
-    this.setData({ type: 'buy', mode: '求购', privatePublish: false })
-    this.checkRent()
-    this.syncModeOptions()
-    this.syncTitle()
-    this.resetCondFlow()
-    this.loadProfileSubject()
-    this.syncLeaveGuard()
+    wx.navigateTo({ url: '/pages/publish/publish?entry=1&type=buy' })
   },
 
+  /* 取消发布 / 返回：回到「发布类型选择」 */
   goBack() {
+    /* 从入口页压入的表单：退回下面的入口页；已填写内容时先确认，避免误触丢失 */
+    if (this.data.fromEntry) {
+      if (!this.hasDraftContent()) return this.backToEntry()
+      const pending = (this.data.pasteQueue || []).length
+      wx.showModal({
+        title: '退出填写',
+        content: (pending ? '还有 ' + pending + ' 条粘贴识别的记录未发布。' : '') + '本次填写的内容不会保留。需要保留请先点底部「存草稿」。',
+        cancelText: '继续填写',
+        confirmText: '退出',
+        success: (r) => {
+          if (r.confirm) this.backToEntry()
+        }
+      })
+      return
+    }
+    const pages = getCurrentPages() || []
+    if (pages.length > 1) {
+      /* 首页 / 商机 / 工具带进来的直达表单：换成入口页，落点仍是选择类型 */
+      this._leaveGuard = false
+      if (wx.disableAlertBeforeUnload) {
+        try { wx.disableAlertBeforeUnload() } catch (e) {}
+      }
+      wx.redirectTo({ url: '/pages/publish/publish' })
+      return
+    }
     this.setData({ type: '', mode: '' })
     this.checkRent()
     this.syncModeOptions()
@@ -2323,6 +2641,21 @@ Page({
     if (wx.disableAlertBeforeUnload) {
       try { wx.disableAlertBeforeUnload() } catch (e) {}
     }
+  },
+
+  /* 发布成功 / 存草稿成功：回到「发布类型选择」；不再把用户丢回首页 */
+  backToEntry() {
+    PASTE_BATCH = null
+    this._leaveGuard = false
+    if (wx.disableAlertBeforeUnload) {
+      try { wx.disableAlertBeforeUnload() } catch (e) {}
+    }
+    const pages = getCurrentPages() || []
+    if (this.data.fromEntry && pages.length > 1) {
+      wx.navigateBack()
+      return
+    }
+    this.reset()
   },
 
   /* 自定义导航返回：在某个发布表单里未发布退出时，先回「发布类型选择」；

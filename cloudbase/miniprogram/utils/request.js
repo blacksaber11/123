@@ -43,12 +43,33 @@ function failMessage(err) {
 const TOKEN_KEY = 'suanli_token_v1'
 
 /**
+ * 固定使用的 App 实例：App.onLaunch 阶段部分基础库取不到 getApp()，
+ * 会导致 httpConfig() 判空后回落云函数，静默登录直接失败。
+ * 由 app.js 在 onLaunch 第一行调用 bindApp(this) 注册。
+ */
+let boundApp = null
+
+function bindApp(app) {
+  if (app) boundApp = app
+}
+
+function currentApp() {
+  if (boundApp) return boundApp
+  try {
+    boundApp = getApp() || null
+  } catch (err) {
+    boundApp = null
+  }
+  return boundApp
+}
+
+/**
  * HTTP 接口地址：app.globalData.apiBase 优先（线上 HTTPS），
  * devApiBase 保留给本地联调（cloudbase/scripts/admin-dev-server.mjs）。
  */
 function httpConfig() {
   try {
-    const app = getApp()
+    const app = currentApp()
     const g = (app && app.globalData) || {}
     const base = String(g.apiBase || g.devApiBase || '').trim().replace(/\/+$/, '')
     if (!base) return null
@@ -311,12 +332,44 @@ function call(scope, action, data, extra) {
 }
 
 /**
+ * 静默登录（并发合并由 auth.ensureLogin 内部处理）：
+ * 首屏多个接口同时撞 401 时只走一次 wx.login。
+ */
+function loginOnce() {
+  try {
+    return require('./auth').ensureLogin(currentApp())
+  } catch (err) {
+    return Promise.resolve(null)
+  }
+}
+
+/**
+ * 需要登录的接口：令牌过期 / 冷启动登录未完成时补一次静默登录并重试一次。
+ * 否则首屏会直接落到「加载失败」，而登录完成后没有任何人再拉一次数据。
+ */
+async function callWithLogin(scope, action, data, opts) {
+  const authed = scope === 'user' && action !== 'auth.login'
+  if (!authed) return call(scope, action, data, opts)
+  try {
+    return await call(scope, action, data, opts)
+  } catch (err) {
+    if (!err || err.code !== CODE.UNAUTHENTICATED) throw err
+    try {
+      await loginOnce()
+    } catch (loginErr) {
+      throw err
+    }
+    return call(scope, action, data, opts)
+  }
+}
+
+/**
  * 带统一错误处理的包装：失败自动 toast，需要登录时跳登录页。
  */
 async function request(scope, action, data, options) {
   const opts = options || {}
   try {
-    return await call(scope, action, data, opts)
+    return await callWithLogin(scope, action, data, opts)
   } catch (err) {
     const e = err || {}
     if (NEED_LOGIN.indexOf(e.code) >= 0) {
@@ -451,4 +504,4 @@ function xpayOrder(planKey) {
   })
 }
 
-module.exports = { call, request, paging, CODE, NEED_LOGIN, safePath, clearSession, uploadFile, xpayOrder, wxacode }
+module.exports = { bindApp, call, request, paging, CODE, NEED_LOGIN, readToken, safePath, clearSession, uploadFile, xpayOrder, wxacode }

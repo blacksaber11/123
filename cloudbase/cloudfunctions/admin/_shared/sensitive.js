@@ -123,7 +123,7 @@ async function recordSensitiveRisk(opts) {
         detail,
         level: hit.level,
         updatedAt: at
-      }, reopen ? { status: '待处理', owner: '', action: '', reason: '' } : {}))
+      }, reopen ? { status: '待处理', owner: '', ownerAccount: '', action: '', reason: '' } : {}))
       continue
     }
     await repo.insert('riskCases', {

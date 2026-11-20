@@ -5,9 +5,7 @@
     <view class="uh-av">{{avatar}}</view>
     <view class="uh-main">
       <view class="uh-nm">{{nick || '平台用户'}}</view>
-      <view class="uh-sub" wx:if="{{!hidden}}">
-        {{ownerSubject || nick}}<text wx:if="{{city}}"> · {{city}}</text>
-      </view>
+      <view class="uh-sub" wx:if="{{!hidden}}">{{ownerSubject || '暂未填写主体'}}</view>
       <view class="uh-sub" wx:else>该用户未公开主体信息</view>
       <view class="uh-tags">
         <text wx:if="{{member}}" class="uh-tag member">商机会员</text>
@@ -43,7 +41,7 @@
 
   <view wx:else class="uh-card">
     <view class="uh-chd">暂未公开主体</view>
-    <view class="uh-tip">对方未在设置中公开主体名称与联系方式，公众可见的在架内容与资讯仍可查看。你仍可以关注对方，或回到会话直接发私信沟通。</view>
+    <view class="uh-tip">对方未在设置中公开主体名称与联系方式，公众可见的在架内容与资讯仍可查看。{{chatEnabled ? '你仍可以关注对方，或回到会话直接发私信沟通。' : ''}}</view>
   </view>
 
   <!-- 在架内容 -->
@@ -87,13 +85,16 @@
     </view>
   </view>
 
-  <!-- 举报：先在表单里写清情况，提交后进入管理端风险工单 -->
-  <view class="uh-report" bindtap="report">举报该用户</view>
+  <!-- 举报 / 拉黑：举报进入统一表单；拉黑后对方无法私信，双方内容互不可见 -->
+  <view class="uh-links">
+    <view class="uh-report" bindtap="report">举报该用户</view>
+    <view class="uh-report" bindtap="blockUser">拉黑该用户</view>
+  </view>
 
-  <!-- 底部：私信 -->
+  <!-- 底部：私信（管理端关闭对话功能时不展示，只保留关注） -->
   <view class="uh-bar">
     <button class="uh-btn ghost" bindtap="toggleFollow">{{following ? '已关注' : '关注'}}</button>
-    <button class="uh-btn primary" bindtap="sendMessage">发私信</button>
+    <button wx:if="{{chatEnabled}}" class="uh-btn primary" bindtap="sendMessage">发私信</button>
   </view>
 
 </view>

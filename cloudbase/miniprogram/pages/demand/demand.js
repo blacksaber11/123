@@ -8,6 +8,7 @@ const shop = require('../../utils/shop')
 const sharePoster = require('../../utils/share-poster')
 const bizUtil = require('../../utils/biz')
 const { request } = require('../../utils/request')
+const features = require('../../utils/features')
 
 /* 预算已带「/ 台」这类单位时直接拼接，避免出现「¥ 9,600 / 台 / 台」 */
 function priceWithUnit(text, unit) {
@@ -49,7 +50,8 @@ function shareTitleOf(d) {
     (rent ? '求租 ' : '求购 ') + name,
     d.qty ? d.qty + ' 台' : '',
     d.city || '',
-    budget
+    budget,
+    '登录直接对接'
   ].filter(Boolean).join(' · ')
 }
 
@@ -87,7 +89,7 @@ Page({
     missing: false,
     /* 保密内容：只为非属主隐藏主体与联系方式，内容照常展示 */
     contactHidden: false,
-    /* 私密发布：仅分享链接可见，发布人完全匿名 */
+    /* 私密发布：仅本人与平台可见，不对外展示 */
     privateShare: false,
     /* 直接对话：必须条件确认弹层 */
     condSheet: false,
@@ -104,7 +106,9 @@ Page({
     /* 朋友圈单页模式：只能浏览，页面内提示从右上角进入完整小程序 */
     singlePage: false,
     /* 从商机池进入：展示与普通需求完全一致，只在确认条件后先领取再开会话 */
-    bizMode: false
+    bizMode: false,
+    /* 发消息 / 对话总开关：关闭时隐藏所有私信与对话入口 */
+    chatEnabled: false
   },
 
   onLoad(options) {
@@ -113,6 +117,13 @@ Page({
     /* 商机池点进来：复用普通求购详情，额外带上领取动作 */
     this.bizMode = !!(options && options.biz === 'demand')
     this.bizMine = this.bizMode && !!(options && options.mine === '1')
+    /* 开关已拉到用真实值，没拉到先用缓存：避免冷启动分享进来被误判成关闭 */
+    this.setData({ chatEnabled: features.chatEnabled() })
+    /* 管理端随时可能打开 / 关闭社交功能：开关回来后本页立即跟随 */
+    this.offFlags = features.onChange((on) => {
+      if (this.data && on !== this.data.chatEnabled) this.setData({ chatEnabled: on })
+    })
+    features.ensure()
     this.setData({ bizMode: this.bizMode })
     /* 分享链接只带 id 与 from=share，不带 uid / 手机号 / 线索号 */
     this.fromShare = !!(options && options.from === 'share')
@@ -222,6 +233,13 @@ Page({
     /* 返回本页 / 首次进入时数据已就绪：补生成一次海报（同 id 命中缓存不重画） */
     if (this.data.demand) this.prepareShare(this.data.demand)
     if (this.data.isMine && this.data.demand) await this.loadResponses()
+  },
+
+  onUnload() {
+    if (this.offFlags) {
+      this.offFlags()
+      this.offFlags = null
+    }
   },
 
   /* 海报按本需求自己的字段生成：型号 / 数量 / 城市 / 预算 / 交期 */
@@ -500,6 +518,19 @@ Page({
   /* 开通商机会员：搜索免费，联系电话等对接能力仅会员可用 */
   goBiz() {
     wx.navigateTo({ url: '/pages/biz/biz' })
+  },
+
+  /* 点发布人进入对方主页：未公开主体也可访问，只展示公开在架内容 */
+  openPublisher() {
+    const d = this.data.demand || {}
+    if (!d.ownerKey) {
+      wx.showToast({ title: '该需求没有可访问的发布方主页', icon: 'none' })
+      return
+    }
+    wx.navigateTo({
+      url: '/pages/userhome/userhome?key=' + encodeURIComponent(d.ownerKey) +
+        '&nick=' + encodeURIComponent(d.ownerSubject || d.contact || '需求方')
+    })
   },
 
   /* 复制需求方公开的联系电话 */

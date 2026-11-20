@@ -11,14 +11,14 @@
   <view wx:if="{{guest}}" class="guest-tip" bindtap="goLogin">
     <view class="gt-body">
       <view class="gt-title">登录后查看消息</view>
-      <view class="gt-sub">与货主 / 需求方的对话、客服回复、系统通知都会出现在这里</view>
+      <view class="gt-sub">{{chatEnabled ? '与货主 / 需求方的对话、客服回复、系统通知都会出现在这里' : '平台通知、审核结果与匹配商机会出现在这里'}}</view>
     </view>
     <text class="gt-go">去登录 ›</text>
   </view>
 
   <!-- Tab 切换 -->
     <view wx:if="{{!guest}}" class="tabs">
-      <view class="tab {{tab === 'chat' ? 'on' : ''}}" data-tab="chat" bindtap="switchTab">
+      <view wx:if="{{chatEnabled}}" class="tab {{tab === 'chat' ? 'on' : ''}}" data-tab="chat" bindtap="switchTab">
         对话
         <view class="badge" wx:if="{{chatUnread > 0}}">{{chatUnread > 99 ? '99+' : chatUnread}}</view>
       </view>
@@ -26,7 +26,7 @@
         通知
         <view class="badge" wx:if="{{noticeUnread > 0}}">{{noticeUnread > 99 ? '99+' : noticeUnread}}</view>
       </view>
-      <view class="tab-ink" style="left: {{tab === 'chat' ? '25%' : '75%'}}"></view>
+      <view wx:if="{{chatEnabled}}" class="tab-ink" style="left: {{tab === 'chat' ? '25%' : '75%'}}"></view>
     </view>
 
     <!-- 微信消息提醒：未授权或额度用完时显示，一次授权只能推一条 -->
@@ -34,7 +34,7 @@
       <image class="nt-ico" src="/assets/icons/tip-bell.png" mode="aspectFit" />
       <view class="nt-body">
         <view class="nt-title">{{notifyRemain === 0 ? '微信提醒已用完' : '开启微信消息提醒'}}</view>
-        <view class="nt-sub">{{notifyRemain === 0 ? '微信一次性订阅每条授权只能提醒一次，点这里续订' : '收到私信、系统通知或有新的匹配商机时，第一时间在微信收到通知'}}</view>
+        <view class="nt-sub">{{notifyRemain === 0 ? '微信一次性订阅每条授权只能提醒一次，点这里续订' : (chatEnabled ? '收到私信、系统通知或有新的匹配商机时，第一时间在微信收到通知' : '收到系统通知或有新的匹配商机时，第一时间在微信收到通知')}}</view>
       </view>
       <text class="nt-go">{{notifyRemain === 0 ? '续订 ›' : '开启 ›'}}</text>
     </view>
@@ -59,7 +59,7 @@
         <!-- 响应明细：只展示条件满足度与报价 -->
         <view wx:if="{{item.kind === 'inquiry' && expanded === item.id}}" class="inq-panel">
           <view class="inq-tip">
-            仅展示咨询人满足的必须条件、报价与数量；联系方式不在询价中下发，不公开主体只能在站内会话沟通。
+            仅展示咨询人满足的必须条件、报价与数量；联系方式不在询价中下发{{chatEnabled ? '，不公开主体只能在站内会话沟通' : ''}}。
           </view>
 
           <view wx:for="{{item.responses}}" wx:key="id" wx:for-item="r" class="inq-card">

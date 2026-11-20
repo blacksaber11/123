@@ -62,6 +62,10 @@
       <view wx:if="{{opp.stockText && !opp.matchText}}" class="bd-line">{{opp.type === 'supply' ? '货源' : '我的库存'}}：{{opp.stockText}}</view>
       <view wx:if="{{opp.demandText}}" class="bd-line">{{opp.demandText}}</view>
       <view class="bd-meta">{{opp.org}} · {{opp.published}}{{opp.closed ? ' · 已结束，仅供回看' : (opp.expireText ? ' · ' + opp.expireText : '')}}</view>
+      <!-- 未公开主体也能进入发布者主页，主体名称仍按脱敏展示 -->
+      <view wx:if="{{opp.ownerKey}}" class="bd-home"
+            data-key="{{opp.ownerKey}}" data-nick="{{opp.nick || opp.org}}"
+            bindtap="openOwner">查看发布者主页 ›</view>
     </view>
 
     <!-- 发布者设定的全部信息：领取前完整展示发布内容，而不是只看必须条件 -->
@@ -131,7 +135,7 @@
           <text class="bc-name">{{opp.org || '商机发布者'}}</text>
           <text class="bc-person">{{opp.contact || '对方未留联系人'}}</text>
           <text wx:if="{{opp.phone}}" class="bc-phone">{{opp.phone}}</text>
-          <text wx:else class="bc-phone empty">对方未留电话，请用站内对话</text>
+          <text wx:else class="bc-phone empty">{{chatEnabled ? '对方未留电话，请用站内对话' : '对方未留电话'}}</text>
         </view>
         <button wx:if="{{opp.phone}}" class="btn sm" data-phone="{{opp.phone}}" bindtap="copyPhone">复制电话</button>
       </view>
@@ -168,7 +172,7 @@
       <view class="bb-row">
         <button wx:if="{{opp.phone}}" class="btn bb-btn" data-phone="{{opp.phone}}" bindtap="copyPhone">复制电话</button>
         <text wx:else class="bb-note">对方未留电话</text>
-        <button class="btn primary bb-btn" bindtap="openChat">站内对话</button>
+        <button wx:if="{{chatEnabled}}" class="btn primary bb-btn" bindtap="openChat">站内对话</button>
       </view>
     </block>
 

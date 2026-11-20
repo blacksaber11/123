@@ -8,17 +8,26 @@ const shop = require('../../utils/shop')
 const prefs = require('../../utils/prefs')
 const bizUtil = require('../../utils/biz')
 const { request } = require('../../utils/request')
+const features = require('../../utils/features')
 
-/* 水印瓦片数量：2 列 × 6 行，铺满整个查看层，任一截图区域都能截到账号标识 */
+/* 水印瓦片数量：2 列 × 6 行，铺满整个画面，任一截图区域都能截到发布方标识 */
 const WM_TILES = 12
 
-function watermarkOf(productId, user) {
-  return {
-    /* 查看层底部完整水印：账号、哪条线索、什么时候看的 */
-    full: guard.watermarkText(user, productId),
-    /* 铺满画面的水印块用的短文案（账号尾 8 位 + 线索 + 时间） */
-    tile: guard.watermarkTile(user, productId)
+/* 水印跟着发布方：商品实拍由谁发布就标谁，与查看人无关。
+   自己发布的内容受「水印保护」开关控制；别人发布的始终带对方标识。 */
+function watermarkOf(product, wmOn, user) {
+  if (!product) return { full: '', tile: '' }
+  let mark = ''
+  if (product.mine) {
+    mark = wmOn ? guard.accountMark(user) : ''
+  } else {
+    const no = String(product.ownerUserNo || '').trim()
+    const org = String(product.ownerSubject || '').trim().slice(0, 12)
+    /* 水印用发布方 ID 代替「发布方」三个字，截图可直接对应到具体账号 */
+    const who = no ? 'ID ' + no : '发布方'
+    mark = org ? '算力聚合 · ' + who + ' · ' + org : '算力聚合 · ' + who
   }
+  return { full: mark ? mark + ' · 仅平台内查看' : '', tile: mark }
 }
 
 function tilesOf(text) {
@@ -59,7 +68,8 @@ function shareTitleOf(p) {
     name,
     p.qty ? p.qty + ' 台' : '',
     p.city || '',
-    p.priceMode === 'nego' ? '价格现场沟通' : priceWithUnit(p.priceText, p.priceUnit)
+    p.priceMode === 'nego' ? '价格现场沟通' : priceWithUnit(p.priceText, p.priceUnit),
+    '登录看货主报价'
   ].filter(Boolean).join(' · ')
 }
 
@@ -133,10 +143,10 @@ function poolProductOf(o) {
     isMine: false,
     mine: false,
     privateShare: false,
-    /* 商机池不直接公开主体主页，联系方式领取后在会话里对接 */
+    /* 商机池条目同样保留发布方主页入口，联系方式领取后在会话里对接 */
     contactHidden: true,
     ownerExposure: 'hidden',
-    ownerKey: '',
+    ownerKey: o.ownerKey || '',
     ownerSubject: o.org || '',
     owner: { short: o.type === 'demand' ? '需' : '商', nick: o.type === 'demand' ? '需求方' : '商机发布方' },
     org: o.org || '',
@@ -154,14 +164,14 @@ Page({
     videoCount: 0,
     /* 媒体数量文案：无实拍时整行由页面显示「暂无实拍」，不出现 0 张 / 0 段 */
     mediaSummary: '',
-    /* 水印保护：设置里可关闭，关闭后图片 / 视频 / 查看层都不叠水印 */
+    /* 水印保护开关：只影响我自己发布的内容，别人发布的始终带对方标识 */
     wmOn: true,
     checklistDone: 0,
     checklistTotal: 0,
     checklistPercent: 0,
     fav: false,
     isMine: false,
-    /* 保密：缩略图与查看层都叠水印，水印绑定当前登录账号 */
+    /* 缩略图与查看层都叠水印：水印标发布方，不随查看人变化 */
     watermark: '',
     wmTiles: [],
     viewerOpen: false,
@@ -176,7 +186,7 @@ Page({
     pubFollowing: false,
     /* 保密内容：只为非属主隐藏主体与联系方式，内容照常展示 */
     contactHidden: false,
-    /* 私密发布：仅分享链接可见，发布人完全匿名 */
+    /* 私密发布：仅属主与平台可见，不对外展示 */
     privateShare: false,
     /* 直接对话：必须条件确认弹层 */
     condSheet: false,
@@ -193,7 +203,11 @@ Page({
     /* 朋友圈单页模式：只能浏览，页面内提示从右上角进入完整小程序 */
     singlePage: false,
     /* 从商机池进入：展示与普通商品完全一致，只在确认条件后先领取再开会话 */
-    bizMode: false
+    bizMode: false,
+    /* 从「我的商机」进入：这条已经领取过，不再重复领取，直接进会话 */
+    bizMine: false,
+    /* 发消息 / 对话总开关：关闭时隐藏所有私信与对话入口 */
+    chatEnabled: false
   },
 
   onLoad(options) {
@@ -205,7 +219,18 @@ Page({
     this.bizType = ['supply', 'demand', 'agency'].indexOf(biz) >= 0 ? biz : ''
     this.bizMode = !!this.bizType
     this.bizMine = this.bizMode && !!(options && options.mine === '1')
-    this.setData({ bizMode: this.bizMode, bizType: this.bizType })
+    this.setData({
+      bizMode: this.bizMode,
+      bizType: this.bizType,
+      bizMine: this.bizMine,
+      /* 开关已拉到用真实值，没拉到先用缓存：避免冷启动分享进来被误判成关闭 */
+      chatEnabled: features.chatEnabled()
+    })
+    /* 管理端随时可能打开 / 关闭社交功能：开关回来后本页立即跟随 */
+    this.offFlags = features.onChange((on) => {
+      if (this.data && on !== this.data.chatEnabled) this.setData({ chatEnabled: on })
+    })
+    features.ensure()
     /* 分享链接只带 id 与 from=share，不带 uid / 手机号 / 线索号 */
     this.fromShare = !!(options && options.from === 'share')
     /* 栈底补首页后重建的本页：浏览记录 / 浏览量已由上一实例记过，避免重复计数 */
@@ -284,7 +309,8 @@ Page({
       videoCount ? videoCount + ' 段视频' : ''
     ].filter(Boolean).join(' · ')
     const user = readUser()
-    const wm = watermarkOf(product.id || this.productId, user)
+    const wmOn = prefs.watermarkOn()
+    const wm = watermarkOf(product, wmOn, user)
     /* 保密内容：服务端不给联系电话，前端同时隐藏「查看主页 / 电话」入口 */
     const privateShare = product.privateShare === true
     const contactHidden = privateShare || product.contactHidden === true
@@ -300,7 +326,7 @@ Page({
       imgCount,
       videoCount,
       mediaSummary,
-      wmOn: prefs.watermarkOn(),
+      wmOn,
       checklistDone,
       checklistTotal,
       checklistPercent: checklistTotal ? Math.round((checklistDone / checklistTotal) * 100) : 0,
@@ -310,9 +336,7 @@ Page({
       privateShare,
       ownerPhone,
       memberOnlyContact,
-      pubFollowing: contactHidden
-        ? false
-        : fav.isFollowing(String(product.ownerKey || product.ownerSubject || '')),
+      pubFollowing: fav.isFollowing(String(product.ownerKey || product.ownerSubject || '')),
       watermark: wm.full,
       wmTiles: tilesOf(wm.tile)
     })
@@ -350,10 +374,19 @@ Page({
     guard.enableShare(true)
     const sp = guard.isSinglePage()
     if (sp !== this.data.singlePage) this.setData({ singlePage: sp })
-    /* 水印开关可能在设置里改过：回到商品页立即生效 */
-    this.setData({ wmOn: prefs.watermarkOn() })
+    /* 水印开关可能在设置里改过：自己的发布立即生效，别人发布的仍标发布方 */
+    const wmOn = prefs.watermarkOn()
+    const wm = watermarkOf(this.data.product, wmOn, readUser())
+    this.setData({ wmOn, watermark: wm.full, wmTiles: tilesOf(wm.tile) })
     /* 返回本页 / 首次进入时数据已就绪：补生成一次海报（同 id 命中缓存不重画） */
     if (this.data.product) this.prepareShare(this.data.product)
+  },
+
+  onUnload() {
+    if (this.offFlags) {
+      this.offFlags()
+      this.offFlags = null
+    }
   },
 
   /* 海报按本商品自己的字段生成，临时路径留给分享卡片；失败时保持空串，由 guard 回退静态底图 */
@@ -426,33 +459,6 @@ Page({
     })
   },
 
-  onHide() {
-    this.stopWatermarkTimer()
-  },
-
-  onUnload() {
-    this.stopWatermarkTimer()
-  },
-
-  /* 查看层打开期间每分钟刷新一次水印时间，保证任何时刻截到的都是「人 + 时间」 */
-  startWatermarkTimer() {
-    this.stopWatermarkTimer()
-    if (!prefs.watermarkOn()) return
-    this.wmTimer = setInterval(() => {
-      if (!this.data.viewerOpen) return
-      const id = this.data.product && this.data.product.id
-      const wm = watermarkOf(id, readUser())
-      this.setData({ watermark: wm.full, wmTiles: tilesOf(wm.tile) })
-    }, 60000)
-  },
-
-  stopWatermarkTimer() {
-    if (this.wmTimer) {
-      clearInterval(this.wmTimer)
-      this.wmTimer = null
-    }
-  },
-
   toggleFav() {
     const id = this.data.product && this.data.product.id
     if (!id) return
@@ -468,7 +474,7 @@ Page({
     this.setData({ mediaIndex: index })
   },
 
-  /* 查看材料：全屏查看层；水印开启时全程叠加账号水印，不提供保存/下载入口 */
+  /* 查看材料：全屏查看层；全程叠加发布方水印，不提供保存/下载入口 */
   openMedia(e) {
     const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
     const slides = this.data.mediaSlides || []
@@ -485,13 +491,12 @@ Page({
       return
     }
     const user = readUser()
-    const wmOn = prefs.watermarkOn()
-    /* 开启水印时必须是已登录账号：未登录不展示材料，避免出现无法追责的「匿名查看」 */
-    if (wmOn && !guard.boundToAccount(user)) {
+    /* 材料仅向已登录账号开放：未登录不展示，避免匿名批量获取发布方素材 */
+    if (!guard.boundToAccount(user)) {
       const id = this.data.product && this.data.product.id
       wx.showModal({
         title: '登录后才能查看材料',
-        content: '商品图片与视频带查看人账号水印，用于泄漏追责。请先登录再查看。',
+        content: '商品图片与视频仅平台内在线查看，请先登录后再查看。',
         confirmText: '去登录',
         success: (res) => {
           if (!res.confirm) return
@@ -502,16 +507,14 @@ Page({
       })
       return
     }
-    const wm = watermarkOf(this.data.product && this.data.product.id, user)
+    const wm = watermarkOf(this.data.product, this.data.wmOn, user)
     this.setData({
       viewerOpen: true,
       viewerType: type === 'video' ? 'video' : 'image',
       viewerIndex: Number(index) || 0,
-      wmOn,
       watermark: wm.full,
       wmTiles: tilesOf(wm.tile)
     })
-    this.startWatermarkTimer()
   },
 
   /* 全屏查看层左右滑动：同步标题与类型，视频只在当前屏自动播放 */
@@ -531,14 +534,11 @@ Page({
 
   noop() {},
 
-  /* 点发布人头像进入对方主页：只展示对方公开发布的内容 */
+  /* 点发布人头像进入对方主页：未公开主体也可访问，只展示公开在架内容 */
   openSeller() {
     const p = this.data.product || {}
-    /* 私密发布不提供对方主页：入口不渲染，这里也不响应任何跳转 */
-    if (this.data.privateShare) return
-    /* 主体未公开时不提供主页：避免从「同主体货源」反推出隐藏主体 */
-    if (this.data.contactHidden || p.ownerExposure !== 'open' || !p.ownerKey) {
-      wx.showToast({ title: '该商家未公开主体，请直接对话沟通', icon: 'none' })
+    if (!p.ownerKey) {
+      wx.showToast({ title: '该内容没有可访问的发布方主页', icon: 'none' })
       return
     }
     const o = p.owner || {}
@@ -555,16 +555,12 @@ Page({
       wx.showToast({ title: '不能关注自己', icon: 'none' })
       return
     }
-    if (this.data.contactHidden) {
-      wx.showToast({ title: '该商家未公开主体，请直接对话沟通', icon: 'none' })
-      return
-    }
-    const id = String(p.ownerKey || p.ownerSubject || '')
-    if (!id) {
-      wx.showToast({ title: '该商家未公开主体', icon: 'none' })
+    if (!p.ownerKey && !p.ownerSubject) {
+      wx.showToast({ title: '该内容没有可访问的发布方主页', icon: 'none' })
       return
     }
     const o = p.owner || {}
+    const id = String(p.ownerKey || p.ownerSubject || '')
     const on = fav.toggleFollow({
       id,
       nick: o.nick || p.ownerSubject || '货主',
@@ -617,6 +613,11 @@ Page({
       wx.showToast({ title: '不能联系自己的发布', icon: 'none' })
       return
     }
+    /* 我的商机进来：领取时已确认过条件，这里不再重复确认与领取，直接进会话 */
+    if (this.data.bizMine) {
+      this.doOpenChat([])
+      return
+    }
     /* 只有「在售」可发起对话：洽谈中 / 已成交 / 已下架直接提示，避免确认完才被拒绝 */
     if (p.status && p.status !== '在售') {
       wx.showToast({ title: '当前状态为「' + p.status + '」，暂不可发起对话', icon: 'none' })
@@ -667,8 +668,9 @@ Page({
     const bizType = this.bizType || 'supply'
     this.setData({ openingChat: true })
     try {
-      /* 商机池：先确认领取，领取成功才进入「我的商机」，随后自动进会话 */
-      if (this.data.bizMode) {
+      /* 商机池：先确认领取，领取成功才进入「我的商机」，随后自动进会话；
+         从「我的商机」进来的是已领取记录，跳过领取直接开会话 */
+      if (this.data.bizMode && !this.data.bizMine) {
         try {
           await bizUtil.claimRemote(bizType, p.id || this.productId, Array.isArray(p.must) ? p.must : [])
         } catch (err) {
@@ -687,10 +689,16 @@ Page({
         }
         return
       }
+      /* 我的商机：能领取说明领取时已逐项确认过必须条件，
+         这里按已满足回传，服务端不再要求重新确认 */
+      let needConds = conds
+      if (this.data.bizMine && (!Array.isArray(needConds) || !needConds.length)) {
+        needConds = (Array.isArray(p.must) ? p.must : []).map((k) => ({ k, satisfied: true }))
+      }
       const ok = await chat.openChat({
         targetType: bizType === 'demand' ? 'demand' : 'product',
         targetId: p.id || this.productId,
-        conds: conds,
+        conds: needConds,
         /* 商机池进入：会话打上来源标记，消息页展示「商机」 */
         fromBiz: this.data.bizMode === true,
         onPhone: (phone) => this.setData({ ownerPhone: phone })
@@ -724,7 +732,8 @@ Page({
   async loadBizContact() {
     if (!this.data.bizMode || !this.bizMine) return
     try {
-      const res = await bizUtil.claimRemote(this.bizType || 'supply', this.productId, [], { silent: true })
+      /* 只读回看联系方式：不调领取接口，避免占用每日领取次数 */
+      const res = await bizUtil.contactRemote(this.bizType || 'supply', this.productId, { silent: true })
       const phone = (res && res.contact && res.contact.phone) || ''
       if (phone) this.setData({ ownerPhone: phone })
     } catch (err) {

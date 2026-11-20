@@ -1,6 +1,7 @@
 /* 本地部署测算：选开源模型 + 目标并发 → 按平台预设设备估算所需数量。
-   设备只能从 device-catalog.js 同步过来的 DEVICE_TREE 里选，不允许自填型号。 */
+   设备来自服务端型号目录（与小程序的型号滚轮同源），不允许自填型号。 */
 const D = require('../../utils/device-spec')
+const catalog = require('../../utils/catalog')
 const guard = require('../../utils/guard')
 const sharePoster = require('../../utils/share-poster')
 const CALC_CATS = D.CALC_CATS
@@ -322,6 +323,11 @@ Page({
       context: 8192
     })
     this.recalc()
+    /* 型号目录以服务端为准：管理端新增 GPU 型号后，测算设备列表自动跟上 */
+    catalog.loadCatalog().then(() => {
+      this.devices = buildDevices()
+      this.recalc()
+    }).catch(() => {})
   },
 
   /* 工具页是公开内容：允许分享给朋友，也允许分享到朋友圈 */
@@ -332,7 +338,7 @@ Page({
 
   onShareAppMessage() {
     return {
-      title: '显卡算力计算器 · 本地部署要几台',
+      title: '显卡算力计算器 · 本地部署要几台，30 秒出结果',
       desc: '语言 / 生图 / 视频 / 语音模型，按并发估算设备数量',
       imageUrl: sharePoster.cached('tool', sharePoster.toolSpec('calc')) || '/assets/share/card-home.png',
       path: '/pages/calc/calc'
@@ -341,7 +347,7 @@ Page({
 
   onShareTimeline() {
     return {
-      title: '显卡算力计算器 · 本地部署要几台',
+      title: '显卡算力计算器 · 本地部署要几台，30 秒出结果',
       query: '',
       imageUrl: sharePoster.cached('tool', sharePoster.toolSpec('calc')) || '/assets/share/card-home.png'
     }

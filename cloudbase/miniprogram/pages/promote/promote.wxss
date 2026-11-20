@@ -90,53 +90,9 @@
   font-size: 22rpx;
 }
 
-/* 推广码 */
-.p-code-box {
-  display: flex;
-  align-items: center;
-  gap: 20rpx;
-  margin-top: 24rpx;
-  padding: 20rpx 24rpx;
-  border-radius: var(--radius-sm);
-  border: 1rpx dashed var(--brand-line);
-  background: #fff;
-}
-.p-code-main {
-  flex: 1;
-  min-width: 0;
-}
-.p-code-label {
-  display: block;
-  font-size: 22rpx;
-  color: var(--muted);
-}
-.p-code-value {
-  display: block;
-  margin-top: 4rpx;
-  font-size: 36rpx;
-  font-weight: 700;
-  letter-spacing: 3rpx;
-  color: var(--brand);
-  word-break: break-all;
-}
-.p-code-copy {
-  flex: none;
-  display: flex;
-  align-items: center;
-  height: 64rpx;
-  padding: 0 24rpx;
-  border-radius: 12rpx;
-  border: 1rpx solid var(--brand-line);
-  background: var(--brand-soft);
-  color: var(--brand);
-  font-size: 24rpx;
-  font-weight: 600;
-}
-.p-code-copy:active {
-  opacity: .75;
-}
+/* 分享入口：开通后无需推广码，直接分享任意页面 */
 .p-share {
-  margin-top: 20rpx;
+  margin-top: 24rpx;
 }
 
 /* 三块金额 */
@@ -210,19 +166,118 @@
   border-bottom: none;
 }
 .p-rule-k {
+  flex: none;
   font-size: 24rpx;
   color: var(--muted);
 }
 .p-rule-v {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
   font-size: 24rpx;
   color: var(--ink-2);
   font-weight: 500;
+}
+/* 提现弹窗内的规则摘要：与金额明细分隔 */
+.p-sheet-rules {
+  margin-top: 16rpx;
+  padding-top: 8rpx;
+  border-top: 1rpx solid var(--line-2);
+}
+.p-sheet-rules .p-rule-k,
+.p-sheet-rules .p-rule-v {
+  font-size: 22rpx;
 }
 .p-hint {
   margin-top: 14rpx;
   font-size: 22rpx;
   line-height: 1.65;
   color: var(--muted);
+}
+
+/* 收款银行卡：未填写时用大号可点击卡片，一眼可见可填 */
+.p-bank-link {
+  flex: none;
+  padding: 8rpx 22rpx;
+  border-radius: 999rpx;
+  border: 1rpx solid var(--brand-line);
+  background: var(--brand-soft);
+  font-size: 24rpx;
+  font-weight: 600;
+  color: var(--brand);
+}
+.p-bank-empty {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  margin-top: 18rpx;
+  padding: 30rpx 24rpx;
+  border-radius: var(--radius-sm);
+  border: 2rpx dashed var(--brand-line);
+  background: var(--brand-soft);
+}
+.p-bank-empty:active {
+  opacity: .8;
+}
+.p-bank-ic {
+  flex: none;
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 50%;
+  background: #fff;
+  color: var(--brand);
+  font-size: 44rpx;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.p-bank-main {
+  flex: 1;
+  min-width: 0;
+}
+.p-bank-tt {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--brand);
+}
+.p-bank-d {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.p-bank-go {
+  flex: none;
+  padding: 14rpx 28rpx;
+  border-radius: 999rpx;
+  background: var(--brand);
+  color: #fff;
+  font-size: 26rpx;
+  font-weight: 600;
+}
+.p-bank-warn {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+  margin-top: 16rpx;
+  padding: 24rpx;
+  border-radius: var(--radius-sm);
+  border: 2rpx dashed var(--brand-line);
+  background: var(--brand-soft);
+}
+.p-bank-warn:active {
+  opacity: .8;
+}
+.p-bank-warn-t {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--brand);
+}
+.p-bank-warn-b {
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: var(--ink-2);
 }
 
 /* 开通后的规则说明：绑定范围 + 计佣口径，两条常驻展示 */
@@ -260,6 +315,12 @@
 .p-req {
   margin-left: 4rpx;
   color: var(--danger);
+}
+/* 选填标签：开通时的收款银行卡可稍后补填 */
+.p-opt {
+  margin-left: 8rpx;
+  color: var(--muted-2);
+  font-size: 22rpx;
 }
 
 /* 协议摘要 */

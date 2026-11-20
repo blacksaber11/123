@@ -4,6 +4,7 @@
    点「首页」让其回到在售货源，避免再多一个页面。 */
 const { getUser } = require('../utils/auth')
 const { request } = require('../utils/request')
+const features = require('../utils/features')
 
 /* 商机角标缓存：每个 tab 页各有一份 tabBar 实例，模块级缓存 30 秒内不重复请求；
    首页拉到结果后会调 setBizBadge 回填，其他 tab 页直接复用 */
@@ -15,6 +16,10 @@ Component({
   data: {
     selected: 0,
     unread: 0,
+    /* 社交功能是否开放：false 时隐藏「消息」与中间发布按钮。
+       不在这里求值：组件模块只注册一次，写死会把首次结果复制给之后创建的所有实例；
+       初始值交给 attached / 页面 onShow 现读。 */
+    socialOn: false,
     /* 首页「商机」数字：>0 才显示，>99 显示 99+ */
     bizBadge: 0,
     /* 页面打开整屏弹层（如发布资讯）时可临时隐藏导航，避免遮住弹层底部按钮 */
@@ -22,6 +27,12 @@ Component({
   },
 
   attached() {
+    this.syncSocial()
+    /* 开关回来时所有已存在（被缓存）的 tabBar 实例一起刷新，不用等用户切页 */
+    this.offFlags = features.onChange((on) => {
+      if (on !== this.data.socialOn) this.setData({ socialOn: on })
+      this.refreshBizBadge()
+    })
     this.refreshUnread()
     this.refreshBizBadge()
     this.startBadgeTimer()
@@ -29,16 +40,32 @@ Component({
 
   detached() {
     this.stopBadgeTimer()
+    if (this.offFlags) {
+      this.offFlags()
+      this.offFlags = null
+    }
   },
 
   pageLifetimes: {
     show() {
+      this.syncSocial()
       this.refreshUnread()
       this.refreshBizBadge()
     }
   },
 
   methods: {
+    /* 从全局开关同步导航显隐：管理端打开 / 关闭后，切页或重新进入即生效。
+       切 tab 时新页面的 tabBar 实例可能早就建好了（socialOn 还是旧值），
+       pageLifetimes.show 在部分基础库下不触发，所以由页面 onShow 主动调本方法。 */
+    syncSocial() {
+      /* 已拉到服务端结果用真实值；没拉到先用上次缓存，避免冷启动闪一版两项导航 */
+      const on = features.chatEnabled()
+      if (on !== this.data.socialOn) this.setData({ socialOn: on })
+      /* 开关还没拉到时补拉一次（全局去重），回来后推送给所有页面 */
+      if (!features.loaded()) features.ensure().catch(() => {})
+    },
+
     /* 未读角标每 20 秒兜底刷新：不依赖切页 onShow，后台收到新消息也能及时亮起 */
     startBadgeTimer() {
       this.stopBadgeTimer()
@@ -70,6 +97,11 @@ Component({
 
     /* 非首页的 tab 页自行取一次；未登录不请求，避免空白账号打接口 */
     refreshBizBadge(force) {
+      /* 社交功能关闭时首页也不显示商机入口，不再拉角标 */
+      if (this.data.socialOn === false) {
+        if (this.data.bizBadge) this.setData({ bizBadge: 0 })
+        return
+      }
       const me = getUser()
       const uid = (me && me.uid) || ''
       if (!uid) {

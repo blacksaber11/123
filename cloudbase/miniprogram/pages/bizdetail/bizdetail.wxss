@@ -137,6 +137,15 @@
   color: var(--muted);
 }
 
+/* 发布者主页入口：主体脱敏不影响进入 */
+.bd-home {
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: var(--brand);
+  font-weight: 600;
+}
+
 .bd-hd {
   display: flex;
   align-items: baseline;

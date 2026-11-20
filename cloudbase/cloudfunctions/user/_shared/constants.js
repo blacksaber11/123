@@ -115,7 +115,9 @@ const CONSULT_STAGE_LABELS = Object.freeze({
   fee: '服务费待支付',
   paid: '服务费已到账',
   done: '已完成',
-  aborted: '已终止'
+  aborted: '已终止',
+  /* 上架审核工单专用阶段：不在咨询主流程内，仅用于工作台展示 */
+  audit: '上架审核中'
 })
 
 /** 工作台进度条顺序（不含终止态） */
@@ -292,6 +294,7 @@ const TIER_GUIDE = Object.freeze([
 const RATE_LIMITS = Object.freeze({
   login: { max: 5, windowMs: 15 * 60 * 1000, label: '账号' }, // 5 次 / 15 分钟 / 账号
   consult: { max: 10, windowMs: 60 * 60 * 1000, label: '账号' }, // 10 次 / 小时 / 账号
+  chatOpen: { max: 60, windowMs: 60 * 60 * 1000, label: '账号' }, // 发起对话 60 次 / 小时（与咨询分开口径）
   materialSign: { max: 60, windowMs: 60 * 60 * 1000, label: '用户' }, // 60 次 / 小时 / 用户
   publishProduct: { max: 10, windowMs: 24 * 60 * 60 * 1000, label: '账号' }, // 10 条 / 天
   publishDemand: { max: 5, windowMs: 24 * 60 * 60 * 1000, label: '账号' }, // 5 条 / 天
@@ -331,9 +334,11 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   'product.offline': '下架商品',
   'product.online': '重新上架商品',
   'product.delete': '删除商品',
+  'product.transfer': '转移商品归属',
   'demand.close': '关闭求购需求',
   'demand.offline': '下架求购需求',
   'demand.delete': '删除求购需求',
+  'demand.transfer': '转移需求归属',
   'demand.review': '审核求购需求',
   'product.submit': '提交商品审核',
   'demand.submit': '提交需求审核',
@@ -350,6 +355,7 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   'msg.view': '查看用户会话',
   'msg.directHandle': '处置直聊会话',
   'agency.submit': '提交代采 / 代售委托',
+  'agency.update': '修改代采 / 代售委托',
   'agency.confirm': '确认委托上架',
   'agency.review': '审核代采 / 代购工单',
   'agency.reveal': '查看委托联系方式',
@@ -371,7 +377,9 @@ const AUDIT_ACTION_LABELS = Object.freeze({
   'user.admin': '手动调整用户',
   'setting.save': '保存系统设置',
   'risk.handle': '风险池处置',
+  'risk.assign': '转单风险单',
   'report.handle': '处置举报 / 反馈',
+  'report.assign': '转单举报 / 反馈',
   'account.deleteHandle': '处理账号注销申请',
   'refund.handle': '处理退款申请'
 })
@@ -401,7 +409,9 @@ const SERVICE_ACTIONS = Object.freeze([
   'agency.review',
   'agency.reveal',
   'biz.grant',
-  'risk.handle'
+  'risk.handle',
+  'risk.assign',
+  'report.assign'
 ])
 
 /**
@@ -464,8 +474,8 @@ const MAX_MATERIAL_NAME_LEN = 120
 
 /**
  * 主体与联系方式的公开范围（用户可在「我的 - 个人信息」二选一）：
- * hidden — 不公开主体：公开页只显示「平台核验」，主体与联系人不下发，也不进入商机池；
- *          平台不代转联系方式，双方只能在站内会话沟通；
+ * hidden — 不公开主体：公开页只显示「平台核验」，主体与联系人不下发；
+ *          不影响发布、商机匹配与账号主页访问，双方仍可在站内会话沟通；
  * open   — 公开主体：公开页展示主体全称与联系人（小体量商家直连场景），手机号仍脱敏。
  * 历史数据中的 matched（对接后可见）统一按 hidden 处理，不会因此多暴露主体。
  */
@@ -481,9 +491,8 @@ const EXPOSURE_LABELS = Object.freeze({
 
 /**
  * 商品 / 需求 / 代售委托的内容可见范围（与上面的「主体公开范围」相互独立）：
- * public  — 公开：进入列表、搜索、榜单与商机池，展示发布者身份；
- * private — 私密：内容照常进入列表、搜索与榜单，但发布者完全匿名——
- *           不下发头像 / 主体 / 主页入口，主页也不收录，只能由本人在对话中自报身份。
+ * public  — 普通发布：进入列表、搜索、榜单，并自动参与商机匹配；
+ * private — 私密发布：仅发布者本人与平台可见，不进入列表、搜索、榜单与商机匹配。
  * 代采委托与 1000 万元及以上代采订单一律按保密处理，只对平台可见。
  */
 const VISIBILITIES = Object.freeze({
@@ -497,11 +506,9 @@ const VISIBILITY_LABELS = Object.freeze({
 })
 
 /**
- * 发布渠道：发布方自行选择内容出现在哪里。
- * normal — 仅普通发布：进入公开列表 / 搜索，不参与商机匹配；
- * pool   — 仅商机：只在商机池按型号匹配，不进入普通列表；
- * both   — 二者都发：普通列表与商机池同时可见。
- * 保密发布只能是 normal（隐藏主体只能普通发布）。
+ * 历史发布渠道字段：新发布不再写入渠道选择，仅保留解析旧数据。
+ * 旧 normal / both 按「普通发布」处理；旧 pool 仍只进商机池、不进公开列表。
+ * 私密发布不参与任何渠道逻辑。
  */
 const PUBLISH_CHANNELS = Object.freeze({
   NORMAL: 'normal',
@@ -538,18 +545,17 @@ const DEFAULT_CURRENCY = 'CNY'
  */
 const LARGE_AMOUNT_THRESHOLD = 10000000
 
-/** 大额代采 / 需求必传材料（kind 与 agency media 的 kind 同口径） */
+/** 大额代采 / 需求必传材料（kind 与 agency media 的 kind 同口径；委托授权书为补充材料，不计入必传） */
 const LARGE_FREE_MATERIALS = Object.freeze([
   { kind: 'loi', label: '采购意向函' },
-  { kind: 'authorization', label: '委托授权书' },
+  { kind: 'proof', label: '验资证明' },
   { kind: 'idcard', label: '联系人身份证' }
 ])
 
-/** 大额代售资料核验材料：营业执照、货源证明、委托授权书、联系人身份证 */
+/** 大额代售资料核验材料：营业执照、物权证明、联系人身份证（委托授权书为补充材料） */
 const LARGE_SELL_MATERIALS = Object.freeze([
   { kind: 'license', label: '营业执照' },
-  { kind: 'proof', label: '货源证明' },
-  { kind: 'authorization', label: '委托授权书' },
+  { kind: 'proof', label: '物权证明' },
   { kind: 'idcard', label: '联系人身份证' }
 ])
 

@@ -38,9 +38,11 @@
   color: var(--ink);
   white-space: nowrap;
 }
-/* 会话标题：过长时省略，商机会员标识始终完整跟在名字后面，不换行 */
+/* 会话标题：昵称优先，过长时先省略；商机会员标识始终完整跟在名字后面，不换行 */
 .nav-title-name {
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 300rpx;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -49,6 +51,20 @@
   flex: none;
   margin-left: 6rpx;
   font-size: 30rpx;
+  color: var(--muted);
+}
+
+/* 会话对象永远是人：公司 / 主体名只做昵称后的小字点缀，空间不足时先让位给昵称 */
+.nav-subject {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 180rpx;
+  margin-left: 8rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 22rpx;
+  font-weight: 400;
   color: var(--muted);
 }
 

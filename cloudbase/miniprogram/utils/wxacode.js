@@ -3,16 +3,19 @@
  * 同一页面参数只请求一次；服务端 / 本地写文件失败时返回空串，海报照常生成（不带码）。
  */
 
-const { wxacode } = require('./request')
+const { wxacode, readToken } = require('./request')
 
 const cache = new Map()
 let seq = 0
 
 function fileOf(path) {
-  const key = String(path || '')
-  if (!key) return Promise.resolve('')
+  const raw = String(path || '')
+  if (!raw) return Promise.resolve('')
+  /* 码由服务端按「当前登录的推广者」追加推广码：缓存按登录态隔离，
+     避免同一台设备切换账号后复用上一个账号的码，扫进来绑到错误的人 */
+  const key = raw + '@' + readToken()
   if (cache.has(key)) return Promise.resolve(cache.get(key))
-  return wxacode(key, 280).then((dataUrl) => new Promise((resolve) => {
+  return wxacode(raw, 280).then((dataUrl) => new Promise((resolve) => {
     const base64 = String(dataUrl || '').replace(/^data:image\/\w+;base64,/, '')
     if (!base64) {
       resolve('')

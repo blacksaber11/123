@@ -11,6 +11,7 @@
     "pages/demand/demand",
     "pages/news/news",
     "pages/publish/publish",
+    "pages/agencydoc/agencydoc",
     "pages/consult/consult",
     "pages/mine/mine",
     "pages/promote/promote",
@@ -26,7 +27,8 @@
     "pages/msg/msg",
     "pages/chat/chat",
     "pages/userhome/userhome",
-    "pages/report/report"
+    "pages/report/report",
+    "pages/blocked/blocked"
   ],
   "window": {
     "navigationBarBackgroundColor": "#ffffff",

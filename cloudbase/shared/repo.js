@@ -25,7 +25,7 @@ const COLLECTIONS = Object.freeze([
   /* settings：平台级配置（咨询单审批排序权重等）；catalog：平台维护的产品型号 */
   'settings', 'catalog',
   /* P0 数据底座：会员订单流水、收款流水、日快照、风险单、系统/登录日志、角色与临时权限 */
-  'bizOrders', 'payments', 'dailyStats', 'riskCases', 'systemLogs', 'loginLogs',
+  'bizOrders', 'payments', 'dailyStats', 'riskCases', 'systemLogs', 'loginLogs', 'stayStats',
   'roles', 'accountPermissions',
   /* 用户行为事件（90 天保留）与直聊会话级展示授权 */
   'userEvents', 'chatReveals',
@@ -37,12 +37,14 @@ const COLLECTIONS = Object.freeze([
   'newsLikes', 'newsComments', 'commentReads',
   /* 推广分佣：推广关系、佣金流水、提现单、出款明细、协议签署记录与推广配置 */
   'referralBindings', 'commissions', 'promoterWithdrawals', 'promotePayoutItems', 'promoteAgreements', 'promoteSettings',
-  /* 客服业务：客服-用户绑定、会员支付提成流水、咨询评价、客服单独比例配置 */
-  'csBindings', 'csCommissions', 'csRatings', 'csProfiles',
-  /* 客服咨询流程：代采代售居间合同（一单一合同）、服务费到账后代采代售佣金流水 */
+  /* 客服业务：客服-用户绑定、咨询评价、客服单独委托佣金比例配置 */
+  'csBindings', 'csRatings', 'csProfiles',
+  /* 客服咨询流程：代采代售居间合同（一单一合同）、服务费到账后委托佣金流水 */
   'agencyContracts', 'csAgencyCommissions',
   /* 代采代售委托独家领取：一条委托同时只允许一个会员领取，领取前内容与金额对其他人隐藏 */
-  'agencyClaims'
+  'agencyClaims',
+  /* 用户黑名单：拉黑者 uid + 被拉黑者 peerUid，私聊 / 内容 / 主页三处口径共用 */
+  'userBlocks'
 ])
 
 const UNIQUE_INDEXES = Object.freeze({
@@ -79,8 +81,6 @@ const UNIQUE_INDEXES = Object.freeze({
   promotePayoutItems: [['withdrawalId', 'seq'], ['activeCommissionKey']],
   /* 客服绑定：一个客服只能绑一个用户（id=csId），一个用户也只能归属一个客服（uid 唯一） */
   csBindings: [['uid']],
-  /* 客服提成流水：同一笔会员支付只能计提一次 */
-  csCommissions: [['paymentId']],
   /* 客服评价：一张咨询单只能评价一次 */
   csRatings: [['leadId']],
   /* 居间合同：一条咨询单只允许一份有效合同（驳回重传按版本叠加，不新增行） */
@@ -88,7 +88,9 @@ const UNIQUE_INDEXES = Object.freeze({
   /* 代采代售佣金：同一笔服务费账单只能计提一次 */
   csAgencyCommissions: [['paymentId']],
   /* 委托独家领取：一条委托只能有一条领取锁，抢锁失败即已被他人领取 */
-  agencyClaims: [['agencyId']]
+  agencyClaims: [['agencyId']],
+  /* 黑名单：同一对用户只有一行，重复拉黑幂等 */
+  userBlocks: [['uid', 'peerUid']]
 })
 
 function clone(value) {

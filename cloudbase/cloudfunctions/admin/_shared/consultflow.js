@@ -18,12 +18,17 @@
 const { AppError, CODES } = require('./errors')
 const { appendAudit } = require('./audit')
 const { sha256Hex } = require('./crypto')
+const { CS_STATUS } = require('./cs')
 const {
   CONSULT_STAGE,
   CONSULT_STAGE_LABELS,
   CONSULT_STAGE_ORDER,
-  CONSULT_TRANSITIONS
+  CONSULT_TRANSITIONS,
+  LEAD_STATUS
 } = require('./constants')
+
+/* 超时未回复自动结束的固定说明：工作台已结束列表与审计共用同一文案 */
+const CONSULT_IDLE_CLOSE_NOTE = '客服超时未回复，系统自动结束本次咨询'
 
 const CONTRACT_STATUS = Object.freeze({
   PENDING: '待审核',
@@ -208,7 +213,9 @@ async function announceStage(repo, lead, stage, opts) {
       title: lead.agencyTitle || '',
       body: `咨询进度：${label}`,
       serviceStage: stage,
-      stageLabel: label
+      stageLabel: label,
+      /* 平台客服咨询：进度提示留在「平台客服」会话里 */
+      platformChat: String(lead.source || '') === 'kf_leave'
     },
     status: 'pending',
     createdAt: at
@@ -221,7 +228,118 @@ async function announceStage(repo, lead, stage, opts) {
   }
 }
 
+/**
+ * 工单收尾：写服务结束状态、关闭线索，并给用户发一条「去评价」消息。
+ * 客服手动结束服务、确认完成、终止，以及系统超时自动结束，全部走这一个出口，
+ * 保证用户端会话锁定、客服工作台「已结束」累计、评价入口三处表现一致。
+ */
+async function endLead(repo, lead, options) {
+  const opts = options || {}
+  if (!lead || !lead.id) throw new AppError(CODES.VALIDATION, '缺少咨询单')
+  const at = Number(opts.at) || Date.now()
+  const accountId = String(opts.accountId || '')
+  const staffName = String(opts.staffName || lead.csName || lead.assignedTo || '')
+  const patch = {
+    csStatus: CS_STATUS.ENDED,
+    csEndedAt: at,
+    csEndedBy: accountId || 'system',
+    csEndedByName: staffName,
+    status: LEAD_STATUS.CLOSED,
+    updatedAt: at
+  }
+  if (opts.reason) patch.closeReason = String(opts.reason)
+  if (opts.auto) patch.autoEnded = true
+  /* 未生成工单就结束服务：按无效咨询收口，避免一直挂在「磋商中」却没有出口 */
+  if (ticketStateOf(lead) !== TICKET_STATE.TICKETED) {
+    patch.ticketState = TICKET_STATE.INVALID
+    patch.closedAt = at
+    if (!patch.closeReason) patch.closeReason = '磋商未达成，客服结束服务'
+  }
+  const res = await repo.updateWhere('leads', { id: lead.id }, patch)
+  if (!res || !res.count) throw new AppError(CODES.CONFLICT, '咨询单状态已更新，请刷新后重试')
+  try {
+    await repo.insert('outbox', {
+      id: 'M' + sha256Hex('cs-end:' + lead.id).slice(0, 22),
+      type: 'kf.chat',
+      payload: {
+        uid: lead.uid,
+        channel: 'kf',
+        from: 'system',
+        staffName,
+        threadId: lead.threadId || lead.id,
+        targetType: 'agency',
+        targetId: lead.targetId || lead.agencyId || '',
+        title: lead.agencyTitle || '',
+        body: '本次咨询服务已结束，请对客服服务进行评价',
+        csStatus: CS_STATUS.ENDED,
+        askRating: true,
+        /* 平台客服咨询：评价邀请留在「平台客服」会话里，不另起一条咨询 */
+        platformChat: String(lead.source || '') === 'kf_leave'
+      },
+      status: 'pending',
+      createdAt: at
+    })
+  } catch (dupErr) {
+    /* 退款后二次完成：评价消息已发过同 id，不阻断工单闭合 */
+    if (!dupErr || dupErr.code !== CODES.CONFLICT) throw dupErr
+  }
+  return patch
+}
+
+/**
+ * 超时未回复自动结束：
+ * 从「客服领取时间 / 客服最后一条回复时间」里取最晚的一个算起，
+ * 超过设置时长仍没有任何客服回复的工单自动终止并邀请用户评价。
+ * 只在沟通中、条件已确认两个阶段生效；已进入合同 / 收款的工单不自动终止。
+ */
+async function closeIdleLeads(repo, options) {
+  const opts = options || {}
+  const at = Number(opts.at) || Date.now()
+  const minutes = Math.max(1, Number(opts.minutes) || 0)
+  if (!minutes) return []
+  const cutoff = at - minutes * 60000
+  const rows = await repo.find('leads', { csStatus: CS_STATUS.SERVING }, { limit: 500 })
+  const ended = []
+  for (const row of rows) {
+    if (!row || !row.id) continue
+    if (row.targetType && row.targetType !== 'agency') continue
+    const stage = stageOf(row)
+    if (stage !== CONSULT_STAGE.COMMUNICATING && stage !== CONSULT_STAGE.TERMS) continue
+    if (!row.assignedAccount) continue
+    const base = Math.max(Number(row.csClaimedAt) || 0, Number(row.csLastReplyAt) || 0)
+    if (!base || base > cutoff) continue
+    try {
+      await advance(repo, row, CONSULT_STAGE.ABORTED, {
+        at,
+        by: 'system',
+        actorType: 'system',
+        note: CONSULT_IDLE_CLOSE_NOTE
+      })
+    } catch (err) {
+      /* 阶段已被客服推进或工单已被他人收尾：跳过，不阻断其它工单 */
+      if (!err || err.code !== CODES.CONFLICT) console.error('[consult] 自动结束推进失败 ' + (err && err.message))
+      continue
+    }
+    try {
+      await endLead(repo, row, {
+        at,
+        accountId: 'system',
+        staffName: '系统',
+        reason: CONSULT_IDLE_CLOSE_NOTE,
+        auto: true
+      })
+      ended.push(row.id)
+    } catch (err) {
+      console.error('[consult] 自动结束收尾失败 ' + (err && err.message))
+    }
+  }
+  return ended
+}
+
 module.exports = {
+  CONSULT_IDLE_CLOSE_NOTE,
+  endLead,
+  closeIdleLeads,
   CONTRACT_STATUS,
   CONTRACT_STATUS_LIST,
   TICKET_STATE,

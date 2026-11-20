@@ -18,6 +18,10 @@
   border-top: 1rpx solid var(--line);
   box-shadow: 0 -8rpx 32rpx rgba(16, 24, 40, .05);
 }
+/* 社交功能关闭：只剩 资讯 / 我的 两项，等分铺满 */
+.tabbar.is-simple {
+  grid-template-columns: repeat(2, 1fr);
+}
 
 .tb-item {
   display: flex;

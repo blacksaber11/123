@@ -142,15 +142,21 @@
 
 /* 表单页 */
 .form-wrap {
-  padding-top: 16rpx;
+  padding-top: 8rpx;
+  background: linear-gradient(180deg, #F7F8FF 0, var(--paper) 260rpx);
 }
 
-/* 返回入口 */
+/* 返回入口：做成轻胶囊，和下面的卡片区分开 */
 .form-back {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 10rpx;
-  padding: 20rpx 32rpx 4rpx;
+  margin: 16rpx 24rpx 2rpx;
+  padding: 10rpx 22rpx 10rpx 14rpx;
+  border-radius: 999rpx;
+  background: #fff;
+  border: 1rpx solid var(--line);
+  box-shadow: 0 2rpx 8rpx rgba(16, 24, 40, .04);
 }
 .fb-ico {
   flex: none;
@@ -168,33 +174,61 @@
   font-size: 22rpx;
   line-height: 1.7;
 }
-/* 表单分区：与咨询页、首页保持同一套圆角卡片，不再做成通栏分段 */
+/* 表单分区：轻卡片 + 细分隔线，降低信息密度 */
 .form-sec {
   background: #fff;
-  margin: 20rpx 24rpx;
-  border-radius: var(--radius);
-  border: 1rpx solid var(--line);
-  padding: 28rpx;
-  box-shadow: var(--shadow);
+  margin: 16rpx 24rpx;
+  border-radius: 28rpx;
+  border: 1rpx solid rgba(16, 24, 40, .045);
+  padding: 4rpx 26rpx 8rpx;
+  box-shadow: 0 6rpx 24rpx rgba(16, 24, 40, .045);
 }
+/* 分区标题：左侧渐变竖条 + 更宽松的留白 */
 .form-sec .sh {
+  position: relative;
   display: flex;
   align-items: center;
-  margin-bottom: 16rpx;
+  gap: 12rpx;
+  padding: 22rpx 0 14rpx 22rpx;
+  border-bottom: 1rpx solid var(--line-2);
+}
+.form-sec .sh::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 6rpx;
+  height: 26rpx;
+  margin-top: -13rpx;
+  border-radius: 999rpx;
+  background: linear-gradient(180deg, #818CF8, #4F46E5);
 }
 .form-sec .sh .st {
   font-size: 28rpx;
   font-weight: 600;
   color: var(--ink);
+  letter-spacing: .5rpx;
 }
 .form-sec .sh .sd {
-  font-size: 22rpx;
+  font-size: 20rpx;
+  color: #98A2B3;
+}
+/* 发布方式右侧的状态标签：普通发布 / 仅发商机池 */
+.form-sec .sh .sd.pub-mode {
+  margin-left: auto;
+  flex: none;
+  padding: 4rpx 14rpx;
+  border-radius: 999rpx;
+  background: var(--line-2);
   color: var(--muted);
-  margin-left: 12rpx;
+}
+.form-sec .sh .sd.pub-mode.on {
+  background: var(--brand-soft);
+  color: var(--brand);
 }
 
 .field {
-  padding: 20rpx 0;
+  padding: 16rpx 0;
   border-bottom: 1rpx solid var(--line-2);
 }
 .field:last-child {
@@ -202,42 +236,118 @@
 }
 .field .f-label {
   display: block;
-  font-size: 26rpx;
-  color: var(--ink);
+  font-size: 24rpx;
+  color: var(--ink-2);
   font-weight: 500;
-  margin-bottom: 16rpx;
+  margin-bottom: 10rpx;
 }
 .field .req {
   color: var(--danger);
-  margin-left: 6rpx;
+  margin-left: 4rpx;
 }
-.field input {
+/* 输入 / 选择：统一成浅灰圆角控件，视觉上更整齐 */
+.field > input,
+.field > picker > .pick-btn,
+.geo-row .pick-btn,
+.field > picker > .f-input,
+.field .f-input {
+  display: flex;
+  align-items: center;
   width: 100%;
-  height: 72rpx;
+  height: 80rpx;
+  box-sizing: border-box;
+  padding: 0 20rpx;
+  border: 1rpx solid #EFF1F5;
+  border-radius: 18rpx;
+  background: #F7F8FA;
   font-size: 28rpx;
   color: var(--ink);
 }
+/* 两列并排：数量 / 起订量、最低价 / 最高价 */
+.field-pair {
+  display: flex;
+  gap: 20rpx;
+  border-bottom: 1rpx solid var(--line-2);
+}
+.field-pair .field {
+  flex: 1;
+  min-width: 0;
+  border-bottom: none;
+}
+.field-pair .field > input {
+  padding: 0 18rpx;
+}
+.field-pair.one .field {
+  flex: 1 1 100%;
+}
+/* 两个短选择并排：交易方式 / 现货期货这类两选一，压成一行 */
+.field-pair.pair-chips {
+  gap: 16rpx;
+  padding: 2rpx 0;
+}
+.field-pair.pair-chips .chip-group {
+  gap: 8rpx;
+}
+.field-pair.pair-chips .chip-group .chip {
+  padding: 0 16rpx;
+}
+.field-pair.pair-chips .tip {
+  font-size: 19rpx;
+  line-height: 1.4;
+}
 .field .tip {
-  margin-top: 12rpx;
-  font-size: 22rpx;
-  color: var(--muted);
-  line-height: 1.6;
+  margin-top: 6rpx;
+  font-size: 20rpx;
+  color: #98A2B3;
+  line-height: 1.5;
 }
 
 .chip-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 12rpx;
+  gap: 10rpx;
+}
+/* 未选中的 chip 用浅灰底，不再满屏描边 */
+.chip-group .chip {
+  font-size: 24rpx;
+  line-height: 50rpx;
+  padding: 0 22rpx;
+  border-radius: 14rpx;
+  border-color: #F1F2F6;
+  background: #F7F8FA;
+  color: var(--ink-2);
+}
+.chip-group .chip.on {
+  border-color: transparent;
+  background: linear-gradient(135deg, #6366F1, #4F46E5);
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 4rpx 12rpx rgba(79, 70, 229, .22);
+}
+/* 成色等次要选项保持更小一号 */
+.chip-group .chip.sm {
+  font-size: 21rpx;
+  line-height: 46rpx;
+  padding: 0 18rpx;
+}
+
+/* 币种等下拉值 */
+.f-picker {
+  justify-content: space-between;
+}
+.f-arrow {
+  margin-left: 12rpx;
+  color: var(--muted);
 }
 
 .pick-btn {
   display: flex;
   align-items: center;
-  height: 72rpx;
+  height: 78rpx;
   padding: 0 20rpx;
-  border-radius: 12rpx;
-  border: 1rpx solid var(--line);
-  background: #fff;
+  border-radius: 16rpx;
+  border: 1rpx solid transparent;
+  background: #F7F8FA;
   font-size: 28rpx;
   color: var(--ink);
 }
@@ -285,18 +395,18 @@
 .dev-search {
   display: flex;
   align-items: center;
-  height: 72rpx;
-  margin-bottom: 12rpx;
+  height: 80rpx;
+  margin-bottom: 10rpx;
   padding: 0 20rpx;
-  border-radius: 12rpx;
-  border: 1rpx solid var(--line);
-  background: var(--line-2);
+  border-radius: 18rpx;
+  border: 1rpx solid #EFF1F5;
+  background: #F7F8FA;
 }
 .dev-search .dev-search-input {
   flex: 1;
   width: auto;
   min-width: 0;
-  height: 72rpx;
+  height: 80rpx;
   font-size: 26rpx;
   color: var(--ink);
 }
@@ -353,11 +463,18 @@
   gap: 12rpx;
   margin-bottom: 20rpx;
 }
+/* 轻提示：一行灰字，替代大块说明卡 */
+.sec-note {
+  margin: 0 0 18rpx;
+  font-size: 21rpx;
+  line-height: 1.6;
+  color: #98A2B3;
+}
 
 /* 上传卡片 */
 .upload-card {
-  background: var(--line-2);
-  border: 2rpx dashed var(--line);
+  background: #FCFCFF;
+  border: 1rpx solid #EEF0F5;
   border-radius: 20rpx;
   padding: 24rpx;
   margin-bottom: 16rpx;
@@ -414,11 +531,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 56rpx;
-  padding: 0 24rpx;
-  border-radius: 12rpx;
-  background: var(--brand);
-  color: #fff;
+  height: 62rpx;
+  padding: 0 26rpx;
+  border-radius: 14rpx;
+  border: 1rpx solid var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--brand);
   font-size: 24rpx;
   font-weight: 500;
 }
@@ -618,9 +736,10 @@
   right: 0;
   bottom: 0;
   background: #fff;
-  border-top: 1rpx solid var(--line);
-  padding: 16rpx 24rpx;
+  border-top: 1rpx solid var(--line-2);
+  padding: 18rpx 24rpx;
   z-index: 100;
+  box-shadow: 0 -8rpx 30rpx rgba(16, 24, 40, .07);
 }
 .submit-bar .btn {
   /* 与商品页 / 需求页底部主操作同一尺寸（.btn.lg） */
@@ -852,12 +971,12 @@
 .ta {
   display: block;
   width: 100%;
-  min-height: 160rpx;
-  padding: 16rpx;
+  min-height: 180rpx;
+  padding: 20rpx 22rpx;
   box-sizing: border-box;
-  border: 1rpx solid var(--line);
-  border-radius: 12rpx;
-  background: var(--line-2);
+  border: 1rpx solid transparent;
+  border-radius: 16rpx;
+  background: #F7F8FA;
   font-size: 26rpx;
   color: var(--ink);
   line-height: 1.6;
@@ -933,6 +1052,15 @@
   color: var(--muted);
   line-height: 1.6;
 }
+/* 服务费卡片外：勾选与两个可点开的说明链接 */
+.agree-row.agree-out {
+  margin: 4rpx 30rpx 0;
+  padding: 8rpx 0;
+  align-items: center;
+}
+.agree-link {
+  color: var(--brand);
+}
 
 /* 同步到库存开关 */
 .sw-row {
@@ -940,7 +1068,14 @@
   align-items: center;
   justify-content: space-between;
   gap: 20rpx;
-  padding: 18rpx 0 6rpx;
+  padding: 12rpx 0 14rpx;
+}
+/* 发布方式里的开关单独做成浅底面板，和普通字段区分开 */
+.field .sw-row {
+  padding: 18rpx 20rpx;
+  border-radius: 18rpx;
+  background: #F8F9FF;
+  border: 1rpx solid #EFF1F5;
 }
 .sw-main {
   flex: 1;
@@ -979,8 +1114,11 @@
   display: flex;
   align-items: center;
   gap: 16rpx;
-  padding: 26rpx 28rpx;
-  background: var(--brand-soft);
+  margin: 20rpx 28rpx 4rpx;
+  padding: 22rpx 24rpx;
+  border: 2rpx dashed var(--brand-line);
+  border-radius: 18rpx;
+  background: #F8F9FF;
 }
 .mt-main {
   flex: 1;
@@ -990,9 +1128,9 @@
   gap: 6rpx;
 }
 .mt-t {
-  font-size: 28rpx;
-  font-weight: 700;
-  color: var(--brand);
+  font-size: 27rpx;
+  font-weight: 600;
+  color: var(--ink);
 }
 .mt-d {
   font-size: 21rpx;
@@ -1001,8 +1139,8 @@
 .mt-a {
   flex: none;
   font-size: 22rpx;
-  font-weight: 600;
-  color: var(--brand);
+  font-weight: 500;
+  color: var(--muted);
 }
 .more-sec > .field,
 .more-sec > .sub-hd,
@@ -1026,7 +1164,7 @@
   gap: 10rpx;
   margin: 8rpx 0 18rpx;
   padding-top: 18rpx;
-  border-top: 1rpx dashed var(--line);
+  border-top: 1rpx solid var(--line-2);
 }
 .sub-t {
   font-size: 25rpx;
@@ -1044,45 +1182,175 @@
   padding: 6rpx 0 2rpx;
 }
 
-/* 发布到：按钮加大，注释字号收小 */
-.ch-group {
-  display: flex;
-  gap: 14rpx;
-}
-.ch-opt {
-  flex: 1;
-  height: 88rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 16rpx;
-  border: 1rpx solid var(--line);
-  background: var(--line-2);
-  font-size: 27rpx;
-  font-weight: 600;
-  color: var(--ink-2);
-  white-space: nowrap;
-}
-.ch-opt.on {
-  background: var(--brand-soft);
-  border-color: var(--brand);
-  color: var(--brand);
-}
-.ch-opt.disabled {
-  opacity: 0.45;
-}
-.ch-note {
-  margin-top: 10rpx;
-  font-size: 20rpx;
-  line-height: 1.55;
-  color: var(--muted);
-}
-.ch-note.warn {
-  color: #B45309;
-}
-
 /* 代采 / 代售内嵌「更多要求」：与卡片内容对齐，不重复卡片内边距 */
 .ag-more {
   margin: 24rpx -28rpx 0;
   border-top: 1rpx solid var(--line);
+}
+
+/* ---------- 粘贴文字自动填表 ---------- */
+.paste-card {
+  margin: 16rpx 24rpx;
+  padding: 4rpx 26rpx 10rpx;
+  border-radius: 28rpx;
+  border: 1rpx solid rgba(79, 70, 229, .18);
+  background: linear-gradient(180deg, #F6F5FF 0%, #FFFFFF 42%);
+  box-shadow: 0 6rpx 24rpx rgba(79, 70, 229, .06);
+}
+.paste-head {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 22rpx 0;
+}
+.paste-head-main {
+  flex: 1;
+  min-width: 0;
+}
+.paste-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: .5rpx;
+}
+.paste-tip {
+  margin-top: 6rpx;
+  font-size: 21rpx;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.paste-arrow {
+  flex: none;
+  font-size: 22rpx;
+  color: var(--brand);
+}
+.paste-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 160rpx;
+  max-height: 400rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 18rpx;
+  border: 1rpx solid #EFF1F5;
+  background: #F7F8FA;
+  font-size: 25rpx;
+  line-height: 1.6;
+  color: var(--ink);
+}
+.paste-actions {
+  display: flex;
+  gap: 16rpx;
+  margin: 16rpx 0 8rpx;
+}
+.paste-actions .btn {
+  flex: 1;
+  margin: 0;
+}
+.paste-list {
+  margin-top: 12rpx;
+}
+.paste-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+  padding: 8rpx 0;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.paste-all {
+  flex: none;
+  color: var(--brand);
+}
+.paste-item-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 10rpx;
+}
+.paste-item-type {
+  flex: none;
+  margin-top: 2rpx;
+  padding: 0 10rpx;
+  border-radius: 8rpx;
+  font-size: 19rpx;
+  line-height: 32rpx;
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+.paste-item-type.buy {
+  color: #B54708;
+  background: #FFF4E5;
+}
+.paste-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12rpx;
+  padding: 16rpx 0;
+  border-top: 1rpx solid var(--line-2);
+}
+.paste-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 14rpx;
+}
+.paste-item-check {
+  flex: none;
+  width: 36rpx;
+  height: 36rpx;
+  margin-top: 2rpx;
+  border-radius: 10rpx;
+  border: 1rpx solid #D6D3F5;
+  background: #fff;
+  color: #fff;
+  font-size: 22rpx;
+  line-height: 34rpx;
+  text-align: center;
+}
+.paste-item-check.on {
+  border-color: var(--brand);
+  background: var(--brand);
+}
+.paste-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+.paste-item-title {
+  font-size: 25rpx;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--ink);
+  word-break: break-all;
+}
+.paste-item-warn {
+  font-size: 21rpx;
+  line-height: 1.5;
+  color: #B54708;
+}
+.paste-item-del {
+  flex: none;
+  padding: 4rpx 0 4rpx 8rpx;
+  font-size: 22rpx;
+  color: var(--muted);
+}
+.paste-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12rpx;
+  padding: 14rpx 18rpx;
+  border-radius: 14rpx;
+  background: var(--brand-soft);
+  font-size: 22rpx;
+  color: var(--brand);
+}
+.paste-progress-cancel {
+  color: var(--muted);
+}
+.form-paste-progress {
+  margin: 0 0 20rpx;
 }

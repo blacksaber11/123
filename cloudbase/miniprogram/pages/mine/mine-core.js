@@ -7,6 +7,7 @@ const M = require('../../utils/mock')
 const fav = require('../../utils/fav')
 const shop = require('../../utils/shop')
 const { request } = require('../../utils/request')
+const features = require('../../utils/features')
 const { ensureProfileReady } = require('../../utils/profile-ready')
 const prefs = require('../../utils/prefs')
 const chat = require('../../utils/chat')
@@ -106,11 +107,79 @@ const QUICKS = [
 const MENUS = [
   { k: 'biz', icon: 'menu-agency', n: '我的商机', d: '只显示你已领取的商机，可回看联系方式并发起对话', url: '/pages/biz/biz?mode=mine' },
   { k: 'promote', icon: 'menu-agency', n: '推广中心', d: '分享赚钱，好友下单即得佣金', url: '/pages/promote/promote' },
-  { k: 'agency', icon: 'menu-agency', n: '我的委托', d: '代采 / 代售订单、服务费与撤销' },
-  { k: 'pay', icon: 'menu-agency', n: '我的订单', d: '会员开通记录与代采 / 代售订单记录' },
+  { k: 'pay', icon: 'menu-agency', n: '我的订单', d: '会员开通记录与代采 / 代售委托、服务费与撤销' },
   { k: 'profile', icon: 'menu-qual', n: '我的信息', d: '资料、资质与公开范围', url: '/pages/profile/profile' },
-  { k: 'report', icon: 'menu-inq', n: '帮助与反馈', d: '举报 / 投诉 / 意见反馈与处理进度' },
   { k: 'set', icon: 'menu-set', n: '设置', d: '账号、通知与隐私' }
+]
+
+/* 社交总开关关闭时（微信审核期间）一并隐藏：商机与订单都涉及私信 / 商机成员数据 */
+const SOCIAL_ONLY_MENUS = ['biz', 'pay']
+
+/* 二级页标题：已从菜单里移除的视图（帮助与反馈 / 意见反馈）单独给标题 */
+const VIEW_TITLES = {
+  seller: '卖家主页',
+  help: '帮助与反馈',
+  report: '意见反馈'
+}
+
+/* 常见问题：只放平台使用层面的固定问答，涉及金额与时效的统一指向页面内实时展示 */
+const FAQS = [
+  {
+    q: '平台收取哪些费用？',
+    a: '浏览、发布商品与求购需求、发布资讯都免费；代采 / 代售委托的发布、审核、上架也不收费，平台确认成交后按委托约定支付服务费。'
+  },
+  {
+    q: '平台会经手资金或提供交易担保吗？',
+    a: '不会。平台只提供信息展示与撮合对接，不参与交易、不经手资金，也不提供担保。签约、付款、验收、开票均由买卖双方线下自行完成。请在成交前核验对方资质、设备情况与合同条款，并保留合同、付款与验收凭证。'
+  },
+  {
+    q: '怎么发布商品或求购需求？',
+    a: '在首页切换到「出售」或「求购」后点「发布商品 / 发布需求」，填写配置、数量、价格、所在地与交易条件提交即可。提交后会进入审核，审核结果通过站内消息通知。'
+  },
+  {
+    q: '发布后多久能审核通过？',
+    a: '平台会尽快审核，结果以站内消息为准。被驳回时会给出原因，按提示修改后可重新提交；审核期间可在「我的 - 我发布的」查看状态。'
+  },
+  {
+    q: '怎么联系货主或需求方？',
+    a: '在商品 / 需求详情底部点击「联系货主 / 联系需求方」，按提示逐项确认对方的必须条件后进入站内对话。公开手机号后，商机会员可在详情页直接查看并复制拨号；未开通或会员到期时号码不可见。未公开手机号只能站内对话沟通。'
+  },
+  {
+    q: '商机会员是什么？',
+    a: '发布商品、求购需求与代采 / 代售委托都不需要会员，任何用户都能免费发布。商品与需求默认公开，并自动进入商机匹配；有明确买家时可开启「仅发商机池」，只进入匹配、不在首页与搜索展示。非会员可以看到全部匹配条目的脱敏信息，开通会员后可查看联系方式并领取。'
+  },
+  {
+    q: '我的代采 / 代售订单进度在哪里看？',
+    a: '进入「我的 - 我的订单」，切到「代采代售」，点击任意一条可查看服务阶段、各节点时间、处理人与服务费账单；走客服咨询的委托还会展示专属客服与居间合同。'
+  },
+  {
+    q: '服务费什么时候付？需要上传凭证吗？',
+    a: '委托发布与上架不收费，平台确认成交后才出账单。按账单付款并在委托详情上传付款凭证，财务确认到账、客服确认完成后本次委托结束。'
+  },
+  {
+    q: '推广佣金怎么计算和提现？',
+    a: '在「我的 - 推广中心」开通后，无需推广码：分享小程序内任意页面给好友或朋友圈即可绑定下级，好友通过你的分享进入并登录后自动绑定（绑定后不可改绑）。好友完成首次会员付款后，按平台统一比例产生佣金；续费等后续付款不再计佣。佣金先进入待结算，微信 / 虚拟支付冻结至次月 15 日后可申请，Apple 内购需等平台确认款项到账后解冻。提现不设起提门槛，单笔上限与每月次数以推广中心页面展示为准，提交后由平台人工审核打款。'
+  },
+  {
+    q: '如何开票或核对金额？',
+    a: '平台不经手资金，交易款项的开票由买卖双方按合同约定自行完成。会员开通记录与收款记录可在「我的 - 我的订单」查看；需要平台协助核对时，可通过「我的」页底部的「联系客服」留言。'
+  },
+  {
+    q: '账号可以注销吗？',
+    a: '可以。在「我的 - 设置 - 账号注销」提交申请，平台核实后停用账号；历史交易与沟通记录按法规要求留存。提交后可在同一位置查看处理状态，未处理前可撤回。'
+  },
+  {
+    q: '遇到虚假信息、骚扰或违规内容怎么办？',
+    a: '在对应内容详情页点击「举报」，或在本页底部「提交问题反馈」填写对象与经过。平台客服会人工核实并处置，结果在站内消息同步；恶意举报会被记录。'
+  },
+  {
+    q: '身份公开、手机号与水印怎么设置？',
+    a: '身份是否公开、手机号是否展示、资料公开范围都在「我的 - 我的信息」里设置。公开后展示主体与联系方式；不公开时别人仍能访问你的主页，但主体、电话等敏感信息会打码，不影响发布与商机匹配资格。「我的 - 设置 - 水印保护」控制你发出的图片、视频是否叠加你的账号水印（算力聚合 · ID · 昵称），默认开启，保护你发出的内容；关闭后你发出的内容不再叠加水印，别人发来的内容仍带对方标识。'
+  },
+  {
+    q: '收不到微信消息提醒怎么办？',
+    a: '微信一次性订阅每条授权只能提醒一次。进入「我的 - 设置 - 微信消息提醒」重新授权即可；站内消息始终完整保留，不受提醒开关影响。'
+  }
 ]
 
 /* 状态 → 展示色：草稿 / 待审核 / 已驳回 / 已下架 需要一眼看出与「在售」的差别 */
@@ -195,6 +264,8 @@ const BASE = {
     /* 我的评论：我发出的评论 + 收到的回复，未读回复计入角标 */
     commentList: [],
     commentUnread: 0,
+    /* 评论总开关：后台关闭后隐藏「我的评论」页签与历史评论内容 */
+    commentEnabled: true,
     views: [],
     seller: null,
     sellerList: [],
@@ -202,12 +273,17 @@ const BASE = {
     notifyOn: false,
     /* 商机提醒偏好：存在服务端，关闭后不再推送商机类微信提醒，站内消息不受影响 */
     notifyBiz: true,
-    /* 水印保护默认开启；关闭后聊天与作品图片、视频不再叠加水印 */
+    /* 水印保护默认开启；只影响我发出的图片、视频，关闭后不再叠加我的账号水印 */
     wmOn: true,
     /* 设置页「关于平台」右侧展示的版本号：与关于页同源，避免两处不一致 */
     appVersion: version.currentVersion(),
+    /* 帮助与反馈：常见问题列表，点击问题展开答案 */
+    faqList: FAQS,
+    openFaq: -1,
     /* 未开通商机会员时，在四宫格上方展示开通引导；默认展示，确认已开通后再收起 */
     bizLocked: true,
+    /* 社交总开关：关闭时隐藏「我的商机」「我的订单」入口（微信审核期间） */
+    socialOn: true,
     /* 已领取的商机条数：只统计「我的商机」里已领取的，不含商机池中可领取的 */
     bizClaimed: 0,
     /* 推广中心入口：已开通时在菜单描述里展示累计收益，未开通 / 接口失败时保留「分享赚钱」 */
@@ -219,12 +295,15 @@ const BASE = {
   onLoad(options) {
     if (this.data.mode !== 'sub') return
     const q = options || {}
-    const view = String(q.view || '')
+    /* 「我的委托」已并入「我的订单」：旧入口 / 旧文案的落地页统一转到订单页 */
+    const rawView = String(q.view || '')
+    const view = rawView === 'agency' ? 'pay' : rawView
     const entry = QUICKS.concat(MENUS).filter((x) => x.k === view)[0]
-    const title = view === 'seller' ? '卖家主页' : (entry ? entry.n : '')
+    const title = entry ? entry.n : (VIEW_TITLES[view] || '')
     const sub = String(q.sub || '')
     const subTab = sub === 'demand' || sub === 'news' || sub === 'comment' ? sub : this.data.subTab
-    this.setData({ view: view || 'menu', viewTitle: title, subTab })
+    const orderTab = sub === 'agency' || rawView === 'agency' ? 'agency' : this.data.orderTab
+    this.setData({ view: view || 'menu', viewTitle: title, subTab, orderTab })
     if (title) wx.setNavigationBarTitle({ title })
     if (view === 'seller') this.applySeller(String(q.id || ''))
   },
@@ -237,7 +316,6 @@ const BASE = {
       this.loadCommentBadge()
       if (this.data.subTab === 'comment') this.loadComments()
     }
-    if (view === 'agency') this.loadAgencies()
     if (view === 'pay') {
       this.loadPayments()
       this.loadAgencies()
@@ -260,6 +338,8 @@ const BASE = {
   async onShow() {
     /* 只有需要身份的动作页才拦登录；「我的」允许未登录浏览，由页面内引导登录 */
     if (!gate(this.route || 'pages/mine/mine', this.options)) return
+    /* 社交总开关：关闭后隐藏「我的商机」「我的订单」入口 */
+    this.syncSocial()
     /* 「我的」首页可分享；二级视图（含身份材料）保持关闭，不能在这里把分享重新打开 */
     if (this.data.mode !== 'sub') guard.enableShare()
     if (this.data.mode === 'sub') {
@@ -291,7 +371,7 @@ const BASE = {
     this.loadPromoteEntry()
     /* 先切到「我发布的」再拉取：applyPub 按当前子类组装列表 */
     this.openPendingPub()
-    /* 委托刚提交：直接打开「我的委托」看进度 */
+    /* 委托刚提交：直接打开「我的订单 - 代采代售」看进度 */
     this.openPendingAgency()
     this.loadRemote()
     this.loadPayments()
@@ -338,14 +418,14 @@ const BASE = {
     /* 分享整个平台：用平台自己的卡片与文案 */
     const card = guard.shareCard('home', {}, '')
     return {
-      title: '算力聚合 · 优质货源与求购需求',
+      title: '算力聚合 · 找货、出货、求购一个平台全搞定',
       desc: card.desc,
       imageUrl: card.imageUrl,
       path: '/pages/home/home'
     }
   },
 
-  /* 云端：我发布的商品 / 需求 + 我的委托。本地快照先渲染，后台再刷新 */
+  /* 云端：我发布的商品 / 需求 + 我的委托（订单）。本地快照先渲染，后台再刷新 */
   async loadRemote() {
     let app = null
     try {
@@ -424,6 +504,8 @@ const BASE = {
     const status = row.status || ''
     /* 私密发布：后端下发 visibility=private（兼容「保密」文案）或 isPrivate 标记 */
     const isPrivate = row.isPrivate === true || row.visibility === 'private' || row.visibility === '保密'
+    /* 仅发商机池：内容不公开到首页与搜索，列表单独标注，避免误以为已公开上架 */
+    const poolOnly = !isPrivate && row.channel === 'pool'
     const reason = row.reviewReason || row.offlineReason || row.closeReason || row.reason || ''
     if (kind === 'news') {
       return {
@@ -449,8 +531,9 @@ const BASE = {
       kind: kind,
       status,
       isPrivate,
-      /* 私密发布＝匿名公开：我的发布列表统一标注「匿名」 */
-      visibilityLabel: isPrivate ? '匿名' : (row.visibilityLabel || '公开'),
+      poolOnly,
+      /* 私密发布：内容仅自己与平台可见，我的发布列表统一标注「私密」 */
+      visibilityLabel: isPrivate ? '私密' : (row.visibilityLabel || '公开'),
       statusCls: STATUS_STYLE[status] || '',
       published: fmtTime(row.createdAt),
       title: row.title || '',
@@ -492,7 +575,7 @@ const BASE = {
     }
   },
 
-  /* 我的委托：状态、服务费、到期时间与驳回 / 关闭原因都来自服务端 */
+  /* 代采 / 代售订单：状态、服务费、到期时间与驳回 / 关闭原因都来自服务端 */
   async loadAgencies() {
     try {
       const res = await request('user', 'agency.mine', { page: 1, limit: 30 }, { silent: true })
@@ -690,13 +773,19 @@ const BASE = {
 
   // 自定义 tabBar 的选中态由页面自己同步
   syncTabBar() {
-    if (typeof this.getTabBar === 'function' && this.getTabBar()) {
-      this.getTabBar().setData({ selected: 4 })
-    }
+    const bar = typeof this.getTabBar === 'function' ? this.getTabBar() : null
+    if (!bar) return
+    bar.setData({ selected: 4 })
+    /* 切 tab 时页面是复用的，tabBar 的 pageLifetimes.show 不一定触发，
+       这里主动同步一次社交开关，避免管理端打开后仍停在两项导航 */
+    if (typeof bar.syncSocial === 'function') bar.syncSocial()
+    /* 未读角标同理：各 tab 页各有一份 tabBar 实例，重读缓存，
+       避免消息页清掉的角标在切到「我的」后又用旧数字亮起来 */
+    if (typeof bar.refreshUnread === 'function') bar.refreshUnread()
   },
 
   /* 二级视图是整屏的，底部导航要让位：
-     菜单页显示，进任何二级视图（我的委托 / 我的资质 / 设置…）即隐藏，返回菜单再恢复 */
+     菜单页显示，进任何二级视图（我的订单 / 我的资质 / 设置…）即隐藏，返回菜单再恢复 */
   syncTabHidden() {
     const bar = typeof this.getTabBar === 'function' ? this.getTabBar() : null
     if (!bar) return
@@ -707,8 +796,9 @@ const BASE = {
   /* 菜单角标：各分类的条数，只做提示，不做统计排行。
      浏览记录 / 我的收藏 / 我的关注只是入口，不显示数字角标；
      「我发布的」显示收到的新回复数，「我的商机」只显示已领取条数（不含商机池可领取）。 */
-  buildMenu() {
+  buildMenu(on) {
     const d = this.data
+    const socialOn = on === undefined ? d.socialOn !== false : on
     const counts = {
       /* 收到的新回复：红点数字挂在「我发布的」入口上 */
       pub: d.commentUnread ? (d.commentUnread > 99 ? '99+' : d.commentUnread) : '',
@@ -718,17 +808,35 @@ const BASE = {
       follow: '',
       history: '',
       fav: '',
-      report: d.reportList.filter((r) => r.status === '待处理' || r.status === '处理中').length,
       set: ''
     }
     this.setData({
       quick: QUICKS.map((q) => Object.assign({}, q, { cnt: counts[q.k] || 0 })),
-      menu: MENUS.map((m) => Object.assign({}, m, {
-        cnt: counts[m.k],
-        /* 推广中心：已开通且有收益数据时展示累计收益，失败 / 未开通时保留「分享赚钱」 */
-        d: m.k === 'promote' && d.promoteActive ? '累计收益 ¥' + d.promoteEarning : m.d
-      }))
+      menu: MENUS
+        .filter((m) => socialOn || SOCIAL_ONLY_MENUS.indexOf(m.k) < 0)
+        .map((m) => Object.assign({}, m, {
+          cnt: counts[m.k],
+          /* 推广中心：已开通且有收益数据时展示累计收益，失败 / 未开通时保留「分享赚钱」 */
+          d: m.k === 'promote' && d.promoteActive ? '累计收益 ¥' + d.promoteEarning : m.d
+        }))
     })
+  },
+
+  /* 社交总开关：管理端关闭后隐藏商机 / 订单入口；还没拉到开关时先用缓存并补拉一次 */
+  syncSocial() {
+    const on = features.chatEnabled()
+    if (on !== this.data.socialOn) {
+      this.setData({ socialOn: on })
+      this.buildMenu(on)
+    }
+    /* 评论属于社交内容：总开关（含审核期隐藏）关闭时，「我的评论」入口与未读一起收起 */
+    if (!on && this.data.commentEnabled) {
+      this.setData({ commentEnabled: false, commentUnread: 0 })
+      this.buildMenu(on)
+    } else if (on && !this.data.commentEnabled) {
+      this.loadCommentBadge()
+    }
+    if (!features.loaded()) features.ensure().catch(() => {})
   },
 
   /**
@@ -949,8 +1057,13 @@ const BASE = {
 
   /* 我发出的评论与收到的回复：未读回复计入「我发布的」角标 */
   async loadComments() {
+    if (!this.data.commentEnabled) return
     try {
       const res = await request('user', 'news.comment.mine', {}, { silent: true })
+      if (res && res.enabled === false) {
+        this.setData({ commentEnabled: false, commentList: [], commentUnread: 0 })
+        return
+      }
       const commentList = ((res && res.items) || []).map((item) => ({
         id: item.id,
         content: item.content,
@@ -988,9 +1101,11 @@ const BASE = {
   async loadCommentBadge() {
     try {
       const res = await request('user', 'news.badge', {}, { silent: true })
-      const unread = Math.max(0, Number(res && res.replies) || 0)
-      if (unread !== this.data.commentUnread) {
-        this.setData({ commentUnread: unread })
+      /* 评论关闭或社交总开关关闭：隐藏「我的评论」页签，历史评论不可见 */
+      const enabled = !(res && res.enabled === false) && features.chatEnabled()
+      const unread = enabled ? Math.max(0, Number(res && res.replies) || 0) : 0
+      if (enabled !== this.data.commentEnabled || unread !== this.data.commentUnread) {
+        this.setData({ commentEnabled: enabled, commentUnread: unread })
         this.buildMenu()
       }
     } catch (err) {}
@@ -1070,7 +1185,7 @@ const BASE = {
     this.setData({ wmOn: prefs.watermarkOn() })
   },
 
-  /* 水印保护：默认开启，关闭后聊天与作品图片、视频不再叠加水印 */
+  /* 水印保护：默认开启，关闭后我发出的图片、视频不再叠加我的账号水印 */
   toggleWatermark() {
     const next = !this.data.wmOn
     prefs.setWatermark(next)
@@ -1081,8 +1196,8 @@ const BASE = {
   openView(e) {
     const view = e.currentTarget.dataset.k
     if (!view) return
-    /* 未登录：设置页可直接看，其余功能由用户点击后引导登录（不自动弹授权） */
-    if (this.data.user && this.data.user.guest && view !== 'set') {
+    /* 未登录：设置页与常见问题可直接看，其余功能由用户点击后引导登录（不自动弹授权） */
+    if (this.data.user && this.data.user.guest && view !== 'set' && view !== 'help') {
       this.goLogin()
       return
     }
@@ -1208,7 +1323,7 @@ const BASE = {
     wx.navigateTo({ url: '/pages/mine/sub/sub?view=pub&sub=' + tab })
   },
 
-  /* 委托刚提交：直接打开「我的委托」看进度 */
+  /* 委托刚提交：直接打开「我的订单 - 代采代售」看进度 */
   openPendingAgency() {
     let app = null
     try {
@@ -1216,7 +1331,7 @@ const BASE = {
     } catch (e) {}
     if (!app || !app.globalData || app.globalData.mineView !== 'agency') return
     app.globalData.mineView = ''
-    wx.navigateTo({ url: '/pages/mine/sub/sub?view=agency' })
+    wx.navigateTo({ url: '/pages/mine/sub/sub?view=pay&sub=agency' })
   },
 
   /* 点头像 / 昵称进入对方主页：只看公开发布的货源，看不到手机号与联系人 */
@@ -1303,6 +1418,7 @@ const BASE = {
     if (!sub) return
     /* 我的评论：列表来自云端，进入页签即拉取并清空回复角标 */
     if (sub === 'comment') {
+      if (!this.data.commentEnabled) return
       this.setData({ subTab: sub })
       this.loadComments()
       return
@@ -1341,9 +1457,30 @@ const BASE = {
     wx.navigateTo({ url: '/pages/privacy/privacy?type=privacy' })
   },
 
+  /* 黑名单管理：查看已拉黑的用户并移出（移出后恢复私信与内容可见） */
+  goBlocked() {
+    wx.navigateTo({ url: '/pages/blocked/blocked' })
+  },
+
   /* 关于平台：平台介绍 + 版本介绍 */
   goAbout() {
     wx.navigateTo({ url: '/pages/about/about' })
+  },
+
+  /* 帮助与反馈：常见问题解答；问题没解决时可继续提交意见反馈 */
+  openHelp() {
+    wx.navigateTo({ url: '/pages/mine/sub/sub?view=help' })
+  },
+
+  /* 展开 / 收起单条常见问题，同一时间只展开一条 */
+  toggleFaq(e) {
+    const i = Number(e.currentTarget.dataset.i)
+    this.setData({ openFaq: this.data.openFaq === i ? -1 : i })
+  },
+
+  /* 常见问题页底部：转到意见反馈表单 */
+  openFeedback() {
+    wx.navigateTo({ url: '/pages/mine/sub/sub?view=report' })
   },
 
   /* 账号注销：先查最新一条申请，待处理时展示撤回入口 */
@@ -1686,13 +1823,13 @@ const BASE = {
     wx.navigateTo({ url: '/pages/publish/publish?agency=' + (side === 'sell' ? 'sell' : 'buy') + '&agencyId=' + id })
   },
 
-  /* 删除被驳回的委托：软删除，删除后不再出现在我的委托 */
+  /* 删除被驳回的委托：软删除，删除后不再出现在「我的订单 - 代采代售」 */
   deleteAgency(e) {
     const id = String((e.currentTarget.dataset || {}).id || '')
     if (!id) return
     wx.showModal({
       title: '删除委托',
-      content: '删除后该委托不再出现在我的委托中，且无法恢复。',
+      content: '删除后该委托不再出现在「我的订单 - 代采代售」中，且无法恢复。',
       confirmText: '确认删除',
       success: async (res) => {
         if (!res.confirm) return

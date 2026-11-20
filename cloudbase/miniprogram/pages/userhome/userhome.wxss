@@ -223,12 +223,17 @@
 }
 
 /* 底部操作栏 */
-.uh-report {
+.uh-links {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 72rpx;
+  gap: 64rpx;
   margin-top: 24rpx;
+}
+.uh-report {
+  display: flex;
+  align-items: center;
+  height: 56rpx;
   font-size: 22rpx;
   color: var(--muted);
   text-decoration: underline;

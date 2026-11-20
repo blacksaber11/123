@@ -104,11 +104,11 @@
         <view class="pf-kinds">
           <view class="pf-kind {{exposure === 'open' ? 'on' : ''}} {{exposureReady ? '' : 'dim'}}" data-v="open" bindtap="pickExposure">
             <text class="k">公开主体信息</text>
-            <text class="d">{{exposureReady ? '展示主体名称与核验标识，可进入商机池' : '需先填写主体名称与职位 / 身份（营业执照可后补）'}}</text>
+            <text class="d">{{exposureReady ? '展示主体名称与核验标识，方便对方识别' : '需先填写主体名称与职位 / 身份（营业执照可后补）'}}</text>
           </view>
           <view class="pf-kind {{exposure === 'hidden' ? 'on' : ''}}" data-v="hidden" bindtap="pickExposure">
             <text class="k">不公开主体</text>
-            <text class="d">内容照常展示，但不显示主体，也不能进入商机池</text>
+            <text class="d">内容照常发布与匹配，只是不显示主体；对方仍可查看你的账号主页</text>
           </view>
         </view>
       </view>

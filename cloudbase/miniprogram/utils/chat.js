@@ -84,7 +84,8 @@ async function openChat(opts) {
     return false
   }
   if (!res || !res.chatReady || !res.threadId) {
-    wx.showToast({ title: '暂时无法直接对话，请稍后再试', icon: 'none' })
+    /* 拉黑关系由服务端返回中性回执，避免提示「已被拉黑」 */
+    wx.showToast({ title: (res && res.receipt) || '暂时无法直接对话，请稍后再试', icon: 'none' })
     return false
   }
 

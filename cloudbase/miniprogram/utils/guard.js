@@ -205,6 +205,8 @@ function shareTitle(kind, item) {
   if (d.city) bits.push(String(d.city))
   if (isDemand && d.budgetText) bits.push(d.budgetMode === 'nego' ? '价格现场沟通' : '预算 ' + d.budgetText)
   if (!isDemand && d.priceText) bits.push(d.priceMode === 'nego' ? '价格现场沟通' : d.priceText)
+  /* 末尾统一带钩子：接收方知道点进来还能看到更多，才愿意打开并登录 */
+  bits.push(isDemand ? '，登录直接对接' : '，登录看货主报价')
   return scrubContact(bits.join(' · '))
 }
 
@@ -260,6 +262,105 @@ function shareCard(kind, item, id) {
     desc: shareDesc(kind, d),
     imageUrl: poster || shareImage(kind),
     path: sharePath(kind, shareId || '')
+  }
+}
+
+/**
+ * 页面级分享兜底：没有写分享逻辑的页面，也能按「当前页」生成相关文案。
+ * 优先读页面 data 里的公开字段（型号 / 数量 / 城市 / 榜单类型），
+ * 让接收方看到的标题和这一页内容对得上；末尾统一带登录钩子。
+ */
+function pageRouteOf(page) {
+  return String((page && page.route) || '').replace(/^\//, '')
+}
+
+/* 商机条目的公开字段：类型 + 型号 + 数量 + 城市 */
+function itemBits(o) {
+  if (!o) return []
+  const qty = o.qty ? String(o.qty) + (o.unit || ' 台') : ''
+  return [o.kind, o.model, qty, o.city].filter(Boolean).map((x) => String(x))
+}
+
+function itemCard(item) {
+  const bits = itemBits(item)
+  if (!bits.length) {
+    return { title: '商机详情 · 真实买卖盘与对接条件，登录查看', imageUrl: SHARE_CARDS.biz }
+  }
+  return { title: bits.join(' · ') + '｜登录看对接条件', imageUrl: SHARE_CARDS.biz }
+}
+
+/* 各页面兜底卡片：key 为页面路由；未命中的页面统一用通用文案 */
+const PAGE_CARDS = {
+  'pages/home/home': (data) => {
+    const tab = String((data && data.tab) || 'sell')
+    const head = ((data && data.items) || [])[0] || {}
+    const model = [head.brand, head.model].filter(Boolean).join(' ')
+    const cover = /^https?:\/\//.test(String(head.cover || '')) ? String(head.cover) : ''
+    if (tab === 'buy') {
+      return {
+        title: model ? '同行正在求购 ' + model + '，登录抢占对接先机' : '同行正在集中求购，登录抢占对接先机',
+        imageUrl: cover || SHARE_CARDS.demand
+      }
+    }
+    if (tab === 'news') {
+      const headline = String(head.title || '')
+      return {
+        title: headline ? headline + '｜行情与避坑，点开看全文' : '算力行情速递 · 今日报价与交易避坑，点开就看',
+        imageUrl: cover || SHARE_CARDS.home
+      }
+    }
+    return {
+      title: model ? model + ' 现货在售，登录看货主实价' : '今日现货货源持续更新，登录看货主实价',
+      imageUrl: cover || SHARE_CARDS.product
+    }
+  },
+  'pages/market/market': () => ({
+    title: '今日实时货盘 · 在售与求购价差，登录看完整盘口',
+    imageUrl: SHARE_CARDS.biz
+  }),
+  'pages/board/board': (data) => {
+    const tab = String((data && data.tab) || 'demand')
+    const map = {
+      demand: '今日求购榜 · 哪些型号在集中抢货，登录看完整榜单',
+      hot: '今日火热榜 · 同行都在问哪些型号，登录看热度',
+      supply: '今日供给榜 · 在售货源与报价一览，登录看货主',
+      boards: '品类榜 · GPU / 内存 / CPU 在售与求购热度'
+    }
+    return { title: map[tab] || map.demand, imageUrl: SHARE_CARDS.biz }
+  },
+  'pages/bizdetail/bizdetail': (data) => itemCard(data && data.opp),
+  'pages/userhome/userhome': (data) => ({
+    title: (data && data.nick ? data.nick + ' 的算力主页 · ' : '算力同行主页 · ') + '登录看在售与求购',
+    imageUrl: SHARE_CARDS.home
+  }),
+  'pages/stock/stock': () => ({
+    title: '库存台账 · 型号 / 数量 / 成本一目了然',
+    imageUrl: SHARE_CARDS.product
+  }),
+  'pages/tools/tools': () => ({
+    title: '选型 / 功耗 / 回本一键测算，免登录直接算',
+    imageUrl: SHARE_CARDS.home
+  }),
+  'pages/promote/promote': () => ({
+    title: '推广大使招募 · 分享货源成交拿佣金',
+    imageUrl: SHARE_CARDS.home
+  }),
+  'pages/mine/mine': () => ({
+    title: '算力聚合 · 找货、出货、求购一个平台全搞定',
+    imageUrl: SHARE_CARDS.home
+  })
+}
+
+const PAGE_CARD_DESC = '登录后可查看实时报价、货主与需求方联系方式；货物与需求每日更新'
+
+/** 取当前页兜底分享卡片：标题永远带「登录 …」，引导接收方登录后继续看 */
+function pageShareCard(page) {
+  const build = PAGE_CARDS[pageRouteOf(page)]
+  const card = (build && build((page && page.data) || {})) || {}
+  return {
+    title: scrubContact(card.title || '算力聚合 · 一手货源与真实求购，登录查看联系方式'),
+    desc: scrubContact(card.desc || PAGE_CARD_DESC),
+    imageUrl: card.imageUrl || SHARE_CARDS.home
   }
 }
 
@@ -334,13 +435,13 @@ function timeText(d) {
 }
 
 /**
- * 账号标识：平台用户 id 尾 8 位 + 昵称。
+ * 账号标识：算力聚合 + 平台用户 id 尾 8 位 + 昵称。
  * uid 由服务端按 openid 派生且在平台内唯一，是定向追责的主键；昵称给人看。
  */
 function accountMark(user) {
   const u = user || readAccount() || {}
   const uid = String(u.uid || '')
-  const parts = ['ID ' + (uid ? uid.slice(-8) : '未登录')]
+  const parts = ['算力聚合', 'ID ' + (uid ? uid.slice(-8) : '未登录')]
   if (u.nick) parts.push(String(u.nick).slice(0, 10))
   return parts.join(' · ')
 }
@@ -375,6 +476,7 @@ module.exports = {
   shareImage,
   sharePath,
   shareCard,
+  pageShareCard,
   scrubContact,
   readAccount,
   accountMark,

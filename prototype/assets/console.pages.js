@@ -60,6 +60,20 @@
     return badge(text || '私密', 'danger')
   }
 
+  /* 发布方式有三种：普通发布（公开 + 自动匹配）/ 仅发商机池（不进首页，只走匹配）/ 私密发布（仅本人与平台可见） */
+  function isPoolOnlyItem(item) {
+    return !!item && !isPrivateItem(item) && item.channel === 'pool'
+  }
+
+  function poolTag() {
+    return badge('仅发商机池', 'ok')
+  }
+
+  function channelLabelOf(item) {
+    if (isPrivateItem(item)) return '私密发布'
+    return isPoolOnlyItem(item) ? '仅发商机池' : '普通发布'
+  }
+
   function wirePager(root, fn) {
     root.querySelectorAll('[data-pg]').forEach(function (btn) {
       btn.onclick = function () {
@@ -176,6 +190,268 @@
 
   function field(label, control) {
     return '<div class="field"><label>' + esc(label) + '</label>' + control + '</div>'
+  }
+
+  /* ---------------- 客服常用语 ---------------- */
+
+  /* 按工单阶段区分话术：客服在不同阶段看到对应常用语，消息中心等场景用通用话术 */
+  const QUICK_REPLY_DEFAULTS = {
+    default: [
+      '您好，平台客服已接入，请描述您的问题',
+      '收到，我们正在核实，请稍候',
+      '已为您登记，处理结果会在这里通知',
+      '麻烦提供商品编号或链接，方便定位',
+      '该内容已核实并处理，感谢您的反馈',
+      '请在消息中心查看最新进展',
+      '很抱歉给您带来不便，我们会尽快跟进',
+      '如需进一步了解，可随时在这里留言',
+      '您的咨询已转交专业顾问，请保持电话畅通',
+      '服务已完成，感谢您的评价'
+    ],
+    communicating: [
+      '您好，我是平台客服，已收到您的委托，请补充一下具体需求',
+      '请问数量、交期和预算范围大概是多少？',
+      '麻烦提供商品编号或链接，方便帮您匹配货源',
+      '已记下您的条件，我这边帮您匹配合适的对接方',
+      '收到，我们正在核实，请稍候',
+      '如需进一步了解，可随时在这里留言'
+    ],
+    terms: [
+      '双方条件已确认，我这边安排居间合同',
+      '请核对合同中的价格、数量与交期是否一致',
+      '确认无误后请上传签章版居间合同',
+      '合同归档后即可进入服务费环节'
+    ],
+    contract: [
+      '已收到居间合同，正在审核，请稍候',
+      '合同信息与委托条件不一致，请核对后重新上传',
+      '合同审核通过后会通知双方进入下一步'
+    ],
+    signed: [
+      '居间合同已归档，接下来由客服登记成交',
+      '请双方按合同约定完成交付，完成后告知我',
+      '成交登记后我会通知服务费金额'
+    ],
+    fee: [
+      '成交已登记，请在消息中心查看服务费金额',
+      '服务费到账后，工单即进入完成环节',
+      '如对服务费有疑问，可直接在这里留言'
+    ],
+    paid: [
+      '服务费已到账，感谢您的配合',
+      '请确认本次服务是否已完成，确认后工单归档',
+      '后续有新的采购 / 出售需求，随时找我'
+    ]
+  }
+
+  const QUICK_REPLY_STAGE_LABELS = {
+    default: '通用',
+    communicating: '沟通中',
+    terms: '条件已确认',
+    contract: '居间合同待审核',
+    signed: '居间合同已归档',
+    fee: '服务费待支付',
+    paid: '服务费已到账'
+  }
+
+  /* 客服的自定义差异（新增 / 删除）按阶段存在本机浏览器，默认话术更新后仍能沿用 */
+  const QUICK_REPLY_STORE_KEY = 'hx_quick_replies_v1'
+
+  function quickReplyStore() {
+    try {
+      const raw = localStorage.getItem(QUICK_REPLY_STORE_KEY)
+      const obj = raw ? JSON.parse(raw) : {}
+      return obj && typeof obj === 'object' ? obj : {}
+    } catch (err) { return {} }
+  }
+
+  function saveQuickReplyStore(next) {
+    try { localStorage.setItem(QUICK_REPLY_STORE_KEY, JSON.stringify(next)) } catch (err) { /* 隐私模式写入失败时仅当次生效 */ }
+  }
+
+  function quickReplyStageOf(stage) {
+    return QUICK_REPLY_DEFAULTS[stage] ? stage : 'default'
+  }
+
+  function quickReplyDefaultsOf(stage) {
+    return QUICK_REPLY_DEFAULTS[quickReplyStageOf(stage)]
+  }
+
+  function quickReplyList(stage) {
+    const key = quickReplyStageOf(stage)
+    const diff = quickReplyStore()[key] || {}
+    const removed = Array.isArray(diff.removed) ? diff.removed : []
+    const added = Array.isArray(diff.added) ? diff.added : []
+    return quickReplyDefaultsOf(key).filter(function (text) { return removed.indexOf(text) < 0 })
+      .concat(added.filter(function (text) { return quickReplyDefaultsOf(key).indexOf(text) < 0 }))
+  }
+
+  function quickReplyAddText(stage, text) {
+    const key = quickReplyStageOf(stage)
+    const value = String(text || '').trim()
+    if (!value) return false
+    if (quickReplyList(key).indexOf(value) >= 0) return false
+    const store = quickReplyStore()
+    const diff = store[key] || {}
+    diff.added = (Array.isArray(diff.added) ? diff.added : []).concat([value]).slice(0, 40)
+    store[key] = diff
+    saveQuickReplyStore(store)
+    return true
+  }
+
+  function quickReplyRemoveText(stage, text) {
+    const key = quickReplyStageOf(stage)
+    const store = quickReplyStore()
+    const diff = store[key] || {}
+    if (quickReplyDefaultsOf(key).indexOf(text) >= 0) {
+      diff.removed = (Array.isArray(diff.removed) ? diff.removed : []).concat([text])
+    } else {
+      diff.added = (Array.isArray(diff.added) ? diff.added : []).filter(function (t) { return t !== text })
+    }
+    store[key] = diff
+    saveQuickReplyStore(store)
+  }
+
+  function quickReplyReset(stage) {
+    const key = quickReplyStageOf(stage)
+    const store = quickReplyStore()
+    delete store[key]
+    saveQuickReplyStore(store)
+  }
+
+  function quickReplyInner(stage) {
+    const key = quickReplyStageOf(stage)
+    return '<span class="qr-label">常用语</span>' +
+      quickReplyList(key).map(function (text) {
+        return '<button type="button" class="qr-chip" data-quick="' + esc(text) + '">' + esc(text) + '</button>'
+      }).join('') +
+      '<button type="button" class="qr-chip qr-manage" data-quick-edit="1" ' +
+      'title="点击后可以编辑常用语：添加或者删除">＋ 编辑常用语</button>'
+  }
+
+  /**
+   * 常用语条：按阶段取话术，末尾「编辑常用语」可增删。
+   * 数据只做展示，点击行为由 wireQuickReplies 绑定。
+   */
+  function quickReplyBar(stage) {
+    const key = quickReplyStageOf(stage)
+    return '<div class="quick-replies" data-quick-stage="' + esc(key) + '">' + quickReplyInner(key) + '</div>'
+  }
+
+  /** 点击常用语：插到光标处；未聚焦时追加，不覆盖客服已经写好的内容 */
+  function insertQuickReply(box, text) {
+    if (!box) return
+    const value = box.value || ''
+    const focused = document.activeElement === box
+    const start = focused ? box.selectionStart : null
+    const end = focused ? box.selectionEnd : null
+    let next
+    let caret
+    if (focused && start != null && end != null) {
+      next = value.slice(0, start) + text + value.slice(end)
+      caret = start + text.length
+    } else if (value.trim()) {
+      next = value.replace(/\s+$/, '') + '\n' + text
+      caret = next.length
+    } else {
+      next = text
+      caret = text.length
+    }
+    box.value = next
+    box.focus()
+    try { box.setSelectionRange(caret, caret) } catch (err) { /* 部分浏览器不支持 setSelectionRange */ }
+  }
+
+  /** 编辑后刷新页面上同阶段的常用语条；输入框引用挂在条上，重绘不丢焦点目标 */
+  function refreshQuickReplyBars(stage) {
+    const key = quickReplyStageOf(stage)
+    document.querySelectorAll('.quick-replies[data-quick-stage="' + key + '"]').forEach(function (bar) {
+      const box = bar._quickBox || null
+      bar.innerHTML = quickReplyInner(key)
+      wireQuickReplyBar(bar, box)
+    })
+  }
+
+  function wireQuickReplyBar(bar, box) {
+    if (!bar) return
+    if (box) bar._quickBox = box
+    const stage = quickReplyStageOf(bar.getAttribute('data-quick-stage') || 'default')
+    bar.querySelectorAll('.qr-chip[data-quick]').forEach(function (chip) {
+      if (chip.getAttribute('data-quick-bound') === '1') return
+      chip.setAttribute('data-quick-bound', '1')
+      chip.onclick = function () { insertQuickReply(bar._quickBox, chip.getAttribute('data-quick') || '') }
+    })
+    const edit = bar.querySelector('[data-quick-edit]')
+    if (edit && edit.getAttribute('data-quick-bound') !== '1') {
+      edit.setAttribute('data-quick-bound', '1')
+      edit.onclick = function () { openQuickReplyEditor(stage) }
+    }
+  }
+
+  function quickReplyEditorList(stage) {
+    const list = quickReplyList(stage)
+    if (!list.length) return '<div class="small" style="color:var(--muted-2);padding:8px 0">该阶段暂无常用语，可在下方添加</div>'
+    return list.map(function (text) {
+      return '<div class="setting-row" style="align-items:center;gap:8px">' +
+        '<div class="info"><div class="small" style="line-height:1.6;color:var(--ink-2)">' + esc(text) + '</div></div>' +
+        '<button class="btn xs" data-qr-del="' + esc(text) + '">删除</button></div>'
+    }).join('')
+  }
+
+  /** 常用语编辑弹窗：添加 / 删除当前阶段话术，可恢复默认 */
+  function openQuickReplyEditor(stage) {
+    const key = quickReplyStageOf(stage)
+    const label = QUICK_REPLY_STAGE_LABELS[key] || '通用'
+    const root = modal({
+      title: '编辑常用语',
+      sub: '当前阶段：' + label + ' · 仅影响你自己看到的常用语',
+      body: '<div id="qr-list" style="max-height:320px;overflow:auto">' + quickReplyEditorList(key) + '</div>' +
+        '<div style="margin-top:14px">' +
+        '<input id="qr-input" maxlength="80" placeholder="输入新的常用语，如：已为您安排专属顾问，请保持电话畅通">' +
+        '</div>' +
+        '<div class="small" style="margin-top:8px;color:var(--muted-2);line-height:1.7">' +
+        '删除后点「恢复默认」可还原该阶段默认话术；常用语保存在当前浏览器，换设备需重新设置。</div>',
+      footer: '<button class="btn" data-close="1">关闭</button>' +
+        '<button class="btn" id="qr-reset">恢复默认</button>' +
+        '<button class="btn primary" id="qr-add">添加常用语</button>'
+    })
+    if (!root) return
+    const listBox = root.body.querySelector('#qr-list')
+    const input = root.body.querySelector('#qr-input')
+    function repaint() {
+      listBox.innerHTML = quickReplyEditorList(key)
+      bindList()
+      refreshQuickReplyBars(key)
+    }
+    function bindList() {
+      listBox.querySelectorAll('[data-qr-del]').forEach(function (btn) {
+        btn.onclick = function () {
+          quickReplyRemoveText(key, btn.getAttribute('data-qr-del'))
+          repaint()
+        }
+      })
+    }
+    bindList()
+    root.foot.querySelector('#qr-add').onclick = function () {
+      if (!quickReplyAddText(key, input.value)) {
+        toast(input.value.trim() ? '该常用语已存在' : '请输入新的常用语', 'err')
+        return
+      }
+      input.value = ''
+      input.focus()
+      repaint()
+    }
+    root.foot.querySelector('#qr-reset').onclick = function () {
+      quickReplyReset(key)
+      repaint()
+    }
+  }
+
+  /** 绑定常用语条：阶段由 quickReplyBar(stage) 写在条上，未识别的阶段回落到通用话术 */
+  function wireQuickReplies(root, targetSel) {
+    if (!root) return
+    const box = root.querySelector(targetSel)
+    root.querySelectorAll('.quick-replies').forEach(function (bar) { wireQuickReplyBar(bar, box) })
   }
 
   /* ---------------- 设置与套餐 ---------------- */
@@ -375,6 +651,30 @@
     ])
   }
 
+  /* 停留时长文案：秒 / 分 / 小时，看板按会话均值展示 */
+  function durationText(ms) {
+    const total = Math.max(0, Math.round((Number(ms) || 0) / 1000))
+    if (total < 60) return total + ' 秒'
+    const m = Math.floor(total / 60)
+    if (m < 60) return m + ' 分'
+    return Math.floor(m / 60) + ' 小时 ' + (m % 60) + ' 分'
+  }
+
+  /* 宏观经营概览：此刻盘面 + 累计营收，放在看板最上方 */
+  function macroKpis(macro) {
+    const o = macro.online || {}
+    const st = macro.stay || {}
+    const rev = macro.revenue || {}
+    const foot = function (text) { return '<span class="small" style="color:var(--muted-2)">' + text + '</span>' }
+    return '<div class="grid g5">' +
+      kpi('实时在线', num(o.count), foot('近 5 分钟有心跳')) +
+      kpi('在线比例', pct(o.rate), foot('注册 ' + compact(o.usersTotal) + ' 人')) +
+      kpi('平均停留', durationText(st.avgMs), foot('今日 ' + num(st.sessions) + ' 段会话')) +
+      kpi('今日营收', money(rev.today, 0), foot('近 30 天 ' + money(rev.last30, 0))) +
+      kpi('累计营收', money(rev.total, 0), foot('客单价 ' + money(rev.avgOrder, 0) + ' · ' + num(rev.orders) + ' 单')) +
+      '</div>'
+  }
+
   Pages.dashboard = async function (view) {
     const results = await Promise.all([
       api('stats.overview', {}),
@@ -388,14 +688,19 @@
     const hot = results[2] || {}
     const boards = results[3] || {}
     const risks = results[4] || {}
+    /* 宏观概览单独取：自定义角色没有该动作时降级为 0，不影响整页其他模块 */
+    let macro = {}
+    try { macro = await api('stats.macro', {}) } catch (err) { macro = {} }
     let days = 30
     let metric = 'business'
     let trend = await api('stats.trend', { days: days })
 
-    view.innerHTML = pageHead('数据看板', '活跃、供需、咨询、成交与营收的增长全景',
+    view.innerHTML = pageHead('数据看板', '实时在线、停留、供需、成交与营收的全局盘面',
       '<div class="seg" id="d-days">' + [7, 30, 90].map(function (d) {
         return '<button data-days="' + d + '"' + (d === 30 ? ' class="on"' : '') + '>近 ' + d + ' 天</button>'
       }).join('') + '</div>') +
+      '<div id="d-macro">' + macroKpis(macro) + '</div>' +
+      '<div class="small" style="color:var(--muted-2);margin:6px 0 16px">在线与停留数据每 30 秒自动刷新</div>' +
       '<div id="d-kpis">' + trendKpis(trend) + '</div>' +
       '<div class="grid g-side" style="margin-top:16px">' +
       '<section class="card"><div class="card-head"><h3>业务趋势</h3><div class="grow"></div>' +
@@ -414,7 +719,7 @@
       ])) +
       '</div></div>' +
       '<div class="grid g2" style="margin-top:16px">' +
-      card('月度营收', '<div id="d-rev"></div>') +
+      card('营收趋势（近 6 个月）', '<div id="d-rev"></div><div id="d-rev-mix" style="margin-top:12px"></div>') +
       card('风险待处理', '<div id="d-risk"></div>', '<button class="btn xs" data-go="risk">查看全部</button>') +
       '</div>' +
       '<div class="grid g2" style="margin-top:16px">' +
@@ -455,6 +760,18 @@
       view.querySelector('#d-rev').innerHTML = barChart(months.map(function (m) {
         return { label: String(m.month || m.label || ''), value: Number(m.revenue) || 0, color: '#4f46e5' }
       }), { height: 214, format: function (v) { return money(v, 0) } })
+    }
+
+    /* 营收构成：会员续费 + 委托服务费，与顶部今日 / 累计营收同一口径 */
+    function drawRevMix() {
+      const rev = macro.revenue || {}
+      view.querySelector('#d-rev-mix').innerHTML = kvList([
+        ['会员续费', money(rev.member, 0) + ' · ' + num(rev.memberOrders) + ' 单'],
+        ['委托服务费', money(rev.fee, 0) + ' · ' + num(rev.feeCount) + ' 单'],
+        ['本月营收', money(rev.month, 0)],
+        ['付费会员', num(rev.payers) + ' 人'],
+        ['有效会员', num(rev.activeMembers) + ' 人']
+      ])
     }
 
     function drawRisk() {
@@ -498,10 +815,23 @@
     drawTrend()
     drawFunnel()
     drawRevenue()
+    drawRevMix()
     drawRisk()
     drawHotSearch()
     drawHotList()
     wireGo(view)
+
+    /* 在线人数 / 停留 / 营收按 30 秒刷新；只重画宏观块，避免整页跳动 */
+    if (window.__pageTimer) { clearInterval(window.__pageTimer); window.__pageTimer = null }
+    window.__pageTimer = setInterval(async function () {
+      const box = view.querySelector('#d-macro')
+      if (!box) { clearInterval(window.__pageTimer); window.__pageTimer = null; return }
+      try {
+        macro = await api('stats.macro', {})
+        box.innerHTML = macroKpis(macro)
+        drawRevMix()
+      } catch (err) { /* 单次刷新失败保留上一次数据，等下一轮 */ }
+    }, 30000)
 
     view.querySelectorAll('#d-days [data-days]').forEach(function (btn) {
       btn.onclick = async function () {
@@ -535,38 +865,47 @@
       (goKey ? '<button class="btn xs ghost" data-go="' + goKey + '">' + esc(goText || '查看全部') + '</button>' : '') + '</div>'
   }
 
-  /* 代采 / 代售工单：提交 → 平台审核通过即上架 → 平台确认成交（委托方只收通知）
-     → 服务费到账 → 客服点「确认完成」，委托与工单同时归档 */
-  const AGENCY_ORDER_TABS = [
-    ['待审核', '待审核'],
-    ['已上架', '已上架'],
-    ['已锁定', '已锁定（唯一对接方）'],
-    ['待确认成交', '待确认成交（旧）'],
-    ['已成交', '已成交'],
-    ['已完成', '已完成'],
-    ['已驳回', '已驳回'],
-    ['', '全部工单']
-  ]
+  /* 委托状态文案：只保留真正需要跟进的阶段，旧状态合并到同一口径
+     待确认 → 待审核；已通过 / 已锁定 → 对接中；待确认成交 → 交易中。
+     原始 status 仍保留给操作判断，这里只影响展示。 */
+  const AGENCY_STATUS_DISPLAY = {
+    待审核: '待审核',
+    待确认: '待审核',
+    已通过: '对接中',
+    已上架: '对接中',
+    已锁定: '对接中',
+    待确认成交: '交易中',
+    已成交: '交易中',
+    已完成: '已完成',
+    已关闭: '已关闭',
+    已驳回: '已驳回'
+  }
 
-  /* 委托状态文案：DEAL_PENDING 是取消「委托方确认」之前的旧状态，只可能出现在历史数据里；
-     到期关闭的委托显示「已到期」 */
   function agencyStatusText(itemOrStatus) {
     if (itemOrStatus && typeof itemOrStatus === 'object') {
       if (agencyExpired(itemOrStatus)) return '已到期'
-      const raw = String(itemOrStatus.statusText || itemOrStatus.status || '')
-      if (raw === '待确认成交') return '待确认成交（旧）'
-      return raw
+      const raw = String(itemOrStatus.status || itemOrStatus.statusText || '')
+      return AGENCY_STATUS_DISPLAY[raw] || raw
     }
     const raw = String(itemOrStatus || '')
-    return raw === '待确认成交' ? '待确认成交（旧）' : raw
+    return AGENCY_STATUS_DISPLAY[raw] || raw
   }
 
-  /* 旧数据兼容：DEAL_PENDING（待确认成交）只可能来自升级前的委托，管理端仍可补确认成交 */
+  /* 旧数据兼容：DEAL_PENDING（待确认成交）只可能来自升级前的委托，
+     现在不能再直接确认成交，只能在工单中心按流程登记成交 */
   function agencyDealPending(item) {
     if (!item) return false
     if (item.dealPending === true) return true
     if (String(item.status || '') === '待确认成交') return true
     return /待确认成交|待成交确认|dealPending/i.test(String(item.statusText || ''))
+  }
+
+  /* 成交只能走工单流程：有工单时直接带去工单中心，没有工单则等用户发起咨询 */
+  function agencyLeadButton(item) {
+    if (item && item.consultLeadId) {
+      return '<button class="btn primary" data-act="ticket">去工单中心登记成交</button>'
+    }
+    return '<button class="btn" disabled title="该委托还没有咨询工单，需用户发起咨询后才能走成交流程">等待用户发起咨询</button>'
   }
 
   /* 是否已到期：到期后状态为已关闭，后端用 closeReason「已到截止时间」与 expired 标记区分 */
@@ -580,14 +919,14 @@
   function agencyOrderBadge(itemOrStatus) {
     const text = agencyStatusText(itemOrStatus)
     let tone = {
-      待审核: 'warn', 待确认: 'warn', '待确认成交（旧）': 'warn', 待确认成交: 'warn',
-      已通过: 'info', 已上架: 'ok', 已锁定: 'info', 已成交: 'ok', 已完成: 'ok', 已到期: 'danger', 已驳回: 'danger', 已关闭: ''
+      待审核: 'warn', 对接中: 'ok', 交易中: 'info', 已完成: 'ok',
+      已到期: 'danger', 已驳回: 'danger', 已关闭: ''
     }[text]
     if (!tone) {
       if (/已到期|驳回|关闭/.test(text)) tone = 'danger'
       else if (/待/.test(text)) tone = 'warn'
-      else if (/已完成|已成交|已上架/.test(text)) tone = 'ok'
-      else if (/已通过|已锁定/.test(text)) tone = 'info'
+      else if (/已完成|对接中/.test(text)) tone = 'ok'
+      else if (/交易中/.test(text)) tone = 'info'
     }
     return badge(text, tone || '', true)
   }
@@ -703,7 +1042,7 @@
   }
 
   /** 平台给用户发图片 / 视频：先校验大小再上传，成功后复用 msg.reply 发送并刷新会话 */
-  async function mediaSendToUser(uid, kind, file) {
+  async function mediaSendToUser(uid, kind, file, threadId) {
     if (!file) return
     const invalid = chatMediaError(file, kind)
     if (invalid) return toast(invalid, 'err')
@@ -711,6 +1050,8 @@
     try {
       const url = await mediaUpload(file)
       const payload = { uid: uid, kind: kind }
+      /* 咨询会话必须带 threadId，后端据此校验领取归属 */
+      if (threadId) payload.threadId = threadId
       payload[kind] = url
       await api('msg.reply', payload)
       toast(kind === 'image' ? '图片已发送' : '视频已发送')
@@ -915,6 +1256,7 @@
         '<div class="chat-stream agency-chat-stream" id="o-chat-stream"><div class="agency-chat-empty">暂无咨询对话，输入消息或拖入图片 / 视频即可发起对话</div></div>' +
         '<div class="agency-chat-drop" id="o-chat-drop">拖拽图片 / 视频到这里，松手加入待发送</div>' +
         '<div class="chat-preview" id="o-chat-preview" hidden></div>' +
+        quickReplyBar() +
         '<textarea id="o-chat-input" rows="3" maxlength="500" placeholder="回复 ' + esc(item.ownerNick || '用户') + '（最多 500 字）"></textarea>' +
         '<input type="file" id="o-chat-img-file" accept="image/jpeg,image/png,image/webp" multiple hidden>' +
         '<input type="file" id="o-chat-video-file" accept="video/mp4,video/quicktime,video/x-m4v,.mp4,.mov,.m4v" multiple hidden>' +
@@ -934,45 +1276,31 @@
       (item.status === '待审核'
         ? '请按左图右文逐项核对：材料与填写内容一致即点「通过」，通过后委托立即上架，无需再确认付款；有问题的点「打回」并填写理由，理由会通过站内信发送给用户。'
         : agencyDealPending(item)
-          ? '这是升级前的「待确认成交」旧数据：在下方点「确认成交」即可由平台直接确认，委托方只收成交通知。'
+          ? '这是升级前的「待确认成交」旧数据，不能再直接确认成交；请到工单中心按「合同归档 → 登记成交」完成，若该委托已无工单，请联系技术处理。'
           : agencyExpired(item)
             ? '该委托已到期，不再展示；如需继续合作请与委托方确认后重新发布。'
             : item.status === '已锁定'
-              ? '唯一对接方已确定（居间合同上传后、审核前手动锁定）：委托已从商机池下架，同委托其他对接方的工单已结束并通知「已售出」。谈定后在这里点「确认成交」登记成交金额，到账后客服点「确认完成」结束交易。'
-              : '审核通过即自动上架，平台等待用户发起咨询；谈定后点「确认成交」登记成交金额，委托方按账单支付服务费，到账后客服点「确认完成」结束交易。') +
+              ? '唯一对接方已确定（居间合同上传后、审核前手动锁定）：委托已从商机池下架，同委托其他对接方的工单已结束并通知「已售出」。成交需到工单中心由客服按流程登记，委托方只收通知。'
+              : '审核通过即自动上架，平台等待用户发起咨询。成交必须走工单流程：确定唯一对接方 → 居间合同归档 → 客服登记成交 → 服务费到账 → 确认完成；平台不提供直接成交入口。') +
       '查看完整联系方式会记入操作日志。</div>'
 
     let foot = '<button class="btn" data-close="1">关闭</button>'
     /* 平台修改 / 下架：仅管理员可用，审核通过后委托方不能再随意改，改由平台统一维护 */
     const canManage = C.can('agency.update') && ['待审核', '待确认', '已通过', '已上架'].indexOf(item.status) >= 0
-    if (item.status === '待审核') {
+    if (item.status === '待审核' || item.status === '待确认') {
       foot += '<button class="btn danger" data-act="reject">打回</button><button class="btn primary" data-act="approve">通过</button>'
     } else if (agencyDealPending(item)) {
-      /* 旧数据：停在「待确认成交」的委托由平台直接补确认成交 */
+      /* 旧数据：不再直接确认成交，转到工单中心按流程完成 */
       foot += '<button class="btn" data-act="contact">查看联系方式</button>'
-      if (C.can('agency.close')) {
-        foot += '<button class="btn primary" data-act="deal">确认成交</button>'
-      }
+      foot += agencyLeadButton(item)
     } else if (item.status === '已上架' || item.status === '已通过' || item.status === '已锁定') {
-      /* 已上架 / 已锁定（合同已签）：平台直接确认成交，由 agency.close 处理，仅管理员可用 */
+      /* 成交必须走工单：确定对接方 → 合同归档 → 客服登记成交，不提供直接成交入口 */
       foot += '<button class="btn" data-act="contact">查看联系方式</button>'
-      if (C.can('agency.close')) {
-        foot += '<button class="btn primary" data-act="deal">确认成交</button>'
-      }
+      foot += agencyLeadButton(item)
     } else if (item.status === '已成交') {
-      /* 已成交：服务费到账后由平台确认完成；咨询工单来源的也可在工单里完成 */
+      /* 已成交：服务费到账与完成确认都在工单中心闭环，委托详情不再提供手动完成 */
       foot += '<button class="btn" data-act="contact">查看联系方式</button>'
-      if (C.can('agency.complete')) {
-        if (item.feeStatus === 'paid' || item.feeStatus === 'unbilled') {
-          foot += '<button class="btn primary" data-act="complete">确认完成</button>'
-        } else {
-          foot += '<button class="btn" disabled title="服务费到账后才能确认完成">等待服务费到账</button>'
-        }
-      }
     } else if (item.status === '已完成') {
-      foot += '<button class="btn" data-act="contact">查看联系方式</button>'
-    } else if (item.status === '待确认') {
-      /* 历史待确认工单：新流程不再走「确认付款并上架」 */
       foot += '<button class="btn" data-act="contact">查看联系方式</button>'
     }
     if (item.status !== '已关闭' && item.status !== '已驳回') {
@@ -1058,7 +1386,7 @@
             ['设备型号', esc(item.item || '')],
             ['需求数量', num(item.qty) + ' 台'],
             ['预算总额', money(item.amount)]
-          ]) + '<div class="small" style="margin-top:12px;color:var(--muted-2);line-height:1.8">联系时请确认型号、数量、交付城市与付款方式；谈定后回到工单点「确认成交」，由平台直接确认并通知委托方支付服务费。</div>',
+          ]) + '<div class="small" style="margin-top:12px;color:var(--muted-2);line-height:1.8">联系时请确认型号、数量、交付城市与付款方式；谈定后到工单中心按流程登记成交，由平台确认并通知委托方支付服务费。</div>',
           footer: '<button class="btn primary" data-close="1">已记录</button>'
         })
       } catch (err) {
@@ -1066,55 +1394,11 @@
       }
     }
 
-    /* 确认成交：平台（管理员）直接确认，不经委托方；确认后按成交金额生成服务费账单并通知委托方 */
-    function deal() {
-      const m = modal({
-        title: '确认成交',
-        sub: '确认后按成交金额生成服务费账单，委托方只收通知，无需再确认',
-        body: '<div class="field"><label>成交金额（元）</label>' +
-          '<input id="o-deal-amount" type="number" min="0" step="0.01" placeholder="例如：' + (Number(item.amount) || 0) + '" value="' +
-          (Number(item.dealAmount) || Number(item.amount) || 0) + '"></div>' +
-          '<div class="small" style="margin-top:8px;color:var(--muted-2)">填写本次实际成交金额。确认后服务费按该金额计提并生成账单，委托方在「我的缴费」支付；财务确认到账后，客服在工单点「确认完成」结束交易。</div>',
-        footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="o-deal-ok">确认成交</button>'
-      })
-      if (!m) return
-      m.foot.querySelector('#o-deal-ok').onclick = async function () {
-        const amount = Number(m.body.querySelector('#o-deal-amount').value)
-        if (!(amount > 0)) return toast('请填写成交金额', 'err')
-        this.disabled = true
-        try {
-          await api('agency.close', { id: item.id, dealt: true, dealAmount: amount })
-          closeModal()
-          done('已确认成交，服务费账单已生成并通知委托方')
-        } catch (err) {
-          toast(err.message, 'err')
-          this.disabled = false
-        }
-      }
-    }
-
-    /* 确认完成（自助委托）：服务费到账后结束交易；有工单的委托在工单里完成后这里会同步为已完成 */
-    function completeAgency() {
-      const m = modal({
-        title: '确认完成',
-        sub: '服务费已到账，确认后委托归档，交易结束',
-        body: '<div class="small" style="line-height:1.9">成交金额：' + esc(item.dealAmountText || '—') +
-          '<br>服务费状态：' + esc(item.feeStatusText || '—') +
-          '<br>确认后委托状态变为「已完成」，委托方会收到完成通知；该操作不可撤销。</div>',
-        footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="o-complete-ok">确认完成</button>'
-      })
-      if (!m) return
-      m.foot.querySelector('#o-complete-ok').onclick = async function () {
-        this.disabled = true
-        try {
-          await api('agency.complete', { id: item.id })
-          closeModal()
-          done('已确认完成，本次委托结束')
-        } catch (err) {
-          toast(err.message, 'err')
-          this.disabled = false
-        }
-      }
+    /* 成交不再由委托页直接确认：跳转到工单中心，按「合同归档 → 登记成交」推进 */
+    function ticket() {
+      if (!item.consultLeadId) return toast('该委托还没有咨询工单', 'err')
+      closeDrawer()
+      C.navigate('consult', { leadId: item.consultLeadId })
     }
 
     /* 委托对话：走委托专属的 agency.chats / agency.reply（targetType=agency），
@@ -1134,6 +1418,9 @@
     const chatInput = root.body.querySelector('#o-chat-input')
     const chatCount = root.body.querySelector('#o-chat-count')
     const chatSendBtn = root.body.querySelector('#o-chat-send')
+
+    /* 常用语：点一下填入回复框，客服可先改再发 */
+    wireQuickReplies(root.body, '#o-chat-input')
 
     function chatMessageHtml(m) {
       const fromStaff = m.from === 'staff' || m.from === 'admin'
@@ -1377,36 +1664,405 @@
       if (chatInput) setTimeout(function () { chatInput.focus() }, 220)
     }
 
-    /* 平台修改：审核通过后用户不能再随意改，日常内容维护由平台直接完成并记录日志 */
+    /* 平台修改：完整复刻小程序发布委托的表单（型号库搜索 + 条件 chips + 流程步骤编辑），
+       委托人主体信息 / 联系人 / 授权书与证明材料不展示、不可修改；保存后立即生效并记入操作日志 */
     function editAgency() {
+      const termList = ['1 个月', '3 个月', '6 个月', '12 个月', '长期', '可议']
+      const currencyList = [
+        { value: 'CNY', label: '人民币（¥）' }, { value: 'USD', label: '美元（$）' },
+        { value: 'USDT', label: 'USDT（₮）' }, { value: 'HKD', label: '港币（HK$）' },
+        { value: 'EUR', label: '欧元（€）' }, { value: 'GBP', label: '英镑（£）' },
+        { value: 'JPY', label: '日元（¥）' }, { value: 'SGD', label: '新加坡元（S$）' },
+        { value: 'AED', label: '迪拉姆（د.إ）' }, { value: 'BTC', label: '比特币（₿）' }
+      ]
+      /* 与小程序发布页同源：条件预设、侧别文案、租期档位 */
+      const COND_PRESETS = {
+        seller: ['接受同台互验', '接受先验资再看货', '可提供采购意向函', '接受指定交易地点', '强主体（国企 / 央企）'],
+        buyer: ['接受同台互验', '提供设备实拍图片', '提供设备实拍视频', '支持资金监管账户'],
+        renter: ['接受同台互验', '接受先验资再看货', '可提供采购意向函', '强主体（国企 / 央企）',
+          '接受签署租赁意向协议', '接受按期预付租金', '用途仅限训练 / 推理等合规业务', '不得转租或二次转让'],
+        lessor: ['提供设备实拍图片', '提供设备实拍视频', '明确租金 / 租期 / 押金条款', '接受同台互验', '支持租金资金监管账户'],
+        nego: ['价格可议', '交付周期可放宽', '起订量可下调', '接受二手 / 拆机件',
+          '可接受先付款后发货', '可接受分批交付', '可提供验资视频', '可接受指定时间验收'],
+        negoRent: ['租金可议', '租期可议', '押金可减免', '可提供试租期', '可给长租折扣',
+          '可接受预付折扣', '可接受到期顺延', '可接受分批付款']
+      }
+      const SIDE_TITLE = {
+        seller: { must: '买家必须满足', nego: '可与买家协商' },
+        buyer: { must: '供给方必须满足', nego: '可与供给方协商' },
+        renter: { must: '承租方必须满足', nego: '可与承租方协商' },
+        lessor: { must: '出租方必须满足', nego: '可与出租方协商' }
+      }
+      const modeOptionsOf = function (side) {
+        return side === 'buy' ? ['求购', '租赁'] : ['出售', '出租']
+      }
+      const rentalOf = function (mode) { return mode === '出租' || mode === '租赁' }
+      const sideOf = function (side, rental) {
+        return side === 'buy' ? (rental ? 'lessor' : 'buyer') : (rental ? 'renter' : 'seller')
+      }
+      const mergeCond = function (presets, current) {
+        const out = (presets || []).map(function (v) {
+          const hit = current.filter(function (o) { return o.v === v })[0]
+          return { v: v, on: !!hit && hit.on }
+        })
+        current.forEach(function (o) {
+          if (!out.some(function (x) { return x.v === o.v })) out.push({ v: o.v, on: o.on })
+        })
+        return out
+      }
+      const condFrom = function (list) {
+        return (Array.isArray(list) ? list : []).map(function (v) { return { v: String(v), on: true } })
+      }
+      /* 发布时 flow 以「步骤名：说明」拼接，这里按同一个分隔符还原成可编辑的步骤 */
+      const flowFrom = function (list) {
+        return (Array.isArray(list) ? list : []).map(function (text) {
+          const s = String(text || '')
+          const k = s.indexOf('：')
+          if (k < 0) return { n: s, d: '' }
+          return { n: s.slice(0, k), d: s.slice(k + 1) }
+        }).filter(function (step) { return !!step.n })
+      }
+
+      const state = {
+        side: (item.side || (item.kind === '代售' ? 'sell' : 'buy')) === 'buy' ? 'buy' : 'sell',
+        mode: String(item.mode || ''),
+        term: item.term || termList[2],
+        cat: String(item.cat || item.itemCat || ''),
+        model: String(item.item || ''),
+        path: '',
+        must: condFrom(item.must),
+        nego: condFrom(item.nego),
+        flow: flowFrom(item.flow),
+        catalog: null
+      }
+      if (modeOptionsOf(state.side).indexOf(state.mode) < 0) {
+        state.mode = modeOptionsOf(state.side)[0]
+      }
       const m = modal({
+        wide: true,
         title: '平台修改委托',
-        sub: '修改会立即更新商品展示并记入操作日志；若用户有修改待审核，将合并进待审内容一并审核',
-        body: '<div class="field"><label>设备名称</label><input id="o-edit-item" value="' + esc(item.item || '') + '" maxlength="60"></div>' +
-          '<div class="field"><label>数量（台）</label><input id="o-edit-qty" type="number" min="1" step="1" value="' + (Number(item.qty) || 1) + '"></div>' +
-          '<div class="field"><label>单价（元）</label><input id="o-edit-price" type="number" min="0" step="0.01" value="' + (Number(item.price) || 0) + '"></div>' +
-          '<div class="field"><label>所在地</label><input id="o-edit-city" value="' + esc(item.city || '') + '" maxlength="20"></div>' +
-          '<div class="field"><label>详细说明</label><textarea id="o-edit-detail" rows="4" maxlength="2000">' + esc(item.detail || '') + '</textarea></div>',
-        footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="o-edit-ok">保存修改</button>'
+        sub: '与小程序发布委托相同的表单，委托内容可逐项重新编辑；委托方主体信息、联系人与证明材料不展示、不可修改',
+        body:
+          '<div class="grid g2">' +
+            '<div class="field"><label>委托类型</label><div class="ag-chips" id="oe-side-chips">' +
+              '<button type="button" class="ag-chip' + (state.side === 'buy' ? ' on' : '') + '" data-side="buy">代采</button>' +
+              '<button type="button" class="ag-chip' + (state.side === 'sell' ? ' on' : '') + '" data-side="sell">代售</button>' +
+            '</div></div>' +
+            '<div class="field"><label>委托方式</label><div class="ag-chips" id="oe-mode-chips"></div>' +
+              '<div class="hint" id="oe-mode-hint"></div></div>' +
+            '<div class="field" style="grid-column:1/-1">' +
+              '<label id="oe-dev-label"></label>' +
+              '<div class="ag-dev-search"><input id="oe-dev-q" type="text" autocomplete="off" value="' + esc(state.model) + '" placeholder="搜索型号 / 品牌，如 H100、A100、DDR5">' +
+                '<button type="button" class="btn xs" id="oe-dev-clear">清空</button></div>' +
+              '<div class="ag-dev-results" id="oe-dev-results" style="display:none"></div>' +
+              '<div class="ag-dev-path" id="oe-dev-path"></div>' +
+              '<div class="hint">设备必须从平台预设型号库选择，平台按型号匹配商机；配件规格、成色与交付要求写在下方条件设置中。</div>' +
+            '</div>' +
+            '<div class="field"><label>数量（台 / 套）</label>' +
+              '<input id="oe-qty" type="number" min="1" step="1" value="' + (Number(item.qty) || 1) + '" placeholder="如 8"></div>' +
+            '<div class="field"><label>计价币种</label>' +
+              '<select id="oe-currency">' + options(currencyList, item.currency || 'CNY', false) + '</select></div>' +
+            '<div class="field"><label id="oe-price-label"></label>' +
+              '<input id="oe-price" type="number" min="1" step="1" value="' + (Number(item.price) || 0) + '" placeholder="请输入金额"></div>' +
+            '<div class="field"><label>截止时间</label>' +
+              '<input id="oe-deadline" type="date" min="' + dayText(Date.now() + 86400000) + '" max="' + dayText(Date.now() + 365 * 86400000) + '" value="' + esc(item.deadline || '') + '">' +
+              '<div class="hint">到期仍未成交即停止代寻；代采委托的合同截止时间即为此日期。</div></div>' +
+            '<div class="field" style="grid-column:1/-1" id="oe-term-wrap"><label>计划租期</label>' +
+              '<div class="ag-chips" id="oe-term-chips"></div></div>' +
+          '</div>' +
+          '<div class="ag-sub"><span class="t">条件设置</span><span class="d">对方必须满足 / 可协商，逐项勾选，也可自行添加</span></div>' +
+          '<div class="field"><label id="oe-must-title"></label><div class="ag-chips" id="oe-must-chips"></div>' +
+            '<div class="ag-cond-add"><input id="oe-must-input" maxlength="30" placeholder="没有合适的？自己加一条必须条件">' +
+              '<button type="button" class="btn xs" data-add-cond="must">＋ 添加</button></div></div>' +
+          '<div class="field"><label id="oe-nego-title"></label><div class="ag-chips" id="oe-nego-chips"></div>' +
+            '<div class="ag-cond-add"><input id="oe-nego-input" maxlength="30" placeholder="没有合适的？自己加一条可协商条件">' +
+              '<button type="button" class="btn xs" data-add-cond="nego">＋ 添加</button></div></div>' +
+          '<div class="ag-sub"><span class="t">交易流程</span><span class="d">不预设，可自行添加、排序与删除</span></div>' +
+          '<div id="oe-flow-list"></div>' +
+          '<div class="ag-cond-add">' +
+            '<input id="oe-step-name" maxlength="20" placeholder="新步骤名称">' +
+            '<input id="oe-step-desc" maxlength="40" placeholder="说明（选填）">' +
+            '<button type="button" class="btn xs" id="oe-step-add">＋ 添加步骤</button>' +
+          '</div>' +
+          '<div class="small" style="margin-top:14px;color:var(--muted-2);line-height:1.7">委托方主体名称 / 信用代码 / 身份证 / 法人、联系人手机号、授权书联系人电话、证明材料与服务费由委托方提交，平台修改不展示也不涉及这些内容。</div>',
+        footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="oe-ok">保存修改</button>'
       })
       if (!m) return
-      m.foot.querySelector('#o-edit-ok').onclick = async function () {
+
+      const body = m.body
+      const devQ = body.querySelector('#oe-dev-q')
+      const devRes = body.querySelector('#oe-dev-results')
+      const priceLabel = body.querySelector('#oe-price-label')
+      const devLabel = body.querySelector('#oe-dev-label')
+      const modeHint = body.querySelector('#oe-mode-hint')
+
+      function paintDevPath() {
+        const el = body.querySelector('#oe-dev-path')
+        el.innerHTML = state.model
+          ? '已选：<b>' + esc(state.model) + '</b>' + (state.path ? ' · ' + esc(state.path) : '')
+          : '尚未选择设备型号'
+      }
+
+      function paintMode() {
+        const modes = modeOptionsOf(state.side)
+        body.querySelector('#oe-mode-chips').innerHTML = modes.map(function (v) {
+          return '<button type="button" class="ag-chip' + (state.mode === v ? ' on' : '') + '" data-mode="' + esc(v) + '">' + esc(v) + '</button>'
+        }).join('')
+        const rental = rentalOf(state.mode)
+        body.querySelector('#oe-term-wrap').style.display = rental ? '' : 'none'
+        body.querySelector('#oe-term-chips').innerHTML = termList.map(function (v) {
+          return '<button type="button" class="ag-chip' + (state.term === v ? ' on' : '') + '" data-term="' + esc(v) + '">' + esc(v) + '</button>'
+        }).join('')
+        priceLabel.textContent = rental ? '月租金' : (state.side === 'buy' ? '采购预算' : '期望售价')
+        devLabel.textContent = state.side === 'buy' ? '需要采购的设备 / 配件' : '需要代售的设备 / 配件'
+        modeHint.textContent = rental
+          ? '租赁按「元 / 台 / 月」填月租金；服务费为一个月租金，买卖双方各承担 50%，委托方支付半个月租金，成交后支付。'
+          : '购买 / 出售按「元 / 台」填预算或期望售价，服务费按成交金额分档计。'
+        const t = SIDE_TITLE[sideOf(state.side, rental)]
+        body.querySelector('#oe-must-title').textContent = t.must
+        body.querySelector('#oe-nego-title').textContent = t.nego
+      }
+
+      function paintConds() {
+        ;['must', 'nego'].forEach(function (kind) {
+          const box = body.querySelector('#oe-' + kind + '-chips')
+          box.innerHTML = state[kind].length
+            ? state[kind].map(function (o, i) {
+              return '<button type="button" class="ag-chip' + (o.on ? ' on' : '') + '" data-cond="' + kind + '" data-i="' + i + '">' + esc(o.v) + '</button>'
+            }).join('')
+            : '<span class="small" style="color:var(--muted-2)">暂无候选条件，可在下方自行添加</span>'
+        })
+      }
+
+      function rebuildConds() {
+        const rental = rentalOf(state.mode)
+        state.must = mergeCond(COND_PRESETS[sideOf(state.side, rental)] || [], state.must)
+        state.nego = mergeCond(rental ? COND_PRESETS.negoRent : COND_PRESETS.nego, state.nego)
+        paintConds()
+      }
+
+      function paintFlow() {
+        const box = body.querySelector('#oe-flow-list')
+        box.innerHTML = state.flow.length
+          ? state.flow.map(function (step, i) {
+            return '<div class="ag-flow-row">' +
+              '<div class="ag-flow-idx">' + (i + 1) + '</div>' +
+              '<div class="ag-flow-main">' +
+                '<input data-fk="n" data-i="' + i + '" maxlength="20" placeholder="步骤名称" value="' + esc(step.n) + '">' +
+                '<input data-fk="d" data-i="' + i + '" maxlength="40" placeholder="步骤说明（选填）" value="' + esc(step.d) + '">' +
+              '</div>' +
+              '<div class="ag-flow-acts">' +
+                '<button type="button" class="btn xs" data-fmove="-1" data-i="' + i + '"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
+                '<button type="button" class="btn xs" data-fmove="1" data-i="' + i + '"' + (i === state.flow.length - 1 ? ' disabled' : '') + '>↓</button>' +
+                '<button type="button" class="btn xs danger" data-fdel="1" data-i="' + i + '">✕</button>' +
+              '</div>' +
+            '</div>'
+          }).join('')
+          : '<div class="ag-flow-empty">还没有步骤，需要时在下方添加；不设置也可以直接保存。</div>'
+        box.querySelectorAll('input[data-fk]').forEach(function (input) {
+          input.oninput = function () {
+            const step = state.flow[Number(input.getAttribute('data-i'))]
+            if (step) step[input.getAttribute('data-fk')] = input.value
+          }
+        })
+        box.querySelectorAll('[data-fmove]').forEach(function (btn) {
+          btn.onclick = function () {
+            const i = Number(btn.getAttribute('data-i'))
+            const j = i + Number(btn.getAttribute('data-fmove'))
+            if (j < 0 || j >= state.flow.length) return
+            const tmp = state.flow[i]
+            state.flow[i] = state.flow[j]
+            state.flow[j] = tmp
+            paintFlow()
+          }
+        })
+        box.querySelectorAll('[data-fdel]').forEach(function (btn) {
+          btn.onclick = function () {
+            state.flow.splice(Number(btn.getAttribute('data-i')), 1)
+            paintFlow()
+          }
+        })
+      }
+
+      function paintDevResults() {
+        if (!state.catalog) {
+          devRes.style.display = ''
+          devRes.innerHTML = '<div class="ag-dev-empty">型号库加载中…</div>'
+          return
+        }
+        const kw = String(devQ.value || '').trim().toLowerCase()
+        const tokens = kw ? kw.split(/\s+/) : []
+        const hit = state.catalog.filter(function (it) {
+          const text = [it.cat, it.brand, it.series, it.model].join(' ').toLowerCase()
+          return tokens.every(function (t) { return text.indexOf(t) > -1 })
+        }).slice(0, 30)
+        devRes.style.display = ''
+        if (!hit.length) {
+          devRes.innerHTML = '<div class="ag-dev-empty">没有匹配的设备，换个关键词试试</div>'
+          return
+        }
+        devRes.innerHTML = hit.map(function (it, i) {
+          return '<div class="ag-dev-result" data-di="' + i + '">' +
+            '<div class="n">' + esc(it.model) + '</div>' +
+            '<div class="p">' + esc([it.cat, it.brand, it.series].filter(Boolean).join(' · ')) + '</div>' +
+          '</div>'
+        }).join('')
+        /* 用 mousedown 选型，避免输入框 blur 先收起结果导致点不中 */
+        devRes.querySelectorAll('[data-di]').forEach(function (row) {
+          row.onmousedown = function (e) {
+            e.preventDefault()
+            const it = hit[Number(row.getAttribute('data-di'))]
+            state.cat = it.cat || ''
+            state.model = it.model || ''
+            state.path = [it.cat, it.brand, it.series].filter(Boolean).join(' · ')
+            devQ.value = state.model
+            devRes.style.display = 'none'
+            paintDevPath()
+          }
+        })
+      }
+
+      body.querySelector('#oe-side-chips').onclick = function (e) {
+        const btn = e.target.closest('[data-side]')
+        if (!btn) return
+        state.side = btn.getAttribute('data-side')
+        body.querySelectorAll('#oe-side-chips [data-side]').forEach(function (el) {
+          el.classList.toggle('on', el === btn)
+        })
+        if (modeOptionsOf(state.side).indexOf(state.mode) < 0) {
+          state.mode = modeOptionsOf(state.side)[0]
+        }
+        paintMode()
+        rebuildConds()
+      }
+      body.querySelector('#oe-mode-chips').onclick = function (e) {
+        const btn = e.target.closest('[data-mode]')
+        if (!btn) return
+        state.mode = btn.getAttribute('data-mode')
+        paintMode()
+        rebuildConds()
+      }
+      body.querySelector('#oe-term-chips').onclick = function (e) {
+        const btn = e.target.closest('[data-term]')
+        if (!btn) return
+        state.term = btn.getAttribute('data-term')
+        body.querySelectorAll('#oe-term-chips [data-term]').forEach(function (el) {
+          el.classList.toggle('on', el === btn)
+        })
+      }
+      body.querySelectorAll('.ag-chips').forEach(function (box) {
+        if (box.id === 'oe-side-chips' || box.id === 'oe-mode-chips' || box.id === 'oe-term-chips') return
+        box.onclick = function (e) {
+          const btn = e.target.closest('[data-cond]')
+          if (!btn) return
+          const kind = btn.getAttribute('data-cond')
+          const row = state[kind][Number(btn.getAttribute('data-i'))]
+          if (!row) return
+          row.on = !row.on
+          btn.classList.toggle('on', row.on)
+        }
+      })
+      body.querySelectorAll('[data-add-cond]').forEach(function (btn) {
+        btn.onclick = function () {
+          const kind = btn.getAttribute('data-add-cond')
+          const input = body.querySelector('#oe-' + kind + '-input')
+          const value = String(input.value || '').trim().slice(0, 30)
+          if (!value) return toast('请先填写条件内容', 'err')
+          const exist = state[kind].filter(function (o) { return o.v === value })[0]
+          if (exist) {
+            exist.on = true
+            paintConds()
+            input.value = ''
+            return
+          }
+          if (state[kind].length >= 10) return toast('最多 10 条条件', 'err')
+          state[kind].push({ v: value, on: true })
+          input.value = ''
+          paintConds()
+        }
+      })
+      body.querySelector('#oe-step-add').onclick = function () {
+        const nameEl = body.querySelector('#oe-step-name')
+        const descEl = body.querySelector('#oe-step-desc')
+        const name = String(nameEl.value || '').trim().slice(0, 20)
+        if (!name) return toast('请填写步骤名称', 'err')
+        if (state.flow.length >= 10) return toast('最多 10 个步骤', 'err')
+        state.flow.push({ n: name, d: String(descEl.value || '').trim().slice(0, 40) })
+        nameEl.value = ''
+        descEl.value = ''
+        paintFlow()
+      }
+      devQ.oninput = paintDevResults
+      devQ.onfocus = paintDevResults
+      devQ.onblur = function () { setTimeout(function () { devRes.style.display = 'none' }, 120) }
+      body.querySelector('#oe-dev-clear').onclick = function () {
+        devQ.value = ''
+        state.cat = ''
+        state.model = ''
+        state.path = ''
+        paintDevPath()
+        devRes.style.display = 'none'
+        devQ.focus()
+      }
+
+      paintMode()
+      rebuildConds()
+      paintFlow()
+      paintDevPath()
+      api('catalog.list', { status: 'active' }).then(function (data) {
+        state.catalog = (data && data.items) || []
+        if (state.model) {
+          const hit = state.catalog.filter(function (it) { return it.model === state.model })[0]
+          if (hit) {
+            state.cat = state.cat || hit.cat
+            state.path = [hit.cat, hit.brand, hit.series].filter(Boolean).join(' · ')
+            paintDevPath()
+          }
+        }
+      }).catch(function (err) {
+        state.catalog = []
+        toast('型号库加载失败：' + err.message, 'err')
+      })
+
+      m.foot.querySelector('#oe-ok').onclick = async function () {
+        const rental = rentalOf(state.mode)
+        const qty = Number(body.querySelector('#oe-qty').value)
+        const price = Number(body.querySelector('#oe-price').value)
+        const deadline = String(body.querySelector('#oe-deadline').value || '')
+        const flow = state.flow.map(function (step) {
+          const n = String(step.n || '').trim()
+          const d = String(step.d || '').trim()
+          return n ? (d ? n + '：' + d : n) : ''
+        }).filter(Boolean).slice(0, 10)
+        const must = state.must.filter(function (o) { return o.on }).map(function (o) { return o.v }).slice(0, 10)
+        const nego = state.nego.filter(function (o) { return o.on }).map(function (o) { return o.v }).slice(0, 10)
+        if (!state.model || state.model.length < 2) return toast('请从平台预设型号库选择设备', 'err')
+        if (!state.cat) return toast('设备品类缺失，请重新从型号库选择设备', 'err')
+        if (!Number.isInteger(qty) || qty < 1) return toast('数量需为正整数', 'err')
+        if (!Number.isInteger(price) || price < 1) return toast('请填写正确的' + (rental ? '月租金' : (state.side === 'buy' ? '采购预算' : '期望售价')), 'err')
+        if (!deadline) return toast('请选择委托截止时间', 'err')
+        if (deadline <= dayText(Date.now())) return toast('委托截止时间需晚于今天', 'err')
+        if (rental && termList.indexOf(state.term) < 0) return toast('请选择计划租期', 'err')
         const payload = {
           id: item.id,
-          item: String(m.body.querySelector('#o-edit-item').value || '').trim(),
-          qty: Number(m.body.querySelector('#o-edit-qty').value),
-          price: Number(m.body.querySelector('#o-edit-price').value),
-          city: String(m.body.querySelector('#o-edit-city').value || '').trim(),
-          detail: String(m.body.querySelector('#o-edit-detail').value || '').trim()
+          side: state.side,
+          mode: state.mode,
+          term: rental ? state.term : '',
+          cat: state.cat,
+          item: state.model,
+          qty: qty,
+          currency: body.querySelector('#oe-currency').value,
+          price: price,
+          deadline: deadline,
+          flow: flow,
+          must: must,
+          nego: nego
         }
-        if (payload.item.length < 2) return toast('设备名称至少 2 个字', 'err')
-        if (!Number.isInteger(payload.qty) || payload.qty < 1) return toast('数量需为正整数', 'err')
-        if (!Number.isFinite(payload.price) || payload.price < 0) return toast('请填写正确的单价', 'err')
         this.disabled = true
         try {
           await api('agency.update', payload)
           closeModal()
-          done('已更新委托内容')
+          done('已按发布口径更新委托内容')
         } catch (err) {
           toast(err.message, 'err')
           this.disabled = false
@@ -1445,8 +2101,7 @@
         if (act === 'approve') approve()
         else if (act === 'reject') reject()
         else if (act === 'contact') contact()
-        else if (act === 'deal') deal()
-        else if (act === 'complete') completeAgency()
+        else if (act === 'ticket') ticket()
         else if (act === 'chats') focusChat()
         else if (act === 'edit') editAgency()
         else if (act === 'offline') offlineAgency()
@@ -1510,7 +2165,7 @@
     { key: 'demands', label: '需求管理', desc: '求购需求审核与关闭', icon: 'file', pages: ['demands'] },
     { key: 'users', label: '用户管理', desc: '用户档案、会员与权限', icon: 'users', pages: ['users'] },
     { key: 'messages', label: '消息中心', desc: '用户留言与客服回复', icon: 'chat', pages: ['messages'] },
-    { key: 'cs', label: '客服业务', desc: '绑定用户、提成与评价', icon: 'users', pages: ['cs'] },
+    { key: 'cs', label: '客服业务', desc: '绑定用户、委托佣金与评价', icon: 'users', pages: ['cs'] },
     { key: 'risk', label: '风险提示', desc: '风险单与内容监管', icon: 'shield', pages: ['risk'] },
     { key: 'media', label: '媒体', desc: '资讯 / 榜单 / 价格水平', icon: 'media', pages: ['boards', 'news'] },
     { key: 'finance', label: '财务中心', desc: '收款与营收', icon: 'wallet', pages: ['finance'] },
@@ -1682,6 +2337,19 @@
     if (agencyTodo) headActions.push('<button class="btn" id="wb-go-agency">委托待核对 <span class="strong">' + num(agencyTodo) + '</span></button>')
     if (msgTodo) headActions.push('<button class="btn" data-go="messages">用户留言 <span class="strong">' + num(msgTodo) + '</span></button>')
     if (securityTotal) headActions.push('<button class="btn" data-go="risk">举报 / 风控 <span class="strong">' + num(securityTotal) + '</span></button>')
+    /* 推广提现：客服处理待审核，财务 / 管理员继续跟进待打款与失败重打 */
+    const withdrawPending = wbNum(wbTodos && wbTodos.withdrawPending)
+    const withdrawPayout = wbNum(wbTodos && wbTodos.withdrawPayout)
+    const withdrawTimeout = wbNum(wbTodos && wbTodos.withdrawTimeout)
+    const withdrawFailed = wbNum(wbTodos && wbTodos.withdrawFailed)
+    if (withdrawPending && C.can('promote.withdrawList')) {
+      headActions.push('<button class="btn" data-go="promote" data-go-tab="withdraw">提现待审核 <span class="strong">' + num(withdrawPending) + '</span></button>')
+    }
+    if (C.can('promote.payoutList') && (withdrawPayout || withdrawFailed)) {
+      headActions.push('<button class="btn" data-go="promote" data-go-tab="payout">' +
+        (withdrawFailed ? '打款失败 <span class="strong">' + num(withdrawFailed) + '</span>' : '待打款 <span class="strong">' + num(withdrawPayout) + '</span>') +
+        (withdrawTimeout ? ' · 超时 ' + num(withdrawTimeout) : '') + '</button>')
+    }
 
     view.classList.add('view-fill', 'cf-fill')
     view.innerHTML = '<div class="cf-page wb-cf">' +
@@ -1722,67 +2390,38 @@
     CF.leadId = jumpLead
     CF.jumpLead = jumpLead
     await cfReload(false)
+    cfStartPoll()
     /* 有代采代售 / 合同待审核时，进入工作台先弹一次待处理提醒 */
     maybeReviewPopup(wbTodos)
   }
 
-  /* 客服工作台：只看自己的待办与作业量，会员、代采代售、资讯等区块与角色无关 */
+  /**
+   * 客服工作台 = 同一页面的工单处理台。
+   * 直接复用管理员的「工单列表 / 沟通会话 / 委托详情」三栏：领取、回复、推进阶段、
+   * 结束服务全部在这一页完成，领取后不再跳转到工单中心。底部补一张「我的工资」卡片。
+   */
   async function renderCsWorkbench(view, wb, wbError) {
-    const mine = (wb && wb.mine) || {}
-    const who = (state.account && state.account.name) || '客服'
-    /* 待领取工单：用户从代采 / 代售发来的咨询已直接生成工单，领取后即可对话推进 */
-    let unclaimed = 0
-    try {
-      const res = await api('consult.list', { tab: 'unclaimed', page: 1, limit: 1 })
-      unclaimed = Number((res && res.counts && res.counts.unclaimed) || 0)
-    } catch (err) { unclaimed = 0 }
-    const todos = Object.assign({}, (wb && wb.todos) || {}, { unclaimed: unclaimed })
-    const todoDefs = [
-      ['用户留言', 'unread', 'messages', '用户直接发给平台的消息，按未读优先回复', '去回复', ''],
-      ['待领取工单', 'unclaimed', 'consult', '用户咨询已直接生成工单，领取后即可对话推进', '去领取', 'unclaimed'],
-      ['举报反馈', 'reports', 'risk', '用户提交的举报、投诉与意见建议', '去查看', 'reports'],
-      ['风控待处理', 'risk', 'risk', '规则命中的风险单，需人工核实处置', '去处置', '']
-    ]
-    const pending = todoDefs.reduce(function (s, d) { return s + wbNum(todos[d[1]]) }, 0)
-    /* 我的工资：分享开通提成 + 代采代售佣金，两笔相加按自然月累计 */
+    await renderAdminWorkbench(view, wb, wbError)
+    const page = view.querySelector('.cf-page')
+    if (!page) return
     let salary = null
     try { salary = await api('cs.salary', {}) } catch (err) { salary = null }
-    const salaryCard = salary
-      ? '<section class="card" style="margin-top:16px"><div class="card-head"><h3>我的工资</h3><div class="grow"></div>' +
-        '<span class="small" style="color:var(--muted-2)">' + esc(salary.monthLabel || '') + ' · 佣金比例 ' +
-        num(Math.round((Number(salary.agencyRate) || 0) * 100)) + '%</span></div><div class="card-body">' +
-        kpiRow([
-          ['本月工资', money(salary.monthSalary), '<span class="small" style="color:var(--muted-2)">两笔提成相加</span>'],
-          ['分享开通提成', money(salary.memberCommission), '<span class="small" style="color:var(--muted-2)">' + num(salary.memberOrderCount) + ' 笔</span>'],
-          ['代采代售佣金', money(salary.agencyCommission), '<span class="small" style="color:var(--muted-2)">' + num(salary.agencyOrderCount) + ' 笔</span>'],
-          ['累计工资', money(salary.totalSalary), '<span class="small" style="color:var(--muted-2)">历史累计</span>']
-        ]) +
-        '<div class="small" style="color:var(--muted-2);margin-top:8px">佣金 = 委托服务费实收 × 佣金比例；退款冲正后当月工资同步扣回。</div>' +
-        '</div></section>'
-      : ''
-    view.innerHTML = '<div class="page-head"><div><h2 class="title">' + wbHello() + '，' + esc(who) + '</h2>' +
-      '<div class="desc">' + dayText(Date.now()) + ' · 只展示客服相关待办与你的作业量</div></div></div>' +
-      (wbError ? '<div class="small" style="margin-bottom:8px;color:var(--warn)">待办数据加载失败：' + esc(wbError) + '</div>' : '') +
-      '<section class="card"><div class="card-head"><h3>待处理事项</h3><div class="grow"></div>' +
-      '<span class="small" style="color:var(--muted-2)">合计 ' + wbPill(pending) + '</span></div><div class="card-body">' +
-      todoDefs.map(function (d) {
-        return '<div class="todo-item"><div class="todo-item-main">' +
-          '<div class="todo-item-title">' + esc(d[0]) + ' ' + wbPill(todos[d[1]]) + '</div>' +
-          '<div class="todo-item-meta"><span class="todo-tag">' + esc(d[3]) + '</span></div></div>' +
-          '<div class="todo-item-actions"><button class="btn xs primary" data-go="' + d[2] + '"' +
-            (d[5] ? ' data-go-tab="' + d[5] + '"' : '') + '>' + esc(d[4]) + '</button></div></div>'
-      }).join('') +
-      '</div></section>' + salaryCard +
-      '<section class="card" style="margin-top:16px"><div class="card-head"><h3>我的作业量</h3><div class="grow"></div>' +
-      '<span class="small" style="color:var(--muted-2)">' + (mine.lastAt ? '最近动作 ' + esc(ago(mine.lastAt)) : '暂无作业记录') + '</span></div>' +
-      '<div class="card-body">' + kpiRow([
-        ['回复数', num(wbNum(mine.replies)), '<span class="small" style="color:var(--muted-2)">消息回复</span>'],
-        ['处理工单', num(wbNum(mine.tickets)), '<span class="small" style="color:var(--muted-2)">咨询 / 委托</span>'],
-        ['内容审核', num(wbNum(mine.reviews)), '<span class="small" style="color:var(--muted-2)">商品 / 资讯</span>'],
-        ['风控处置', num(wbNum(mine.risk)), '<span class="small" style="color:var(--muted-2)">风险单</span>'],
-        ['举报处理', num(wbNum(mine.reports)), '<span class="small" style="color:var(--muted-2)">举报反馈</span>']
-      ]) + '</div></section>'
-    wireGo(view)
+    if (!salary) return
+    const section = document.createElement('section')
+    section.className = 'card'
+    section.style.marginTop = '16px'
+    section.style.flex = 'none'
+    section.innerHTML = '<div class="card-head"><h3>我的工资</h3><div class="grow"></div>' +
+      '<span class="small" style="color:var(--muted-2)">' + esc(salary.monthLabel || '') + ' · 佣金比例 ' +
+      num(Math.round((Number(salary.agencyRate) || 0) * 100)) + '%</span></div><div class="card-body">' +
+      kpiRow([
+        ['本月工资', money(salary.monthSalary), '<span class="small" style="color:var(--muted-2)">委托佣金合计</span>'],
+        ['代采代售佣金', money(salary.agencyCommission), '<span class="small" style="color:var(--muted-2)">' + num(salary.agencyOrderCount) + ' 笔</span>'],
+        ['累计工资', money(salary.totalSalary), '<span class="small" style="color:var(--muted-2)">历史累计</span>']
+      ]) +
+      '<div class="small" style="color:var(--muted-2);margin-top:8px">工资只含代采代售委托佣金 = 委托服务费实收 × 佣金比例；会员付款的二级推广佣金在推广中心单独结算，不计入工资。退款冲正后当月工资同步扣回。</div>' +
+      '</div>'
+    page.appendChild(section)
   }
 
   /* 财务工作台：每周对账提醒 + 自己的收款作业量 + 到期会员提醒 */
@@ -2436,12 +3075,15 @@
     const recent = data.recent
 
     const tabConf = [
-      ['overview', '概览'], ['membership', '会员'], ['qualification', '资质'],
+      ['overview', '概览'], ['promote', '推广'], ['membership', '会员'], ['qualification', '资质'],
       ['buy', '代采'], ['sell', '代售'], ['consult', '咨询'], ['stock', '库存'],
       ['publish', '发布'], ['social', '收藏关注'], ['chats', '聊天记录'], ['events', '操作记录']
     ].filter(function (t) {
       /* 聊天记录需要消息监管权限，财务等角色不展示该页 */
-      return t[0] !== 'chats' || C.can('user.chats')
+      if (t[0] === 'chats' && !C.can('user.chats')) return false
+      /* 推广数据涉及佣金与提现，仅管理员 / 财务可见 */
+      if (t[0] === 'promote' && !promoteCanView()) return false
+      return true
     })
 
     const drawer = openDrawer({
@@ -2488,6 +3130,9 @@
         ]) + (recent ? '<div class="small" style="margin-top:12px;color:var(--muted-2)">最近动态：' + esc(String(recent).slice(0, 120)) + '</div>' : '') +
           '<div id="u-promote" style="margin-top:18px"></div>'
         renderUserPromote(panel.querySelector('#u-promote'), u, uid)
+      } else if (key === 'promote') {
+        panel.innerHTML = '<div id="u-promote-tab"></div>'
+        renderUserPromoteTab(panel.querySelector('#u-promote-tab'), u, uid)
       } else if (key === 'membership') {
         const m = tabs.membership || {}
         panel.innerHTML = kvList([
@@ -3127,7 +3772,8 @@
     if (isCsConsult && d.csStatus === '服务中' && d.ticketState === 'ticketed' && C.can('lead.endService') && (d.claimedByMe || C.can('lead.assign'))) {
       actionBtns.push('<button class="btn" id="ld-end">结束服务并发起评价</button>')
     }
-    if (['待分配', '跟进中'].indexOf(d.status) >= 0 && C.can('lead.assign')) actionBtns.push('<button class="btn" id="ld-assign">分配 / 转派</button>')
+    /* 未成交前都允许客服把咨询单转给其他客服 / 管理员继续跟进 */
+    if (['待分配', '跟进中', '已对接'].indexOf(d.status) >= 0 && C.can('lead.assign')) actionBtns.push('<button class="btn" id="ld-assign">分配 / 转派</button>')
     next.forEach(function (to) {
       /* 代采代售：未生成工单前不提供「已对接 / 已成交」，统一走「生成工单」或「标记无效」 */
       if (isCsConsult && d.ticketState !== 'ticketed') return
@@ -3456,44 +4102,94 @@
   const RISK_LEVEL_CLASS = { '高': 'high', '中': 'mid', '低': 'low' }
 
   function riskCaseActions(c) {
-    if (!C.can('risk.caseUpdate')) return '<span class="small" style="color:var(--muted-2)">只读</span>'
-    if (c.status === '待处理') {
-      return '<button class="btn xs" data-case="' + esc(c.id) + '" data-to="处理中">认领处理</button>' +
-        '<button class="btn xs primary" data-case="' + esc(c.id) + '" data-to="已处理">标记已处理</button>' +
-        '<button class="btn xs ghost" data-case="' + esc(c.id) + '" data-to="已忽略">忽略</button>'
+    const canHandle = C.can('risk.caseUpdate')
+    /* 转单不受处置权限限制：任何人（含管理员）都能把他人领取的单子转走 */
+    const canAssign = C.can('risk.assign') && ['待处理', '处理中'].indexOf(c.status) >= 0
+    const assignBtn = canAssign ? '<button class="btn xs" data-case-assign="' + esc(c.id) + '">转单</button>' : ''
+    const claimedByOther = !!c.ownerAccount && !c.ownedByMe
+    if (['已处理', '已忽略'].indexOf(c.status) >= 0) {
+      return '<span class="small" style="color:var(--muted-2)">' + esc(c.owner || '已闭环') + '</span>'
     }
-    if (c.status === '处理中') {
-      return '<button class="btn xs primary" data-case="' + esc(c.id) + '" data-to="已处理">标记已处理</button>' +
-        '<button class="btn xs ghost" data-case="' + esc(c.id) + '" data-to="已忽略">忽略</button>'
+    /* 已由他人领取：只能转单，不能做任何处置 */
+    if (claimedByOther) {
+      return '<span class="small" style="color:var(--muted-2)">已由 ' + esc(c.owner || '其他同事') + ' 领取</span>' + assignBtn
     }
-    return '<span class="small" style="color:var(--muted-2)">' + esc(c.owner || '已闭环') + '</span>'
+    if (!canHandle) return assignBtn || '<span class="small" style="color:var(--muted-2)">只读</span>'
+    /* 未领取：先领取，领取后才会出现处置按钮 */
+    if (!c.ownedByMe && c.status === '待处理') {
+      return '<button class="btn xs primary" data-case="' + esc(c.id) + '" data-to="处理中">领取</button>' + assignBtn
+    }
+    return '<button class="btn xs primary" data-case="' + esc(c.id) + '" data-to="已处理">标记已处理</button>' +
+      '<button class="btn xs ghost" data-case="' + esc(c.id) + '" data-to="已忽略">忽略</button>' + assignBtn
+  }
+
+  /**
+   * 风险单转单：把当前待办交给别的客服或管理员。
+   * 只换处理人，不改变处置状态；已闭环的单子不会出现转单入口。
+   */
+  async function openCaseAssign(c) {
+    let staff = []
+    try {
+      const res = await api('staff.list', {})
+      staff = res.items || []
+    } catch (err) { return toast(err.message || '客服列表加载失败', 'err') }
+    const opts = staff.filter(function (s) { return s.name !== c.owner }).map(function (s) {
+      return '<option value="' + esc(s.username) + '">' + esc(s.name + ' · ' + (s.roleName || '')) + '</option>'
+    }).join('')
+    if (!opts) return toast('暂无可转派的客服或管理员', 'err')
+    const root = modal({
+      title: '转单风险单',
+      sub: '当前处理人：' + (c.owner || '未分配') + '；转单后由新处理人继续跟进',
+      body: '<div class="form-grid">' +
+        field('转给', '<select id="rc-x-staff">' + opts + '</select>') +
+        '<div class="field full"><label>转单说明</label><input id="rc-x-reason" maxlength="200" placeholder="选填，会写入操作日志"></div>' +
+        '</div>',
+      footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="rc-x-ok">确认转单</button>'
+    })
+    if (!root) return
+    root.querySelector('#rc-x-ok').onclick = async function () {
+      this.disabled = true
+      try {
+        await api('risk.assign', {
+          id: c.id,
+          assignee: root.querySelector('#rc-x-staff').value,
+          reason: root.querySelector('#rc-x-reason').value.trim()
+        })
+        closeModal()
+        toast('已转单', 'ok')
+        C.renderPage()
+      } catch (err) {
+        toast(err.message || '转单失败', 'err')
+        this.disabled = false
+      }
+    }
   }
 
   async function openCaseResolve(c, to) {
-    const needReason = to !== '处理中'
+    const isClaim = to === '处理中'
     const root = modal({
-      title: to === '处理中' ? '认领风险单' : '处置风险单',
+      title: isClaim ? '领取风险单' : '处置风险单',
       sub: c.ruleLabel || c.detail || '',
-      body: (needReason
-        ? field('处置说明', '<input id="rc-reason" placeholder="如：已电话核实，用户提供了采购凭证">')
-        : '<div class="small" style="color:var(--muted-2)">认领后风险单进入处理中，处理记录会写入操作日志。</div>'),
+      body: (isClaim
+        ? '<div class="small" style="color:var(--muted-2)">领取后只有你可以处置这条风险单，其他人只能转单；领取记录会写入操作日志。</div>'
+        : field('处置说明', '<input id="rc-reason" placeholder="如：已电话核实，用户提供了采购凭证">')),
       footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="rc-ok">确定</button>'
     })
     if (!root) return
     root.querySelector('#rc-ok').onclick = async function () {
-      const reason = needReason ? root.body.querySelector('#rc-reason').value.trim() : '认领处理'
-      if (needReason && reason.length < 2) return toast('请填写处置说明', 'err')
+      const reason = isClaim ? '领取处理' : root.body.querySelector('#rc-reason').value.trim()
+      if (!isClaim && reason.length < 2) return toast('请填写处置说明', 'err')
       this.disabled = true
       try {
         await api('risk.caseUpdate', {
           id: c.id,
           status: to,
           owner: (state.account && state.account.name) || '管理员',
-          action: to === '已处理' ? '人工核实' : to === '已忽略' ? '忽略' : '认领',
+          action: isClaim ? '领取' : to === '已处理' ? '人工核实' : '忽略',
           reason: reason
         })
         closeModal()
-        toast('风险单已更新')
+        toast(isClaim ? '已领取，只有你可以继续处置' : '风险单已更新')
         C.renderPage()
       } catch (err) {
         toast(err.message, 'err')
@@ -3502,12 +4198,23 @@
     }
   }
 
-  function caseCard(c) {
+  function caseCard(c, picked) {
+    /* 未领取的可勾选去领取；本人领取的可勾选去处置；他人领取的不允许勾选 */
+    const open = ['待处理', '处理中'].indexOf(c.status) >= 0
+    const selectable = C.can('risk.caseUpdate') && open && (!c.ownerAccount || c.ownedByMe)
+    const ownerText = !open
+      ? ''
+      : (c.ownerAccount ? (c.ownedByMe ? '你已领取' : '已由 ' + (c.owner || '其他同事') + ' 领取') : '待领取')
     return '<div class="risk-card ' + (RISK_LEVEL_CLASS[c.level] || 'low') + '">' +
-      '<div class="r-head"><div class="r-title">' + esc(c.ruleLabel || c.detail || '风险命中') + '</div><div class="grow"></div>' +
-      badge(c.type || '系统', 'info') + badge(c.level || '低', c.level === '高' ? 'danger' : c.level === '中' ? 'warn' : '') + autoBadge(c.status) + '</div>' +
+      '<div class="r-head">' +
+      (selectable ? '<input type="checkbox" class="r-pick" data-pick="' + esc(c.id) + '"' + (picked ? ' checked' : '') + ' title="勾选后可批量领取 / 处置">' : '') +
+      '<div class="r-title">' + esc(c.ruleLabel || c.detail || '风险命中') + '</div><div class="grow"></div>' +
+      badge(c.type || '系统', 'info') + badge(c.level || '低', c.level === '高' ? 'danger' : c.level === '中' ? 'warn' : '') + autoBadge(c.status) +
+      (ownerText ? ' ' + badge(ownerText, c.ownedByMe ? 'ok' : '') : '') + '</div>' +
       '<div class="r-detail">' + esc(c.detail || '') + '</div>' +
-      '<div class="r-foot"><span>' + esc(c.targetLabel || c.targetId || '') + (c.uid ? ' · ' + esc(c.uid) : '') + ' · ' + esc(c.createdText || '') + '</span>' +
+      (c.reason ? '<div class="small" style="color:var(--muted-2);margin-top:4px">' + esc((c.action ? c.action + '：' : '') + c.reason) + '</div>' : '') +
+      '<div class="r-foot"><span>' + esc(c.targetLabel || c.targetId || '') + (c.uid ? ' · ' + esc(c.uid) : '') + ' · ' + esc(c.createdText || '') +
+      (c.owner && c.status !== '已处理' && c.status !== '已忽略' ? ' · 处理人 ' + esc(c.owner) : '') + '</span>' +
       '<div class="actions">' + riskCaseActions(c) + '</div></div></div>'
   }
 
@@ -3535,10 +4242,95 @@
       ? 'reports'
       : (!askTab && pendingReports > 0 && C.can('report.list') ? 'reports' : 'cases')
     let stateCase = { type: '', status: '待处理', level: '', keyword: '', page: 1, limit: 12 }
-    let stateReport = { status: '', type: '', targetType: '', q: '', page: 1, limit: 20 }
+    let stateReport = { group: '', status: '', type: '', targetType: '', q: '', page: 1, limit: 20 }
     let scanning = false
+    /* 批量处置：当前页勾选的风险单 id → true */
+    let pickedCases = {}
 
-    view.innerHTML = pageHead('风险提示', '规则自动命中风险商品、咨询、对话与用户，涉黄 / 涉暴 / 涉政敏感词须人工查看处置',
+    function pickedOf(items) {
+      return items.filter(function (x) { return pickedCases[x.id] })
+    }
+
+    /* 批量领取 / 已处理 / 忽略：复用单条处置接口，逐条留痕 */
+    function openBatchResolve(items, to) {
+      if (!items.length) return toast('当前勾选没有可' + (to === '处理中' ? '领取' : '处置') + '的风险单', 'err')
+      const isClaim = to === '处理中'
+      const title = isClaim ? '批量领取' : to === '已处理' ? '批量标记已处理' : '批量忽略'
+      const root = modal({
+        title: title,
+        sub: '已选 ' + items.length + ' 条风险单',
+        body: isClaim
+          ? '<div class="small" style="color:var(--muted-2)">领取后只有你可以处置这批风险单，其他人只能转单；领取记录写入操作日志。</div>'
+          : field('处置说明', '<input id="rb-reason" placeholder="如：同一批低风险提醒，已统一核实">'),
+        footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="rb-ok">确定</button>'
+      })
+      if (!root) return
+      root.querySelector('#rb-ok').onclick = async function () {
+        const reason = isClaim ? '批量领取' : root.body.querySelector('#rb-reason').value.trim()
+        if (!isClaim && reason.length < 2) return toast('请填写处置说明', 'err')
+        this.disabled = true
+        let ok = 0
+        let fail = 0
+        for (const item of items) {
+          try {
+            await api('risk.caseUpdate', {
+              id: item.id,
+              status: to,
+              owner: (state.account && state.account.name) || '管理员',
+              action: isClaim ? '领取' : to === '已处理' ? '人工核实' : '忽略',
+              reason: reason
+            })
+            ok += 1
+          } catch (err) { fail += 1 }
+        }
+        closeModal()
+        pickedCases = {}
+        toast(fail ? ('已处理 ' + ok + ' 条，' + fail + ' 条失败') : ('已批量处理 ' + ok + ' 条'), fail ? 'err' : 'ok')
+        renderCases()
+      }
+    }
+
+    /* 批量转单：统一转给同一个人，单条接口逐条写入操作日志 */
+    async function openBatchAssign(items) {
+      let staff = []
+      try {
+        const res = await api('staff.list', {})
+        staff = res.items || []
+      } catch (err) { return toast(err.message || '客服列表加载失败', 'err') }
+      const opts = staff.map(function (s) {
+        return '<option value="' + esc(s.username) + '">' + esc(s.name + ' · ' + (s.roleName || '')) + '</option>'
+      }).join('')
+      if (!opts) return toast('暂无可转派的客服或管理员', 'err')
+      const root = modal({
+        title: '批量转单',
+        sub: '已选 ' + items.length + ' 条风险单，转单后由新处理人继续跟进',
+        body: '<div class="form-grid">' +
+          field('转给', '<select id="rb-staff">' + opts + '</select>') +
+          '<div class="field full"><label>转单说明</label><input id="rb-assign-reason" maxlength="200" placeholder="选填，会写入操作日志"></div>' +
+          '</div>',
+        footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="rb-assign-ok">确认转单</button>'
+      })
+      if (!root) return
+      root.querySelector('#rb-assign-ok').onclick = async function () {
+        this.disabled = true
+        const assignee = root.querySelector('#rb-staff').value
+        const reason = root.querySelector('#rb-assign-reason').value.trim()
+        let ok = 0
+        let fail = 0
+        for (const item of items) {
+          try {
+            await api('risk.assign', { id: item.id, assignee: assignee, reason: reason })
+            ok += 1
+          } catch (err) { fail += 1 }
+        }
+        closeModal()
+        pickedCases = {}
+        toast(fail ? ('已转单 ' + ok + ' 条，' + fail + ' 条失败') : ('已批量转单 ' + ok + ' 条'), fail ? 'err' : 'ok')
+        renderCases()
+      }
+    }
+
+    view.innerHTML = pageHead('风险提示', '低风险常见项（信息过少 / 资质未上传 / 超时未分配）由系统自动归档、咨询联系方式自动打码；风险单需先领取，领取后只有领取人可处置，其他人只能转单',
       '<button class="btn" id="r-scan">' + icon('refresh') + '<span>重新扫描</span></button>') +
       '<div class="seg" id="r-tabs">' +
       '<button data-tab="cases" class="' + (tab === 'cases' ? 'on' : '') + '">风险单</button>' +
@@ -3585,7 +4377,7 @@
         view.querySelectorAll('#r-tabs [data-tab]').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === 'cases') })
       }
       scanning = true
-      toast('正在按规则重新扫描')
+      toast('正在按规则重新扫描，常见低风险项会自动归档')
       render()
     }
 
@@ -3610,10 +4402,11 @@
             '<span>有 <b>' + num(pendingReports) + '</b> 条用户举报待处理</span>' +
             '<button class="btn xs primary" id="r-goto-reports">查看举报 ›</button></div></div>'
           : '') +
-          '<div class="grid g4"' + (pendingReports > 0 ? ' style="margin-top:16px"' : '') + '>' +
+          '<div class="grid g5"' + (pendingReports > 0 ? ' style="margin-top:16px"' : '') + '>' +
           kpi('待处理', num((counts.byStatus || {})['待处理'] || 0), '<span class="small" style="color:var(--muted-2)">需人工确认</span>') +
           kpi('高风险', num((counts.byLevel || {})['高'] || 0), '<span class="small" style="color:var(--muted-2)">优先处置</span>') +
           kpi('处理中', num((counts.byStatus || {})['处理中'] || 0), '<span class="small" style="color:var(--muted-2)">已认领</span>') +
+          kpi('系统自动处置', num(counts.auto || 0), '<span class="small" style="color:var(--muted-2)">常见低风险自动闭环</span>') +
           kpi('累计风险单', num(counts.total), '<span class="small" style="color:var(--muted-2)">全部类型</span>') +
           '</div>' +
           '<section class="card" style="margin-top:16px"><div class="card-body">' +
@@ -3624,8 +4417,19 @@
             '<div class="field grow"><label>关键词</label><input id="r-keyword" value="' + esc(stateCase.keyword) + '" placeholder="规则 / 对象 / 用户"></div>',
             '<div class="field"><label>&nbsp;</label><button class="btn primary" id="r-search">' + icon('search') + '<span>筛选</span></button></div>'
           ]) + '</div></section>' +
+          (C.can('risk.caseUpdate') && items.length
+            ? '<div class="risk-batch" id="r-batch">' +
+              '<label class="risk-pick-all"><input type="checkbox" id="r-pick-all"><span>全选本页</span></label>' +
+              '<span class="small" style="color:var(--muted-2)">已选 <b id="r-picked">0</b> 条</span>' +
+              '<div class="grow"></div>' +
+              '<button class="btn xs" id="r-batch-claim" disabled>批量领取</button>' +
+              '<button class="btn xs primary" id="r-batch-done" disabled>标记已处理</button>' +
+              '<button class="btn xs ghost" id="r-batch-ignore" disabled>批量忽略</button>' +
+              (C.can('risk.assign') ? '<button class="btn xs" id="r-batch-assign" disabled>批量转单</button>' : '') +
+              '</div>'
+            : '') +
           '<div style="margin-top:16px">' +
-          (items.length ? items.map(caseCard).join('') : emptyState('没有符合条件的风险单', '规则命中后会自动生成风险单')) +
+          (items.length ? items.map(function (c) { return caseCard(c, !!pickedCases[c.id]) }).join('') : emptyState('没有符合条件的风险单', '规则命中后会自动生成风险单')) +
           (Number(data.total) > stateCase.limit ? pager(data.total, stateCase.page, stateCase.limit) : '') +
           '</div>'
 
@@ -3652,6 +4456,73 @@
             if (item) openCaseResolve(item, btn.getAttribute('data-to'))
           }
         })
+        body.querySelectorAll('[data-case-assign]').forEach(function (btn) {
+          btn.onclick = function () {
+            const item = items.filter(function (x) { return String(x.id) === btn.getAttribute('data-case-assign') })[0]
+            if (item) openCaseAssign(item)
+          }
+        })
+
+        /* 批量处理：只保留当前页可领取 / 本人可处置的勾选，换筛选 / 翻页后自动收敛 */
+        const isClaimable = function (x) { return x.status === '待处理' && !x.ownerAccount }
+        const isHandleable = function (x) { return !!x.ownedByMe && ['待处理', '处理中'].indexOf(x.status) >= 0 }
+        const selectable = items.filter(function (x) { return isClaimable(x) || isHandleable(x) })
+        Object.keys(pickedCases).forEach(function (id) {
+          if (!selectable.some(function (x) { return String(x.id) === String(id) })) delete pickedCases[id]
+        })
+        const pickAll = body.querySelector('#r-pick-all')
+        function syncPicked() {
+          const chosen = selectable.filter(function (x) { return pickedCases[x.id] })
+          const pickedEl = body.querySelector('#r-picked')
+          if (pickedEl) pickedEl.textContent = String(chosen.length)
+          const limit = {
+            'r-batch-claim': chosen.filter(isClaimable).length,
+            'r-batch-done': chosen.filter(isHandleable).length,
+            'r-batch-ignore': chosen.filter(isHandleable).length,
+            'r-batch-assign': chosen.length
+          }
+          Object.keys(limit).forEach(function (id) {
+            const btn = body.querySelector('#' + id)
+            if (btn) btn.disabled = limit[id] === 0
+          })
+          if (pickAll) pickAll.checked = selectable.length > 0 && chosen.length === selectable.length
+        }
+        body.querySelectorAll('[data-pick]').forEach(function (box) {
+          box.onchange = function () {
+            const id = box.getAttribute('data-pick')
+            if (box.checked) pickedCases[id] = true
+            else delete pickedCases[id]
+            syncPicked()
+          }
+        })
+        if (pickAll) {
+          pickAll.onchange = function () {
+            selectable.forEach(function (x) {
+              if (pickAll.checked) pickedCases[x.id] = true
+              else delete pickedCases[x.id]
+            })
+            body.querySelectorAll('[data-pick]').forEach(function (box) {
+              box.checked = !!pickedCases[box.getAttribute('data-pick')]
+            })
+            syncPicked()
+          }
+        }
+        function batchClick(id, fn) {
+          const btn = body.querySelector('#' + id)
+          if (!btn) return
+          btn.onclick = function () {
+            const chosen = pickedOf(items)
+            if (!chosen.length) return toast('请先勾选风险单', 'err')
+            fn(chosen)
+          }
+        }
+        batchClick('r-batch-claim', function (chosen) { openBatchResolve(chosen.filter(isClaimable), '处理中') })
+        batchClick('r-batch-done', function (chosen) { openBatchResolve(chosen.filter(isHandleable), '已处理') })
+        batchClick('r-batch-ignore', function (chosen) { openBatchResolve(chosen.filter(isHandleable), '已忽略') })
+        batchClick('r-batch-assign', function (chosen) {
+          openBatchAssign(chosen.filter(function (x) { return ['待处理', '处理中'].indexOf(x.status) >= 0 }))
+        })
+        syncPicked()
       } catch (err) {
         body.innerHTML = '<div class="card card-body" style="color:var(--danger)">' + esc(err.message) + '</div>'
       }
@@ -3800,11 +4671,19 @@
           kpi('已处理', num(counts['已处理'] || 0), '<span class="small" style="color:var(--muted-2)">已回复用户</span>') +
           kpi('已驳回', num(counts['已驳回'] || 0), '<span class="small" style="color:var(--muted-2)">不成立 / 信息不足</span>') +
           '</div>' +
-          '<section class="card" style="margin-top:16px"><div class="card-body">' +
+          /* 反馈分类：处理中的待办与已完成的结论分开展示，避免翻旧单找待办 */
+          '<div class="seg" id="rp-group" style="margin-top:16px">' +
+          [['', '全部'], ['open', '处理中'], ['done', '处理完毕']].map(function (g) {
+            const n = g[0] === 'open' ? Number((data.groupCounts || {}).open) || 0
+              : g[0] === 'done' ? Number((data.groupCounts || {}).done) || 0 : 0
+            return '<button data-g="' + g[0] + '"' + (stateReport.group === g[0] ? ' class="on"' : '') + '>' + g[1] +
+              (g[0] && n > 0 ? '<span class="count">' + num(n) + '</span>' : '') + '</button>'
+          }).join('') + '</div>' +
+          '<section class="card" style="margin-top:12px"><div class="card-body">' +
           filterBar([
-            field('类型', '<select id="rp-type">' + options((data.types || ['举报', '投诉', '意见反馈']), stateReport.type, false) + '</select>'),
+            field('类型', '<select id="rp-type">' + options((data.types || ['举报', '投诉', '意见反馈']), stateReport.type, '全部类型') + '</select>'),
             field('对象', '<select id="rp-target">' + options(REPORT_TARGET_OPTIONS, stateReport.targetType) + '</select>'),
-            field('状态', '<select id="rp-status">' + options((data.statusList || ['待处理', '处理中', '已处理', '已驳回']), stateReport.status, false) + '</select>'),
+            field('状态', '<select id="rp-status">' + options((data.statusList || ['待处理', '处理中', '已处理', '已驳回']), stateReport.status, '全部状态') + '</select>'),
             '<div class="field grow"><label>关键词</label><input id="rp-q" value="' + esc(stateReport.q) + '" placeholder="内容 / 对象 / 联系方式"></div>',
             '<div class="field"><label>&nbsp;</label><button class="btn primary" id="rp-search">' + icon('search') + '<span>筛选</span></button></div>'
           ]) + '</div></section>' +
@@ -3823,15 +4702,21 @@
               return '<td class="small">' + esc(dateText(r.createdAt)) + '</td>' +
                 '<td>' + badge(r.type, r.type === '举报' ? 'danger' : r.type === '投诉' ? 'warn' : 'info') + '</td>' +
                 '<td class="small">' + badge(typeLabel, 'info') + ' ' + esc(r.targetTitle || tPreview.title || '—') + '</td>' +
-                '<td class="small mono">' + (r.targetId ? '<a href="javascript:" class="link" data-open-id="' + esc(r.targetId) + '" data-open-type="' + esc(r.targetType) + '">' + esc(r.targetId) + '</a>' : '—') + '</td>' +
+                '<td class="small mono">' + (r.targetId ? '<a href="javascript:" class="link" data-open-id="' + esc(r.targetId) + '" data-open-type="' + esc(r.targetType) + '"' +
+                  (r.targetLeadId ? ' data-open-lead="' + esc(r.targetLeadId) + '"' : '') + '>' + esc(r.targetId) + '</a>' : '—') + '</td>' +
                 '<td class="small mono">' + (r.targetUid ? esc(r.targetUid) : '—') + '</td>' +
                 '<td>' + (curStatus ? badge(curStatus, curTone) : '<span class="small" style="color:var(--muted-2)">—</span>') + '</td>' +
                 '<td class="small">' + esc(leadTitle(r.content, 36)) + '</td>' +
                 '<td class="small">' + esc(r.contact || '—') + '</td>' +
-                '<td>' + badge(r.status, tone) + '</td>' +
+                '<td>' + badge(r.status, tone) +
+                  (r.assignee && r.status !== '已处理' && r.status !== '已驳回'
+                    ? '<div class="small" style="color:var(--muted-2)">处理人：' + esc(r.assignee) + '</div>' : '') +
+                '</td>' +
                 '<td><div class="flex" style="gap:4px;flex-wrap:wrap">' +
                   (canOffline && C.can('report.handle')
                     ? '<button class="btn xs danger" data-act-offline="' + esc(r.id) + '">直接下架</button>' : '') +
+                  (C.can('report.assign') && r.status !== '已处理' && r.status !== '已驳回'
+                    ? '<button class="btn xs" data-report-assign="' + esc(r.id) + '">转单</button>' : '') +
                   '<button class="btn xs' + (r.status === '待处理' ? ' primary' : '') + '" data-report="' + esc(r.id) + '">' +
                     (r.status === '待处理' ? '受理' : '查看 / 处置') + '</button>' +
                 '</div></td>'
@@ -3847,6 +4732,21 @@
           renderReports()
         }
         wirePager(body, function (p) { stateReport.page = p; renderReports() })
+        body.querySelectorAll('#rp-group [data-g]').forEach(function (btn) {
+          btn.onclick = function () {
+            stateReport.group = btn.getAttribute('data-g') || ''
+            /* 分类与状态下拉会互相抵消（如「处理中 + 已处理」），切分类时重置状态 */
+            stateReport.status = ''
+            stateReport.page = 1
+            renderReports()
+          }
+        })
+        body.querySelectorAll('[data-report-assign]').forEach(function (btn) {
+          btn.onclick = function () {
+            const item = items.filter(function (x) { return String(x.id) === btn.getAttribute('data-report-assign') })[0]
+            if (item) openReportAssign(item)
+          }
+        })
         body.querySelectorAll('[data-report]').forEach(function (btn) {
           btn.onclick = function () {
             const item = items.filter(function (x) { return String(x.id) === btn.getAttribute('data-report') })[0]
@@ -3868,15 +4768,27 @@
             } catch (err) { toast(err.message, 'err') }
           }
         })
-        /* 商品ID列的链接：跳到对应商品详情页 */
+        /* 商品/需求 ID 列：直接在当前页打开详情抽屉，不再跳页（跳页落不到具体记录）；
+           会话类举报能反查到咨询工单时，直接进工单中心定位该工单 */
         body.querySelectorAll('[data-open-id]').forEach(function (link) {
-          link.onclick = function () {
+          link.onclick = async function () {
+            const leadId = link.getAttribute('data-open-lead')
+            if (leadId) {
+              state.pageQuery = { leadId: leadId }
+              C.navigate('consult')
+              return
+            }
             const type = link.getAttribute('data-open-type')
             const id = link.getAttribute('data-open-id')
-            if (type === 'product') navigate('products', { id: id })
-            else if (type === 'demand') navigate('demands', { id: id })
-            else if (type === 'owner') openUserDrawer(id)
-            else toast('暂不支持打开该类型详情')
+            if (type === 'owner') return openUserDrawer(id)
+            if (type === 'chat') return toast('未找到该会话对应的咨询工单，可能已删除或不是平台咨询', 'err')
+            if (type !== 'product' && type !== 'demand') return toast('该类型暂不支持查看详情')
+            try {
+              const res = await api(type === 'product' ? 'product.detail' : 'demand.detail', { id: id })
+              if (type === 'product' && res.product) openProductDrawer(res.product, renderReports)
+              else if (type === 'demand' && res.demand) openDemandDrawer(res.demand, renderReports)
+              else toast('详情不存在或已删除', 'err')
+            } catch (err) { toast(err.message, 'err') }
           }
         })
       } catch (err) {
@@ -3884,43 +4796,198 @@
       }
     }
 
+    /** 举报 / 反馈转单：把待办交给别的客服或管理员，已处理完毕的单子不再提供入口 */
+    async function openReportAssign(item) {
+      let staff = []
+      try {
+        const res = await api('staff.list', {})
+        staff = res.items || []
+      } catch (err) { return toast(err.message || '客服列表加载失败', 'err') }
+      const opts = staff.filter(function (s) { return s.name !== item.assignee }).map(function (s) {
+        return '<option value="' + esc(s.username) + '">' + esc(s.name + ' · ' + (s.roleName || '')) + '</option>'
+      }).join('')
+      if (!opts) return toast('暂无可转派的客服或管理员', 'err')
+      const root = modal({
+        title: '转单举报 / 反馈',
+        sub: (item.type || '反馈') + '：' + leadTitle(item.content, 40) + '；当前处理人：' + (item.assignee || '未分配'),
+        body: '<div class="form-grid">' +
+          field('转给', '<select id="rp-x-staff">' + opts + '</select>') +
+          '<div class="field full"><label>转单说明</label><input id="rp-x-reason" maxlength="200" placeholder="选填，会写入操作日志"></div>' +
+          '</div>',
+        footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="rp-x-ok">确认转单</button>'
+      })
+      if (!root) return
+      root.querySelector('#rp-x-ok').onclick = async function () {
+        this.disabled = true
+        try {
+          await api('report.assign', {
+            id: item.id,
+            assignee: root.querySelector('#rp-x-staff').value,
+            reason: root.querySelector('#rp-x-reason').value.trim()
+          })
+          closeModal()
+          toast('已转单', 'ok')
+          renderReports()
+        } catch (err) {
+          toast(err.message || '转单失败', 'err')
+          this.disabled = false
+        }
+      }
+    }
+
     function openReportHandle(item, done) {
       const canHandle = C.can('report.handle')
       const tPreview = item.targetPreview || {}
       const typeLabel = REPORT_TARGET_TEXT[item.targetType] || item.targetType
-      /* 商品预览区：有 targetPreview 才渲染；owner 类型也能显示用户资料 */
-      let previewSection = ''
-      if (tPreview.title || tPreview.status || item.targetId) {
-        let previewLinks = ''
-        if ((item.targetType === 'product' || item.targetType === 'demand') && item.targetId) {
-          previewLinks = '<button class="btn xs" id="rp-open-target">' + icon('link') + '<span>打开' + typeLabel + '详情</span></button> '
-        }
-        if (item.targetUid && C.can('user.admin')) {
-          previewLinks += '<button class="btn xs" id="rp-open-user">调整被举报账号（UID: ' + esc(item.targetUid) + '）</button>'
-        }
-        previewSection = '<div class="setting-row" style="background:var(--bg);border-radius:10px;padding:12px 14px">' +
-          '<div class="info"><div class="strong">被举报' + typeLabel + '（ID: <span class="mono">' + esc(item.targetId || '—') + '</span>）</div>' +
-          '<div class="small" style="margin-top:6px;line-height:1.8">' +
-          '标题：' + esc(tPreview.title || item.targetTitle || '—') +
-          (tPreview.model ? '<br>型号：' + esc(tPreview.model) : '') +
-          (tPreview.price ? '<br>价格：' + money(tPreview.price) : '') +
-          '<br>当前状态：' + (tPreview.status ? badge(tPreview.status, /在售|求购中/.test(tPreview.status) ? 'ok' : /已下架|已驳回/.test(tPreview.status) ? 'danger' : 'warn') : '<span style="color:var(--muted-2)">—</span>') +
-          (tPreview.offlineReason ? '<br>下架原因：' + esc(tPreview.offlineReason) : '') +
-          '<br>发布人 UID：<span class="mono">' + esc(item.targetUid || '—') + '</span>' +
-          '<br>举报人 UID：<span class="mono">' + esc(item.uid || '—') + '</span>（联系方式：' + esc(item.contact || '—') + '）' +
-          '</div><div style="margin-top:10px">' + previewLinks + '</div></div></div>'
+      const reporter = item.reporter || null
+      const publisher = tPreview.owner || null
+      const isGoods = item.targetType === 'product' || item.targetType === 'demand'
+
+      /* 用户摘要：被举报内容的发布人 / 举报人都在弹窗里直接给出，可一键打开用户资料 */
+      function briefRow(title, brief, uidHint) {
+        const b = brief || {}
+        const uid = b.uid || uidHint || ''
+        return '<div class="setting-row"><div class="info">' +
+          '<div class="flex" style="align-items:center;gap:8px"><div class="strong">' + esc(title) + '</div>' +
+          '<div class="grow"></div>' +
+          (uid && C.can('user.detail') ? '<button class="btn xs" data-open-user="' + esc(uid) + '">查看用户资料</button>' : '') +
+          '</div>' +
+          (uid
+            ? kvList([
+              ['用户ID', b.userNo ? '<span class="mono strong">' + esc(b.userNo) + '</span>' : '<span class="mono">' + esc(uid) + '</span>'],
+              ['账号标识', '<span class="mono small">' + esc(uid) + '</span>'],
+              ['昵称', esc(b.nick || '—')],
+              ['账号状态', esc(b.status || '—')],
+              ['手机号', esc(b.phoneMasked || '—')]
+            ])
+            : '<div class="small" style="color:var(--muted-2)">未关联到用户</div>') +
+          '</div></div>'
       }
-      /* 有实体对象才允许 targetAction：owner 类型不直接封禁；且必须握有对应内容下架权限 */
+
+      /* 被举报内容：受理时直接把原文摊开——投诉什么就展示什么，不再让客服自己跳页去找 */
+      let previewSection = ''
+      if (isGoods && item.targetId) {
+        const amount = item.targetType === 'product'
+          ? amountOf(tPreview, 'price', 'priceMax', 'priceMode', 'priceUnit')
+          : amountOf(tPreview, 'budget', 'budgetMax', 'budgetMode', 'budgetUnit')
+        const tone = /在售|求购中/.test(tPreview.status) ? 'ok'
+          : /已下架|已驳回|已关闭|已成交/.test(tPreview.status) ? 'danger' : 'warn'
+        previewSection = '<div class="setting-row" style="background:var(--bg);border-radius:10px;padding:12px 14px">' +
+          '<div class="info"><div class="flex" style="align-items:center;gap:8px">' +
+          '<div class="strong">被举报' + typeLabel + '内容</div>' +
+          '<span class="small mono" style="color:var(--muted-2)">' + esc(item.targetId) + '</span>' +
+          '<div class="grow"></div>' + (tPreview.status ? badge(tPreview.status, tone) : '') + '</div>' +
+          '<div class="rev-split" style="margin-top:12px">' + mediaPanel(item.targetType) +
+          '<div class="rev-main">' +
+          kvList([
+            ['标题', esc(tPreview.title || item.targetTitle || '—')],
+            ['品类 / 品牌 / 型号', esc([tPreview.cat, tPreview.brand, tPreview.model].filter(Boolean).join(' / ') || '—')],
+            [item.targetType === 'product' ? '价格' : '预算', amount],
+            ['数量', tPreview.qty ? num(tPreview.qty) : '—'],
+            ['成色 / 状况', esc(tPreview.cond || '—')],
+            ['交易地', esc(tPreview.city || '—')],
+            ['发布时间', esc(dateText(tPreview.createdAt))]
+          ]) +
+          (tPreview.note
+            ? '<div class="strong" style="margin:14px 0 6px">' + (item.targetType === 'product' ? '商品描述' : '需求说明') + '</div>' +
+              '<div class="small" style="white-space:pre-wrap;line-height:1.8;color:var(--ink-2)">' + esc(tPreview.note) + '</div>'
+            : '') +
+          (tPreview.requirements
+            ? '<div class="strong" style="margin:14px 0 6px">补充要求</div>' +
+              '<div class="small" style="white-space:pre-wrap;line-height:1.8;color:var(--ink-2)">' + esc(tPreview.requirements) + '</div>'
+            : '') +
+          (tPreview.accept
+            ? '<div class="strong" style="margin:14px 0 6px">可接受条件</div>' +
+              '<div class="small" style="white-space:pre-wrap;line-height:1.8;color:var(--ink-2)">' + esc(tPreview.accept) + '</div>'
+            : '') +
+          (tPreview.offlineReason || tPreview.reviewReason
+            ? '<div class="small" style="margin-top:12px;color:var(--muted-2)">' +
+              (tPreview.offlineReason ? '下架原因：' + esc(tPreview.offlineReason) : '') +
+              (tPreview.reviewReason ? '审核意见：' + esc(tPreview.reviewReason) : '') + '</div>'
+            : '') +
+          '</div></div></div></div>'
+      } else if (item.targetType === 'news' && item.targetId) {
+        previewSection = '<div class="setting-row" style="background:var(--bg);border-radius:10px;padding:12px 14px">' +
+          '<div class="info"><div class="flex" style="align-items:center;gap:8px">' +
+          '<div class="strong">被举报资讯内容</div>' +
+          '<span class="small mono" style="color:var(--muted-2)">' + esc(item.targetId) + '</span>' +
+          '<div class="grow"></div>' + (tPreview.status ? badge(tPreview.status, 'info') : '') + '</div>' +
+          '<div class="strong" style="margin-top:10px">' + esc(tPreview.title || item.targetTitle || '未填写标题') + '</div>' +
+          '<div class="small" style="white-space:pre-wrap;line-height:1.8;margin-top:8px;color:var(--ink-2)">' +
+          esc(tPreview.content || tPreview.summary || '资讯正文为空或已删除') + '</div>' +
+          '</div></div>'
+      } else if (item.targetType === 'chat' && item.targetId) {
+        const leadId = item.targetLeadId || ''
+        previewSection = '<div class="setting-row" style="background:var(--bg);border-radius:10px;padding:12px 14px">' +
+          '<div class="info"><div class="flex" style="align-items:center;gap:8px">' +
+          '<div class="strong">被举报会话</div>' +
+          '<span class="small mono" style="color:var(--muted-2)">' + esc(item.targetId) + '</span>' +
+          '<div class="grow"></div>' + (tPreview.status ? badge(tPreview.status, 'info') : '') +
+          (leadId ? '<button class="btn xs" data-open-lead="' + esc(leadId) + '">查看咨询工单</button>' : '') +
+          '</div>' +
+          (leadId
+            ? kvList([
+              ['关联咨询工单', '<span class="mono small">' + esc(leadId) + '</span>'],
+              ['委托主题', esc(tPreview.title || item.targetTitle || '—')],
+              ['当前阶段', esc(tPreview.status || '—')],
+              ['发起时间', esc(dateText(tPreview.createdAt))],
+              ['跟进客服', esc(tPreview.csName || '未分配')]
+            ])
+            : '<div class="small" style="color:var(--muted-2)">未找到该会话对应的咨询工单：可能是用户之间的直聊，或工单已删除。</div>') +
+          '</div></div>'
+      } else if (item.targetType === 'owner') {
+        previewSection = briefRow('被举报用户', Object.assign({ uid: item.targetUid }, tPreview), item.targetUid)
+      }
+
+      /* 谁发的内容、谁举报的：受理时同一屏看全 */
+      const peopleSection =
+        ((isGoods || item.targetType === 'news') ? briefRow('被举报内容发布人', publisher, item.targetUid) : '') +
+        (item.targetType === 'chat' ? briefRow('被举报会话发起人', publisher, item.targetUid) : '') +
+        briefRow('举报人', reporter, item.uid) +
+        (item.targetUid && C.can('user.admin')
+          ? '<div class="flex" style="gap:8px;margin-top:2px">' +
+            '<button class="btn xs" id="rp-open-user">调整被举报账号（停用 / 限制发布、资讯、对话）</button></div>'
+          : '')
+
+      /* 处置动作按对象类型区分：内容类走「下架 / 退回」，账号类走「限制功能」，不再所有类型统一套「下架商品」 */
       const offlineAction = item.targetType === 'product' ? 'product.offline'
         : item.targetType === 'demand' ? 'demand.offline' : 'news.offline'
-      const canTargetAction = (item.targetType === 'product' || item.targetType === 'demand')
-        && tPreview.status && !/已下架|已驳回|已成交|已关闭/.test(tPreview.status)
-        && C.can(offlineAction)
+      const canContentAction = item.targetType === 'news'
+        ? (!!item.targetId && tPreview.status !== '已下架' && C.can('news.offline'))
+        : (isGoods && !!item.targetId && !/已下架|已驳回|已成交|已关闭/.test(tPreview.status || '') && C.can(offlineAction))
+      const canRestrict = !!item.targetUid && C.can('user.admin')
+      const offlineLabel = item.targetType === 'product' ? '下架商品'
+        : item.targetType === 'demand' ? '下架需求' : '下架资讯'
+      const pendingLabel = item.targetType === 'product' ? '驳回商品（退回，不下架）'
+        : item.targetType === 'demand' ? '驳回需求（退回，不下架）' : '驳回资讯（退回，不下架）'
+      let actionOptions = '<option value="">不处置被举报对象（只回复举报人）</option>'
+      if (canContentAction) {
+        actionOptions += '<option value="offline">' + esc(offlineLabel) + '（违规核实）</option>' +
+          '<option value="pending">' + esc(pendingLabel) + '</option>'
+      }
+      if (canRestrict) {
+        actionOptions += '<option value="restrict:7">限制账号 7 天（禁发布 / 资讯 / 对话）</option>' +
+          '<option value="restrict:30">限制账号 30 天（禁发布 / 资讯 / 对话）</option>'
+      }
+
+      /* 通知对象写清楚：这条处理说明到底发给谁，避免把「举报人」当成「被举报人」 */
+      const reporterName = (reporter && reporter.nick) || '未留昵称'
+      const reporterNo = (reporter && reporter.userNo) || item.uid || '未关联账号'
+      const targetName = (publisher && publisher.nick) || tPreview.nick || item.targetTitle || '未命名账号'
+      const targetNo = (publisher && publisher.userNo) || tPreview.userNo || item.targetUid || ''
+      const notifySection = '<div class="setting-row" style="background:var(--bg);border-radius:10px;padding:12px 14px">' +
+        '<div class="info"><div class="strong">处理说明会发给谁</div>' +
+        '<div class="small" style="line-height:1.9;color:var(--ink-2)">' +
+        '① 举报人：' + esc(reporterName) + ' <span class="mono">' + esc(reporterNo) + '</span><br>' +
+        (item.targetUid
+          ? '② 被举报人：' + esc(targetName) + ' <span class="mono">' + esc(targetNo) + '</span>'
+          : '② 被举报人：该反馈未关联到账号，不发送站内信（仅留处置记录）') +
+        '</div></div></div>'
       const root = modal({
         title: item.type + ' · ' + (item.targetTitle || '未指定对象'),
         sub: dateText(item.createdAt) + ' 提交' + (item.contact ? ' · 联系方式 ' + item.contact : ''),
         wide: true,
-        body: previewSection +
+        body: previewSection + peopleSection + notifySection +
           '<div class="setting-row"><div class="info"><div class="strong">举报内容原文</div>' +
           '<div class="small" style="white-space:pre-wrap;line-height:1.8">' + esc(item.content) + '</div></div></div>' +
           (item.handlerNote ? '<div class="setting-row"><div class="info"><div class="strong">上次回复</div>' +
@@ -3928,13 +4995,18 @@
           (canHandle
             ? '<div class="form-grid" style="margin-top:14px">' +
               field('处置结论', '<select id="rp-to">' + options(['处理中', '已处理', '已驳回'], item.status === '待处理' ? '处理中' : item.status, false) + '</select>') +
-              field('对被举报对象执行', '<select id="rp-action">' +
-                '<option value="">不动商品（只处置举报本身）</option>' +
-                (canTargetAction ? '<option value="offline">下架商品/需求（违规核实）</option><option value="pending">退回草稿/驳回</option>' : '') +
-                '</select>') +
-              '<div class="field full"><label>处理说明（会同步给举报人和被举报人）</label>' +
+              field('对被举报对象执行', '<select id="rp-action">' + actionOptions + '</select>') +
+              '<div class="field full"><label>处理说明（举报人与被举报人都会收到）</label>' +
               '<textarea id="rp-note" rows="4" placeholder="写清核实结果与处理动作，用户会在站内信看到这段文字">' + esc(item.handlerNote || '') + '</textarea>' +
-              '<div class="small" style="color:var(--muted-2);margin-top:6px">预览给举报双方的通知文案：<span id="rp-preview" style="color:var(--ink-2)">选择「已处理」后自动生成</span></div>' +
+              '<div class="flex" style="gap:6px;flex-wrap:wrap;margin-top:8px">' +
+                [['内容违规', '经核实内容违反平台规则，已按规则处置。'],
+                  ['举报不成立', '经核实未发现违规，举报不成立。'],
+                  ['需补充信息', '现有信息不足，请补充截图或详细描述后重新提交。'],
+                  ['警告教育', '已提醒发布人规范发布，再次出现将限制账号。']].map(function (p) {
+                  return '<button type="button" class="btn xs" data-note="' + esc(p[1]) + '">' + esc(p[0]) + '</button>'
+                }).join('') +
+              '</div>' +
+              '<div class="small" style="color:var(--muted-2);margin-top:6px">预览给双方的通知文案：<span id="rp-preview" style="color:var(--ink-2)">选择「已处理」后自动生成</span></div>' +
               '</div>' +
               '</div>'
             : '<div class="small" style="margin-top:12px;color:var(--muted-2)">当前角色无处置权限，只能查看。</div>'),
@@ -3943,18 +5015,37 @@
           : '<button class="btn" data-close="1">关闭</button>'
       })
       if (!root) return
-      /* 打开被举报对象详情（商品/需求）或调整用户 */
-      const openTargetBtn = root.querySelector('#rp-open-target')
-      if (openTargetBtn) {
-        openTargetBtn.onclick = function () {
+      /* 被举报商品 / 需求的材料：弹窗内直接出图，不用再开页面 */
+      if (isGoods && item.targetId) loadMediaPanel(root.body, { id: item.targetId, media: tPreview.media }, item.targetType)
+      root.body.querySelectorAll('[data-open-user]').forEach(function (btn) {
+        btn.onclick = function () { closeModal(); openUserDrawer(btn.getAttribute('data-open-user')) }
+      })
+      /* 会话类举报：弹窗内直接跳到工单中心，处置时能顺手核对会话与委托 */
+      root.body.querySelectorAll('[data-open-lead]').forEach(function (btn) {
+        btn.onclick = function () {
+          const leadId = btn.getAttribute('data-open-lead')
+          if (!leadId) return
           closeModal()
-          if (item.targetType === 'product') navigate('products', { id: item.targetId })
-          else if (item.targetType === 'demand') navigate('demands', { id: item.targetId })
+          state.pageQuery = { leadId: leadId }
+          C.navigate('consult')
         }
-      }
+      })
+      /* 调整被举报账号：直接打开「调整账号」弹窗（停用 / 限制发布、资讯、对话），不必再走资料抽屉 */
       const openUserBtn = root.querySelector('#rp-open-user')
       if (openUserBtn) {
-        openUserBtn.onclick = function () { closeModal(); openUserDrawer(item.targetUid) }
+        openUserBtn.onclick = async function () {
+          if (!item.targetUid) return toast('该反馈未关联到账号，无法调整', 'err')
+          this.disabled = true
+          try {
+            const res = await api('user.detail', { uid: item.targetUid })
+            const user = Object.assign({}, (res && res.user) || {}, { id: (res && res.user && res.user.id) || item.targetUid })
+            closeModal()
+            openUserEditModal(user, typeof done === 'function' ? done : null)
+          } catch (err) {
+            toast(err.message, 'err')
+            this.disabled = false
+          }
+        }
       }
       /* 处置预览：随处置结论 + targetAction + note 实时生成通知文案草稿 */
       const previewEl = root.body.querySelector('#rp-preview')
@@ -3964,42 +5055,73 @@
       const updatePreview = function () {
         if (!previewEl) return
         const st = statusSel ? statusSel.value : '处理中'
-        const act = actionSel ? actionSel.value : ''
+        const raw = actionSel ? actionSel.value : ''
         const note = (noteArea ? noteArea.value.trim() : '') || '平台已完成核实'
+        const days = raw.indexOf('restrict:') === 0 ? Number(raw.slice(9)) || 0 : 0
+        const isRestrict = raw === 'restrict' || days > 0
+        const subject = item.targetTitle || tPreview.title || item.targetId || ''
         if (st === '处理中') {
-          previewEl.textContent = '举报人：「平台客服已受理你的反馈，正在核实处理...」'
-        } else if (act === 'offline') {
-          previewEl.textContent = '举报人：「' + note + '（对象：' + (item.targetTitle || tPreview.title || item.targetId || '') + '）；平台已下架被举报内容」' +
-            '｜被举报人：「你的' + typeLabel + '已下架，原因：' + note + '」'
-        } else if (act === 'pending') {
-          previewEl.textContent = '举报人：「' + note + '；平台已退回被举报内容」' +
-            '｜被举报人：「你的' + typeLabel + '已退回，原因：' + note + '」'
-        } else {
-          previewEl.textContent = '举报人：「' + note + '」（不联动处置被举报对象）' +
-            (st === '已处理' && item.targetUid ? '｜被举报人：平台会发核实通知' : '')
+          previewEl.textContent = '举报人：「平台客服已受理你的反馈，正在核实处理...」｜被举报人：暂不通知'
+          return
         }
+        const lines = ['举报人：「' + note + '」']
+        if (isRestrict) {
+          lines.push('被举报人：「你的账号因被举报核实违规，已限制发布 / 资讯 / 对话 ' + (days || 7) + ' 天，到期自动恢复」')
+        } else if (raw === 'offline') {
+          lines.push('被举报人：「你的' + typeLabel + (subject ? '（' + subject + '）' : '') + '已下架，原因：' + note + '」')
+        } else if (raw === 'pending') {
+          lines.push('被举报人：「你的' + typeLabel + (subject ? '（' + subject + '）' : '') + '已退回，原因：' + note + '」')
+        } else if (st === '已驳回') {
+          lines.push('被举报人：「你发布的' + typeLabel + '（' + (subject || '内容') + '）被举报，经核实未发现违规，本次不作处置」')
+        } else if (item.targetUid) {
+          lines.push('被举报人：「你发布的' + typeLabel + (subject ? '（' + subject + '）' : '') + '被举报，核实结论：' + note + '」')
+        } else {
+          lines.push('被举报人：该反馈未关联到账号，不发送站内信（仅留处置记录）')
+        }
+        previewEl.textContent = lines.join('｜')
       }
       if (statusSel) statusSel.onchange = updatePreview
       if (actionSel) actionSel.onchange = updatePreview
       if (noteArea) noteArea.oninput = updatePreview
       updatePreview()
 
+      /* 快捷处理用语：点一下填入输入框，仍可继续修改 */
+      root.body.querySelectorAll('[data-note]').forEach(function (btn) {
+        btn.onclick = function () {
+          if (!noteArea) return
+          noteArea.value = btn.getAttribute('data-note') || ''
+          noteArea.focus()
+          updatePreview()
+        }
+      })
+
       if (!canHandle) return
       root.querySelector('#rp-ok').onclick = async function () {
         const status = statusSel.value
-        const action = actionSel ? actionSel.value : ''
+        const raw = actionSel ? actionSel.value : ''
         const note = noteArea.value.trim()
+        const restrictDays = raw.indexOf('restrict:') === 0 ? Number(raw.slice(9)) || 7 : 0
+        const action = (restrictDays || raw === 'restrict') ? 'restrict' : raw
         if (status !== '处理中' && !note) return toast('请填写处理说明，用户需要知道处理结果', 'err')
-        if (action && status !== '已处理') return toast('联动下架 / 退回时结论必须选「已处理」', 'err')
+        if (action && status !== '已处理') {
+          return toast(action === 'restrict' ? '限制账号时结论必须选「已处理」' : '联动下架 / 退回时结论必须选「已处理」', 'err')
+        }
         this.disabled = true
         try {
-          const res = await api('report.handle', { id: item.id, status: status, note: note, targetAction: action || '' })
+          const payload = { id: item.id, status: status, note: note, targetAction: action || '' }
+          if (action === 'restrict') payload.restrictDays = restrictDays || 7
+          const res = await api('report.handle', payload)
           closeModal()
-          let tip = status === '处理中' ? '已受理，等待核实结论' : '已处置并同步通知举报双方'
-          if (res.targetResult && !res.targetResult.skipped) {
-            tip += '（被举报对象：' + res.targetResult.from + ' → ' + res.targetResult.to + '）'
-          } else if (action && res.targetResult && res.targetResult.skipped) {
-            tip += '（对象已是终态，未联动处置）'
+          let tip = status === '处理中' ? '已受理，等待核实结论' : '已处置'
+          if (res.targetResult) {
+            tip += res.targetResult.skipped
+              ? '（对象已是终态，未联动处置）'
+              : '（被举报对象：' + res.targetResult.from + ' → ' + res.targetResult.to + '）'
+          }
+          const notified = res.notified || {}
+          if (status !== '处理中') {
+            tip += '；举报人' + (notified.reporter ? '已通知' : '未关联账号未通知') +
+              '，被举报人' + (notified.target ? '已通知' : '未关联账号未通知')
           }
           toast(tip)
           if (typeof done === 'function') done()
@@ -4053,10 +5175,17 @@
         '<div class="field full"><label>摘要</label><input id="n-summary" placeholder="列表页展示的一句话摘要"></div>' +
         '<div class="field full"><label>发布方式</label><select id="n-mode">' +
           '<option value="now">立即发布</option>' +
-          '<option value="later">加入待发布（每天 09:00 / 15:00 / 20:00 自动上线）</option>' +
+          '<option value="later">加入待发布（每天 11:00 / 15:00 / 21:00 自动上线）</option>' +
         '</select></div>' +
         '<div class="field full"><label>正文</label><textarea id="n-content" rows="10" placeholder="支持纯文本段落，1000–1300 字"></textarea>' +
           '<div class="small" id="n-count" style="margin-top:6px;color:var(--muted-2)">0 字（要求 1000–1300 字）</div></div>' +
+        '<div class="field full"><label>图片 / 视频（最多 9 图 + 1 视频）</label>' +
+          '<input type="file" id="n-media" accept="image/*,video/*" multiple style="display:none">' +
+          '<div id="n-media-list" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px"></div>' +
+          '<div style="display:flex;align-items:center;gap:10px">' +
+            '<button type="button" class="btn sm" id="n-media-add">＋ 选择文件</button>' +
+            '<span class="small" id="n-media-hint" style="color:var(--muted-2)">0 张图片 · 0 段视频</span>' +
+          '</div></div>' +
         '</div>',
       footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="n-ok">发布</button>'
     })
@@ -4069,6 +5198,64 @@
       countEl.style.color = n >= 1000 && n <= 1300 ? 'var(--ok)' : 'var(--danger)'
     }
     contentEl.addEventListener('input', syncCount)
+
+    /* 图片 / 视频：与小程序同口径，9 图 + 1 视频，直传 /api/upload 后只提交元信息 */
+    const media = []
+    let mediaBusy = false
+    const mediaListEl = root.body.querySelector('#n-media-list')
+    const mediaInput = root.body.querySelector('#n-media')
+    const mediaHint = root.body.querySelector('#n-media-hint')
+    const syncMedia = function () {
+      mediaListEl.innerHTML = media.map(function (m, i) {
+        const inner = m.kind === 'video'
+          ? '<video src="' + esc(m.fileId) + '" muted style="width:100%;height:100%;object-fit:cover"></video>'
+          : '<img src="' + esc(m.fileId) + '" style="width:100%;height:100%;object-fit:cover">'
+        return '<div style="position:relative;width:88px;height:88px;border-radius:8px;overflow:hidden;background:var(--line-2)">' +
+          inner +
+          '<button type="button" data-mi="' + i + '" style="position:absolute;top:0;right:0;width:20px;height:20px;line-height:18px;border:0;background:rgba(0,0,0,.55);color:#fff;cursor:pointer">×</button>' +
+          '</div>'
+      }).join('')
+      mediaListEl.querySelectorAll('[data-mi]').forEach(function (btn) {
+        btn.onclick = function () {
+          media.splice(Number(btn.dataset.mi), 1)
+          syncMedia()
+        }
+      })
+      const imgs = media.filter(function (m) { return m.kind === 'image' }).length
+      const vids = media.filter(function (m) { return m.kind === 'video' }).length
+      mediaHint.textContent = imgs + ' 张图片 · ' + vids + ' 段视频'
+    }
+    root.body.querySelector('#n-media-add').onclick = function () { mediaInput.click() }
+    mediaInput.onchange = async function () {
+      const files = Array.prototype.slice.call(mediaInput.files || [])
+      mediaInput.value = ''
+      mediaBusy = true
+      for (const file of files) {
+        const kind = chatMediaKindOf(file)
+        if (!kind) { toast('仅支持图片与视频：' + (file.name || ''), 'err'); continue }
+        const imgs = media.filter(function (m) { return m.kind === 'image' }).length
+        const vids = media.filter(function (m) { return m.kind === 'video' }).length
+        if (kind === 'image' && imgs >= 9) { toast('最多上传 9 张图片', 'err'); break }
+        if (kind === 'video' && vids >= 1) { toast('最多上传 1 段视频', 'err'); continue }
+        if (kind === 'image' && file.size > 10 * 1024 * 1024) { toast('单张图片不能超过 10MB', 'err'); continue }
+        if (kind === 'video' && file.size > 50 * 1024 * 1024) { toast('视频不能超过 50MB', 'err'); continue }
+        mediaHint.textContent = '上传中：' + (file.name || '')
+        try {
+          const up = await docUpload(file)
+          media.push({
+            kind: kind,
+            name: up.name,
+            size: up.size,
+            fileId: up.fileId,
+            type: file.type || (kind === 'video' ? 'video/mp4' : 'image/jpeg')
+          })
+        } catch (err) {
+          toast(err.message, 'err')
+        }
+      }
+      mediaBusy = false
+      syncMedia()
+    }
     /* 待发布稿由服务端到点批量上线，这里同步提示当前配置的时间点 */
     api('news.schedule.get').then(function (cfg) {
       const opt = root.body.querySelector('#n-mode option[value="later"]')
@@ -4081,6 +5268,7 @@
       const content = contentEl.value.trim()
       const scheduled = root.body.querySelector('#n-mode').value === 'later'
       if (title.length < 4) return toast('标题至少 4 个字', 'err')
+      if (mediaBusy) return toast('媒体还在上传，请稍候再发布', 'err')
       if (content.length < 1000 || content.length > 1300) {
         return toast('正文请控制在 1000–1300 字（当前 ' + content.length + ' 字）', 'err')
       }
@@ -4092,6 +5280,9 @@
           title: title,
           summary: root.body.querySelector('#n-summary').value.trim(),
           content: content,
+          media: media.map(function (m) {
+            return { name: m.name, type: m.type, size: m.size, fileId: m.fileId }
+          }),
           scheduled: scheduled
         })
         closeModal()
@@ -4111,7 +5302,7 @@
         title: '资讯自动发布设置',
         body: '<div class="form-grid">' +
           '<div class="field full"><label>每天发布时间</label>' +
-          '<input id="ns-slots" value="' + esc((cfg.slots || []).join(', ')) + '" placeholder="09:00, 15:00, 20:00">' +
+          '<input id="ns-slots" value="' + esc((cfg.slots || []).join(', ')) + '" placeholder="11:00, 15:00, 21:00">' +
           '<div class="small" style="margin-top:6px;color:var(--muted-2)">24 小时制，多个时间用逗号隔开，最多 6 个；到点把「待发布」的资讯批量上线</div></div>' +
           field('开关', '<select id="ns-enabled">' + options(['开启', '关闭'], cfg.enabled === false ? '关闭' : '开启', false) + '</select>') +
           '<div class="field full"><div class="small" style="color:var(--muted-2)">当前待发布 ' + num(cfg.pending) + ' 条' +
@@ -4189,19 +5380,59 @@
     }).catch(function (err) { toast(err.message, 'err') })
   }
 
+  /**
+   * 社交功能总开关：评论 / 私信 / 对话统一控制。
+   * 关闭后小程序端评论入口、评论内容、对话与私信入口全部隐藏，
+   * 服务端同时拒绝评论发表、发消息与会话读取；已发布内容保留，开启后恢复。
+   */
+  function openSocialSetting(done) {
+    api('setting.get').then(function (res) {
+      const cfg = (res && res.settings) || res || {}
+      const on = cfg.socialEnabled !== undefined
+        ? cfg.socialEnabled === true
+        : cfg.chatEnabled === true
+      const reviewOn = cfg.reviewHideSocial === true
+      const root = modal({
+        title: '社交功能开关',
+        body: field('评论 / 私信 / 对话', '<select id="sc-enabled">' +
+            options(['开启', '关闭'], on ? '开启' : '关闭', false) + '</select>') +
+          field('审核期隐藏社交（仅新版）', '<select id="sc-review">' +
+            options(['开启', '关闭'], reviewOn ? '开启' : '关闭', false) + '</select>') +
+          '<div class="small" style="color:var(--muted-2);line-height:1.8">关闭「评论 / 私信 / 对话」后用户端不再显示任何社交入口：资讯评论、回复、我的评论、私信货主、站内对话、消息页对话 tab 全部隐藏，服务端同时拒绝评论发表、发消息与会话读取。已发布内容保留，重新开启后恢复展示。<br>「审核期隐藏社交」开启后，只对上报了版本号的新版本隐藏社交入口，线上老版本照常展示；提交审核时打开，审核通过并发布后改回「关闭」即可，无需重新上传小程序版本。</div>',
+        footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="sc-ok">保存</button>'
+      })
+      if (!root) return
+      root.foot.querySelector('#sc-ok').onclick = async function () {
+        this.disabled = true
+        try {
+          const enabled = root.body.querySelector('#sc-enabled').value === '开启'
+          const review = root.body.querySelector('#sc-review').value === '开启'
+          await api('setting.save', { socialEnabled: enabled, reviewHideSocial: review })
+          closeModal()
+          toast(enabled ? '社交功能已开启，用户端恢复评论与对话' : '社交功能已关闭，用户端不再显示评论与对话')
+          if (typeof done === 'function') done()
+        } catch (err) {
+          toast(err.message, 'err')
+          this.disabled = false
+        }
+      }
+    }).catch(function (err) { toast(err.message, 'err') })
+  }
+
   Pages.media = async function (view) {
     let tab = 'news'
     const newsStatus = { status: '', cat: '', page: 1, limit: 12 }
     let boardScope = 'all'
 
     view.innerHTML = pageHead('媒体', '资讯发布即展示、可随时下架；排行榜、价格水平与首页横幅运营',
-      (C.can('news.create') ? '<button class="btn" id="m-schedule">自动发布设置</button>' +
-        '<button class="btn primary" id="m-new">' + icon('plus') + '<span>发布资讯</span></button>' : '')) +
+      (C.can('news.schedule.get') ? '<button class="btn" id="m-schedule">自动发布设置</button>' : '') +
+      (C.can('news.create') ? '<button class="btn primary" id="m-new">' + icon('plus') + '<span>发布资讯</span></button>' : '')) +
       '<div class="media-bar"><div class="seg" id="m-tabs"><button data-tab="news" class="on">资讯</button>' +
       '<button data-tab="rank">排行榜</button><button data-tab="price">价格水平</button>' +
       '<button data-tab="banner">首页横幅</button></div><div class="grow"></div>' +
       (C.can('biz.remindExpiring') ? '<button class="btn" id="m-remind">' + icon('clock') + '<span>提醒会员续费</span></button>' : '') +
       (C.can('biz.remindSetting') ? '<button class="btn" id="m-remind-set">' + icon('settings') + '<span>提醒设置</span></button>' : '') +
+      (C.can('setting.save') ? '<button class="btn" id="m-social">' + icon('settings') + '<span>社交功能开关</span></button>' : '') +
       '</div>' +
       '<div id="m-body" style="margin-top:16px"></div>'
 
@@ -4225,6 +5456,9 @@
     }
     const remindSetBtn = view.querySelector('#m-remind-set')
     if (remindSetBtn) remindSetBtn.onclick = function () { openRemindSetting() }
+    /* 社交功能开关：评论 / 私信 / 对话统一控制，审核期间关闭 */
+    const socialBtn = view.querySelector('#m-social')
+    if (socialBtn) socialBtn.onclick = function () { openSocialSetting() }
     const scheduleBtn = view.querySelector('#m-schedule')
     if (scheduleBtn) {
       scheduleBtn.onclick = function () {
@@ -4247,6 +5481,16 @@
       }
     })
 
+    /** 资讯媒体摘要：列表只显示数量，点「查看」看大图 / 视频 */
+    function mediaSummary(media) {
+      const list = Array.isArray(media) ? media : []
+      if (!list.length) return ''
+      const imgs = list.filter(function (m) { return m.kind !== 'video' }).length
+      const vids = list.filter(function (m) { return m.kind === 'video' }).length
+      return '<div class="small" style="color:var(--brand);margin-top:3px">' +
+        [imgs ? '图片 ' + imgs : '', vids ? '视频 ' + vids : ''].filter(Boolean).join(' · ') + '</div>'
+    }
+
     async function renderNews() {
       body.innerHTML = loadingBlock('加载资讯')
       try {
@@ -4265,12 +5509,13 @@
           ]) + '</div></section>' +
           '<section class="card" style="margin-top:16px"><div class="card-body flush">' +
           table(['标题', '分类', '作者', '状态', '浏览', '时间', '操作'], items.map(function (n) {
-            return '<td><div class="strong">' + esc(n.title) + (isPrivateItem(n) ? ' ' + privateTag() : '') + '</div><div class="small" style="color:var(--muted-2)">' + esc(n.summary || '') + '</div></td>' +
+            return '<td><div class="strong">' + esc(n.title) + (isPrivateItem(n) ? ' ' + privateTag() : '') + '</div><div class="small" style="color:var(--muted-2)">' + esc(n.summary || '') + '</div>' +
+              mediaSummary(n.media) + '</td>' +
               '<td>' + esc(n.cat || '') + '</td><td>' + esc(n.author || (n.official ? '官方' : '')) + '</td>' +
               '<td>' + autoBadge(n.status) + '</td><td>' + num(n.views) + '</td>' +
               '<td>' + esc(n.published || n.createdText || dateText(n.publishedAt)) + '</td>' +
               '<td><div class="flex" style="gap:5px">' +
-              (n.status === '待发布' && C.can('news.create') ? '<button class="btn xs primary" data-publish="' + esc(n.id) + '">立即发布</button>' : '') +
+              (n.status === '待发布' && C.can('news.publish') ? '<button class="btn xs primary" data-publish="' + esc(n.id) + '">立即发布</button>' : '') +
               (n.status === '已发布' && C.can('news.offline') ? '<button class="btn xs" data-offline="' + esc(n.id) + '">下架</button>' : '') +
               '<button class="btn xs ghost" data-view="' + esc(n.id) + '">查看</button></div></td>'
           }), '暂无资讯') + (Number(data.total) > newsStatus.limit ? pager(data.total, newsStatus.page, newsStatus.limit) : '') +
@@ -4332,11 +5577,19 @@
           btn.onclick = function () {
             const n = items.filter(function (x) { return String(x.id) === btn.getAttribute('data-view') })[0]
             if (!n) return
+            const media = Array.isArray(n.media) ? n.media : []
+            const mediaHtml = media.length
+              ? '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">' + media.map(function (m) {
+                return m.kind === 'video'
+                  ? '<video src="' + esc(m.fileId) + '" controls style="width:160px;height:160px;object-fit:cover;border-radius:8px;background:#000"></video>'
+                  : '<a href="' + esc(m.fileId) + '" target="_blank"><img src="' + esc(m.fileId) + '" style="width:160px;height:160px;object-fit:cover;border-radius:8px"></a>'
+              }).join('') + '</div>'
+              : ''
             modal({
               title: n.title,
               titleTag: isPrivateItem(n) ? privateTag('私密发布') : '',
               sub: n.cat + (n.city ? ' · ' + n.city : '') + ' · ' + (n.author || '官方'),
-              body: '<div class="small" style="line-height:1.9;white-space:pre-wrap">' + esc(n.content || n.summary || '无正文') + '</div>',
+              body: '<div class="small" style="line-height:1.9;white-space:pre-wrap">' + esc(n.content || n.summary || '无正文') + '</div>' + mediaHtml,
               footer: '<button class="btn" data-close="1">关闭</button>'
             })
           }
@@ -4480,7 +5733,7 @@
         '<div class="field full"><label>接口地址</label><input id="b-api" value="' + esc(s.apiBase || '') + '" placeholder="小程序调用的云函数 / 接口域名"></div>' +
         '</div>') +
       card('商机说明', '<div class="field"><label>套餐说明</label><textarea id="b-note" rows="3">' + esc(s.planNote || '') + '</textarea></div>' +
-        '<div class="small" style="color:var(--muted-2);margin-top:8px">展示在用户端会员购买页与收款说明位置。</div>'),
+        '<div class="small" style="color:var(--muted-2);margin-top:8px">展示在用户端会员购买页与收款说明位置。</div>') +
       card('平台联系二维码',
         '<div id="b-qr" style="display:flex;align-items:center;justify-content:center;min-height:190px;border:1px dashed var(--line);border-radius:12px;background:#fbfbfd">' +
         (qr ? '<img src="' + esc(qr) + '" alt="企业微信活码" style="max-width:180px;max-height:180px;border-radius:8px">' : '<span class="small" style="color:var(--muted-2)">未上传二维码</span>') +
@@ -5026,6 +6279,8 @@
 
   const PAY_FILTER = { status: '', bizType: '', keyword: '', page: 1, limit: 20 }
   const REFUND_FILTER = { status: '待处理', q: '', page: 1, limit: 10 }
+  /* 收款方式兜底：接口返回 methods 时用接口值，避免前后端枚举不一致 */
+  const PAY_METHOD_FALLBACK = ['微信支付', '企业微信', '微信转账', '对公转账', '支付宝', '现金', '其他']
   let payMeta = { statusList: [], bizTypes: [] }
 
   /**
@@ -5085,61 +6340,133 @@
     }
   }
 
-  Pages.finance = async function (view) {
-    view.innerHTML = pageHead('财务中心', '会员收款由微信支付自动入账；委托服务费由超管确认到账',
-      '<button class="btn primary" id="f-grant">' + icon('spark') + '<span>开通会员</span></button>') +
-      '<div id="f-summary">' + loadingBlock('汇总财务数据') + '</div>' +
-      '<div id="f-flow" style="margin-top:14px">' + loadingBlock('读取收款流水') + '</div>' +
-      (C.can('refund.list') ? '<div id="f-refunds" style="margin-top:14px">' + loadingBlock('读取退款申请') + '</div>' : '')
+  /* 财务中心页签与筛选状态：切页签只换内容区，各页签筛选条件互不影响 */
+  const FIN = {
+    tab: 'overview',
+    withdraw: { status: '', keyword: '', page: 1, limit: 20 },
+    commission: { month: '', type: '', keyword: '', page: 1, limit: 20 }
+  }
 
+  function finTabs() {
+    const tabs = [
+      ['overview', '资金总览'],
+      ['payments', '收款入账'],
+      ['withdrawals', '提现台账'],
+      ['commissions', '佣金台账']
+    ]
+    if (C.can('refund.list')) tabs.push(['refunds', '退款申请'])
+    if (C.can('promote.saveSettings')) tabs.push(['rates', '佣金设置'])
+    return tabs
+  }
+
+  /* 近 12 个自然月选项：佣金 / 工资按自然月归档，默认全部 */
+  function finMonthList() {
+    const list = [{ value: '', label: '全部月份' }]
+    const base = new Date(Date.now() + 8 * 60 * 60 * 1000)
+    for (let i = 0; i < 12; i += 1) {
+      const d = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() - i, 1))
+      const key = d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0')
+      list.push({ value: key, label: key + (i === 0 ? '（本月）' : i === 1 ? '（上月）' : '') })
+    }
+    return list
+  }
+
+  function finReload(tab) {
+    const view = document.getElementById('view')
+    if (!view) return
+    if (tab) FIN.tab = tab
+    Pages.finance(view, { query: { tab: FIN.tab } })
+  }
+
+  function finDirectionBadge(dir) {
+    return badge(dir === 'out' ? '支出' : '收入', dir === 'out' ? 'danger' : 'ok', true)
+  }
+
+  function finPayableOf(w) {
+    /* 已冲正 / 被占用佣金不会生成出款明细，实际应付 = 净额 − 未覆盖金额 */
+    return Math.max(0, Math.round((Number(w.net || 0) - Number(w.uncoveredAmount || 0)) * 100) / 100)
+  }
+
+  Pages.finance = async function (view, ctx) {
+    const query = (ctx && ctx.query) || {}
+    const tabs = finTabs()
+    if (query.tab && tabs.some(function (t) { return t[0] === query.tab })) FIN.tab = query.tab
+    if (!tabs.some(function (t) { return t[0] === FIN.tab })) FIN.tab = 'overview'
+
+    view.innerHTML = pageHead('财务中心', '收款入账 · 提现打款 · 佣金计提 · 退款处理：每笔资金一条台账，可查、可改、可追溯',
+      (C.can('payment.manual') ? '<button class="btn primary" id="f-manual">' + icon('plus') + '<span>补录入账</span></button>' : '') +
+      '<button class="btn" id="f-grant">' + icon('spark') + '<span>开通会员</span></button>') +
+      '<div class="tabs" id="f-tabs">' + tabs.map(function (t) {
+        return '<button class="' + (FIN.tab === t[0] ? 'on' : '') + '" data-f-tab="' + t[0] + '">' + esc(t[1]) + '</button>'
+      }).join('') + '</div>' +
+      '<div id="f-body" style="margin-top:14px">' + loadingBlock('读取财务数据') + '</div>'
+
+    view.querySelectorAll('[data-f-tab]').forEach(function (btn) {
+      btn.onclick = function () {
+        const key = btn.getAttribute('data-f-tab')
+        if (FIN.tab === key) return
+        finReload(key)
+      }
+    })
     view.querySelector('#f-grant').onclick = function () { openGrantModal({ onDone: function () { Pages.finance(view) } }) }
+    const manualBtn = view.querySelector('#f-manual')
+    if (manualBtn) manualBtn.onclick = function () { openFinManualPayment(function () { finReload('payments') }) }
 
+    const body = view.querySelector('#f-body')
     try {
-      const tasks = [
-        api('finance.summary', { days: 30 }),
-        api('payment.list', Object.assign({}, PAY_FILTER))
-      ]
-      if (C.can('refund.list')) tasks.push(api('refund.list', Object.assign({}, REFUND_FILTER)))
-      const results = await Promise.all(tasks)
-      const summary = results[0]
-      const flows = results[1]
-      payMeta = { statusList: flows.statusList || [], bizTypes: flows.bizTypes || [] }
-      renderFinanceSummary(view.querySelector('#f-summary'), summary)
-      renderPayFlow(view.querySelector('#f-flow'), flows)
-      if (C.can('refund.list')) renderRefundQueue(view.querySelector('#f-refunds'), results[2])
+      if (FIN.tab === 'payments') await renderPayFlow(body)
+      else if (FIN.tab === 'withdrawals') await renderFinWithdrawals(body)
+      else if (FIN.tab === 'commissions') await renderFinCommissions(body)
+      else if (FIN.tab === 'rates') await renderFinRates(body)
+      else if (FIN.tab === 'refunds') renderRefundQueue(body, await api('refund.list', Object.assign({}, REFUND_FILTER)))
+      else await renderFinOverview(body)
     } catch (err) {
-      view.querySelector('#f-summary').innerHTML = '<div class="card card-body" style="color:var(--danger)">' + esc(err.message) + '</div>'
-      view.querySelector('#f-flow').innerHTML = ''
+      body.innerHTML = '<div class="card card-body" style="color:var(--danger)">' + esc(err.message) + '</div>'
     }
   }
 
-  function renderFinanceSummary(root, data) {
+  /* ---------------- 总览：现金口径 = 收款 − 退款 − 已打款提现 ---------------- */
+  async function renderFinOverview(root) {
+    const data = await api('finance.summary', { days: 30 })
     const t = data.totals || {}
+    const c = data.cash || {}
     const months = data.months || []
     const byBizType = data.byBizType || []
+    const byChannel = data.byChannel || []
     const byPlan = data.byPlan || []
     const topSpenders = data.topSpenders || []
-
+    const recentCash = data.recentCash || []
     root.innerHTML =
       '<div class="grid g5">' +
-      kpi('累计营收', money(t.revenue), '仅微信支付到账') +
-      kpi('近 30 天', money(t.last30), '今日 ' + money(t.today)) +
-      kpi('付费用户', num(t.payers), '复购 ' + num(t.repeatPayers) + ' 人') +
-      kpi('ARPU', money(t.arpu), '人均累计消费') +
-      kpi('付费率 / 续约率', pct(t.conversionRate) + ' / ' + pct(t.renewalRate), '付费率 = 付费用户 / 全部用户') +
+      kpi('本月收款', money(c.incomeMonth), '累计 ' + money(c.incomeTotal) + ' · 退款 ' + money(c.refundMonth)) +
+      kpi('本月已打款', money(c.withdrawPaidMonth), '累计 ' + money(c.withdrawPaid) + ' · 共 ' + num(c.withdrawCount) + ' 笔提现') +
+      kpi('本月现金结余', money(c.balanceMonth), '累计结余 ' + money(c.balance)) +
+      kpi('本月佣金计提', money(c.commissionMonth), '累计 ' + money(c.commissionTotal)) +
+      kpi('待打款提现', money(c.withdrawPending), num(c.withdrawPendingCount) + ' 笔待处理 · 失败 ' + num(c.withdrawFailedCount) + ' 笔') +
       '</div>' +
-      '<div class="grid g5" style="margin-top:12px">' +
-      kpi('活跃会员', num(t.activeMembers), '商机权限有效中') +
-      kpi('7 天内到期', num(t.expiringSoon), '优先提醒续费') +
-      kpi('近 7 天到账', money((data.recon || {}).total), num((data.recon || {}).wechatCount || 0) + ' 笔 · 仅微信支付') +
-      kpi('帮助匹配', num(t.matchedCount), '已匹配 / 已成交商机') +
-      kpi('注册用户', num(t.totalUsers), '付费率分母') +
+      '<div class="grid g2" style="margin-top:12px">' +
+      kpi('客服工资 · 本月', money(c.staffSalaryMonth), '累计 ' + money(c.staffSalaryTotal) + ' · 仅委托佣金') +
+      kpi('推广者佣金', money(c.promoterCommissionMonth), '累计 ' + money(c.promoterCommissionTotal)) +
+      '</div>' +
+      '<div class="grid g4" style="margin-top:12px">' +
+      kpi('总营收（会员 + 委托服务费）', money(t.revenue), '今日 ' + money(t.today) + ' · 近 30 天 ' + money(t.last30)) +
+      kpi('委托服务费收入', money(t.serviceFeeRevenue), '会员开通收入 ' + money(t.memberRevenue) + ' · 服务费 ' + num(t.feeOrders) + ' 笔') +
+      kpi('待确认收款', money(t.pendingAmount), num(t.pendingCount) + ' 笔待确认到账') +
+      kpi('活跃会员 / 7 天内到期', num(t.activeMembers) + ' / ' + num(t.expiringSoon), '付费用户 ' + num(t.payers) + ' 人 · ARPU ' + money(t.arpu)) +
       '</div>' +
       reconCard(data.recon) +
+      card('渠道营收（Apple 单独核算）', table(['渠道', '笔数', '金额', '占比'], byChannel.map(function (r) {
+        const pct = Number(t.revenue) > 0 ? Math.round((Number(r.amount) / Number(t.revenue)) * 1000) / 10 : 0
+        return '<td>' + esc(r.label) + (r.key === 'apple' ? ' ' + badge('单独出表', 'warn', true) : '') + '</td>' +
+          '<td>' + num(r.count) + '</td><td class="mono strong">' + money(r.amount) + '</td><td class="mono">' + pct + '%</td>'
+      }), '暂无渠道数据'), '<span class="small">Apple 内购收入按 Apple 账单单独核算，不并入微信对账；手动开通 / 线下登记单列可追溯。</span>') +
       '<div class="grid g-side" style="margin-top:14px;align-items:start">' +
-      card('分月营收（近 6 个月）', barChart(months.map(function (m) {
-        return { label: m.month.slice(5) + ' 月', value: m.revenue }
-      }), { format: function (v) { return money(v, 0) } })) +
+      card('近 6 个月资金流向', table(['月份', '总营收', '其中委托服务费', 'Apple 营收', '已打款提现', '佣金计提'], months.map(function (m) {
+        return '<td class="strong">' + esc(m.month) + '</td><td class="mono">' + money(m.revenue) + '</td>' +
+          '<td class="mono">' + money(m.fee) + '</td>' +
+          '<td class="mono">' + money(m.apple) + '</td>' +
+          '<td class="mono">' + money(m.withdraw) + '</td><td class="mono">' + money(m.commission) + '</td>'
+      }), '暂无资金数据')) +
       card('营收结构', '<div style="margin-bottom:14px"><div class="small" style="color:var(--muted-2);margin-bottom:8px">按业务类型</div>' +
         progressRows(byBizType.map(function (b) {
           return { label: b.bizType, value: b.amount, text: money(b.amount) + ' · ' + b.count + ' 笔' }
@@ -5150,60 +6477,87 @@
         }), '暂无会员订单')) +
       '</div>' +
       '<div class="grid g-side" style="margin-top:14px;align-items:start">' +
+      card('最近资金流水', table(['时间', '方向', '用户', '摘要', '金额'], recentCash.map(function (r) {
+        return '<td class="small">' + esc(r.paidText || dateText(r.at)) + '</td>' +
+          '<td>' + finDirectionBadge(r.direction) + '</td>' +
+          '<td><div>' + esc(r.nick || '—') + '</div><div class="small" style="color:var(--muted-2)">' + esc(r.method || '') + '</div></td>' +
+          '<td class="small">' + esc(r.label || r.kind || '') + '</td>' +
+          '<td class="mono strong">' + (r.direction === 'out' ? '-' : '+') + money(r.amount) + '</td>'
+      }), '暂无资金流水')) +
       card('用户消费排行', table(['用户', '累计消费', '近 30 天', '笔数', '最近消费'], topSpenders.map(function (u) {
         return '<td><div class="strong">' + esc(u.nick) + '</div><div class="small" style="color:var(--muted-2)">' + esc(u.uid) + '</div></td>' +
           '<td class="mono">' + money(u.total) + '</td><td class="mono">' + money(u.last30) + '</td>' +
           '<td>' + num(u.count) + '</td><td class="small">' + esc(u.lastText) + '</td>'
       }), '暂无消费记录')) +
-      card('近期到账', table(['用户', '业务', '实收', '方式', '日期'], (data.recent || []).map(function (r) {
-        return '<td>' + esc(r.nick) + '</td><td>' + esc(r.bizType) + '</td>' +
-          '<td class="mono">' + money(r.amount) + '</td><td>' + esc(r.method || '—') + '</td>' +
-          '<td class="small">' + esc(r.paidText) + '</td>'
-      }), '暂无到账记录')) +
       '</div>'
     wireRecon(root)
   }
 
-  function renderPayFlow(root, data) {
+  /* ---------------- 收款入账：可编辑备注 / 凭证，可补录线下收入 ---------------- */
+  async function renderPayFlow(root) {
+    const data = await api('payment.list', Object.assign({}, PAY_FILTER))
+    payMeta = {
+      statusList: data.statusList || [],
+      bizTypes: data.bizTypes || [],
+      methods: data.methods || PAY_METHOD_FALLBACK.slice()
+    }
     const items = data.items || []
     const totals = data.totals || {}
-    root.innerHTML = card('收款流水',
+    root.innerHTML = card('收款入账台账',
       '<div class="filters">' +
       '<div class="field"><label>状态</label><select id="pf-status">' + options(payMeta.statusList, PAY_FILTER.status) + '</select></div>' +
       '<div class="field"><label>业务类型</label><select id="pf-biz">' + options(payMeta.bizTypes, PAY_FILTER.bizType) + '</select></div>' +
-      '<div class="field"><label>关键词</label><input id="pf-kw" placeholder="用户 / 备注" value="' + esc(PAY_FILTER.keyword) + '"></div>' +
+      '<div class="field"><label>关键词</label><input id="pf-kw" placeholder="用户 / 备注 / 收款单号" value="' + esc(PAY_FILTER.keyword) + '"></div>' +
       '<div class="field" style="justify-content:flex-end"><button class="btn" id="pf-search">' + icon('search') + '<span>查询</span></button></div>' +
       '</div>' +
       '<div class="small" style="color:var(--muted-2);margin-bottom:10px">合计 ' + money(totals.all) + ' · 已到账 ' + money(totals.confirmed) +
-      (Number(totals.pending) > 0 ? ' · 历史待确认 ' + money(totals.pending) : '') +
+      (Number(totals.pending) > 0 ? ' · 待确认 ' + money(totals.pending) : '') +
       ' · 已退款 ' + money(totals.refunded) + '</div>' +
-      table(['用户', '业务', '套餐', '应收', '优惠', '实收', '方式', '状态', '收款日期', '操作'], items.map(function (r) {
-        return '<td><div class="strong">' + esc(r.nick) + '</div><div class="small" style="color:var(--muted-2)">' + esc(r.uid) + '</div></td>' +
-          '<td>' + esc(r.bizType) + '</td><td class="small">' + esc(r.planLabel || (r.days ? r.days + ' 天' : '—')) + '</td>' +
+      table(['用户', '业务', '套餐', '应收', '优惠', '实收', '方式', '状态', '收款日期', '备注 / 凭证', '操作'], items.map(function (r) {
+        return '<td><div class="strong">' + esc(r.nick) + '</div><div class="small" style="color:var(--muted-2)">' + esc(r.uid) + '</div>' +
+            '<div class="small" style="color:var(--muted-2)">' + esc(r.id) + '</div></td>' +
+          '<td>' + esc(r.bizType) + (r.manual ? badge('补录', 'warn', true) : '') + '</td>' +
+          '<td class="small">' + esc(r.planLabel || (r.days ? r.days + ' 天' : '—')) + '</td>' +
           '<td class="mono">' + money(r.amount) + '</td><td class="mono">' + money(r.discount) + '</td>' +
           '<td class="mono strong">' + money(r.received) + '</td><td>' + esc(r.method || '—') + '</td>' +
           '<td>' + autoBadge(r.status) + '</td><td class="small">' + esc(r.paidText) + '</td>' +
-          '<td>' + (r.status === '待确认' && r.agencyId && C.can('payment.feeConfirm')
-            ? '<button class="btn xs" data-ok="' + esc(r.id) + '">确认服务费到账</button>'
+          '<td class="small" style="max-width:220px">' +
+            (r.note ? esc(r.note) : '<span style="color:var(--muted-2)">未填写</span>') +
+            (r.voucher ? '<div><button class="btn xs ghost" data-pv="' + esc(r.voucher) + '">' + icon('eye') + '<span>凭证</span></button></div>' : '') +
+          '</td>' +
+          '<td>' +
+          (C.can('payment.updateNote') ? '<button class="btn xs" data-edit="' + esc(r.id) + '">编辑备注</button>' : '') +
+          (r.status === '待确认' && r.agencyId && C.can('payment.feeConfirm')
+            ? '<button class="btn xs" data-ok="' + esc(r.id) + '">确认到账</button>'
             : '') +
           (r.status === '已确认' && C.can('payment.refund')
             ? '<button class="btn xs danger" data-back="' + esc(r.id) + '">退款</button>'
             : '') + '</td>'
-      }), '暂无收款记录') + pager(data.total, data.page || PAY_FILTER.page, data.limit || PAY_FILTER.limit))
+      }), '暂无收款记录') + pager(data.total, data.page || PAY_FILTER.page, data.limit || PAY_FILTER.limit),
+      '<span class="small">提醒：收款以实际到账为准；补录只用于线下 / 对公转账，需填写说明并保留凭证。</span>')
 
     root.querySelector('#pf-search').onclick = function () {
       PAY_FILTER.status = root.querySelector('#pf-status').value
       PAY_FILTER.bizType = root.querySelector('#pf-biz').value
       PAY_FILTER.keyword = root.querySelector('#pf-kw').value.trim()
       PAY_FILTER.page = 1
-      Pages.finance(document.getElementById('view'))
+      finReload('payments')
     }
     root.querySelector('#pf-kw').onkeydown = function (e) {
       if (e.key === 'Enter') root.querySelector('#pf-search').click()
     }
     wirePager(root, function (page) {
       PAY_FILTER.page = page
-      Pages.finance(document.getElementById('view'))
+      finReload('payments')
+    })
+    root.querySelectorAll('[data-pv]').forEach(function (btn) {
+      btn.onclick = function () { previewImage(btn.getAttribute('data-pv')) }
+    })
+    root.querySelectorAll('[data-edit]').forEach(function (btn) {
+      btn.onclick = function () {
+        const row = items.filter(function (r) { return r.id === btn.getAttribute('data-edit') })[0]
+        if (row) openFinEditPayment(row, function () { finReload('payments') })
+      }
     })
     root.querySelectorAll('[data-ok]').forEach(function (btn) {
       btn.onclick = async function () {
@@ -5211,7 +6565,7 @@
         try {
           await api('payment.feeConfirm', { id: btn.getAttribute('data-ok'), note: '' })
           toast('服务费已确认到账')
-          Pages.finance(document.getElementById('view'))
+          finReload('payments')
         } catch (err) { toast(err.message, 'err'); btn.disabled = false }
       }
     })
@@ -5222,10 +6576,511 @@
         try {
           await api('payment.refund', { id: btn.getAttribute('data-back'), reason: '后台退款' })
           toast('已标记退款')
-          Pages.finance(document.getElementById('view'))
+          finReload('payments')
         } catch (err) { toast(err.message, 'err') }
       }
     })
+  }
+
+  /* ---------------- 提现台账：审核 → 领取 → 打款回填，全状态可查 ---------------- */
+  async function renderFinWithdrawals(root) {
+    const data = await api('promote.withdrawList', {
+      status: FIN.withdraw.status,
+      q: FIN.withdraw.keyword,
+      page: FIN.withdraw.page,
+      limit: FIN.withdraw.limit
+    })
+    const items = data.items || []
+    const pageNet = items.reduce(function (sum, w) {
+      return sum + (w.status === '已到账' ? Number(w.net || 0) : 0)
+    }, 0)
+    root.innerHTML = card('提现台账',
+      '<div class="filters">' +
+      '<div class="field"><label>状态</label><select id="fw-status">' +
+        options(['待审核', '待打款', '打款中', '打款失败', '已到账', '已驳回', '已撤销'], FIN.withdraw.status) +
+        '</select></div>' +
+      '<div class="field"><label>关键词</label><input id="fw-kw" placeholder="提现单号 / 昵称 / 用户ID" value="' + esc(FIN.withdraw.keyword) + '"></div>' +
+      '<div class="field" style="justify-content:flex-end"><button class="btn" id="fw-search">' + icon('search') + '<span>查询</span></button></div>' +
+      '</div>' +
+      '<div class="small" style="color:var(--muted-2);margin-bottom:10px">共 ' + num(data.total) + ' 笔 · 本页已到账净额 ' + money(pageNet) + '</div>' +
+      table(['用户', '提现金额', '手续费 / 税 / 净额', '收款银行卡', '状态', '单据 / 凭证', '申请时间', '操作'], items.map(function (w) {
+        const payable = finPayableOf(w)
+        return '<td><div class="strong">' + esc(w.nick || '—') + '</div>' +
+            '<div class="small" style="color:var(--muted-2)">' + esc(w.userNo || w.uid) + '</div>' +
+            '<div class="small" style="color:var(--muted-2)">' + esc(w.id) + '</div></td>' +
+          '<td class="mono strong">' + money(w.amount) + '</td>' +
+          '<td class="small"><div class="mono">' + money(w.fee) + ' / ' + money(w.tax) + '</div>' +
+            '<div class="mono strong">' + money(payable) + '</div></td>' +
+          '<td class="small"><div>' + esc(w.bankHolder || '未填写持卡人') + '</div>' +
+            '<div>' + esc(w.bankName || '未填写开户行') + '</div>' +
+            '<div class="mono">' + esc(w.bankAccount || w.bankAccountMasked || '未登记卡号') + '</div></td>' +
+          '<td>' + autoBadge(w.status) + (w.overdue ? '<div class="small" style="color:var(--danger)">已超时</div>' : '') +
+            (w.failReason ? '<div class="small" style="color:var(--danger)">' + esc(w.failReason) + '</div>' : '') + '</td>' +
+          '<td class="small">' + (w.payoutNo ? '<div class="mono">' + esc(w.payoutNo) + '</div>' : '') +
+            (w.checkedBy ? '<div>复核：' + esc(w.checkedBy) + '</div>' : '') +
+            (w.voucherUrl ? '<button class="btn xs ghost" data-wpv="' + esc(w.voucherUrl) + '">' + icon('eye') + '<span>凭证</span></button>' : '') +
+            (w.note ? '<div style="color:var(--muted-2)">' + esc(w.note) + '</div>' : '') + '</td>' +
+          '<td class="small">' + esc(dateText(w.applyAt)) +
+            (w.paidAt ? '<div style="color:var(--muted-2)">到账 ' + esc(dateText(w.paidAt)) + '</div>' : '') + '</td>' +
+          '<td>' + finWithdrawActions(w) + '</td>'
+      }), '暂无提现记录') + pager(data.total, data.page || FIN.withdraw.page, data.limit || FIN.withdraw.limit),
+      '<span class="small">流程：推广者申请 → 客服 / 财务审核 → 财务领取并打款 → 上传凭证回填；打款金额必须与净额（扣除已冲正佣金）一致。</span>')
+
+    root.querySelector('#fw-search').onclick = function () {
+      FIN.withdraw.status = root.querySelector('#fw-status').value
+      FIN.withdraw.keyword = root.querySelector('#fw-kw').value.trim()
+      FIN.withdraw.page = 1
+      finReload('withdrawals')
+    }
+    root.querySelector('#fw-kw').onkeydown = function (e) {
+      if (e.key === 'Enter') root.querySelector('#fw-search').click()
+    }
+    wirePager(root, function (page) {
+      FIN.withdraw.page = page
+      finReload('withdrawals')
+    })
+    root.querySelectorAll('[data-wpv]').forEach(function (btn) {
+      btn.onclick = function () { previewImage(btn.getAttribute('data-wpv')) }
+    })
+    root.querySelectorAll('[data-wact]').forEach(function (btn) {
+      btn.onclick = function () {
+        const w = items.filter(function (row) { return row.id === btn.getAttribute('data-id') })[0]
+        const act = btn.getAttribute('data-wact')
+        if (!w) return
+        if (act === 'approve') finApproveWithdraw(w)
+        else if (act === 'reject') finRejectWithdraw(w)
+        else if (act === 'claim') finClaimWithdraw(w)
+        else if (act === 'payout') openFinPayout(w, function () { finReload('withdrawals') })
+        else if (act === 'fail') finFailWithdraw(w)
+        else if (act === 'cancel') finCancelWithdraw(w)
+      }
+    })
+  }
+
+  function finWithdrawActions(w) {
+    const canApprove = C.can('promote.withdrawApprove')
+    const canClaim = C.can('promote.payoutClaim')
+    const canPayout = C.can('promote.payoutMark')
+    if (w.status === '待审核' && canApprove) {
+      return '<button class="btn xs primary" data-wact="approve" data-id="' + esc(w.id) + '">通过</button>' +
+        '<button class="btn xs danger" data-wact="reject" data-id="' + esc(w.id) + '">驳回</button>'
+    }
+    if (w.status === '待打款' && canClaim) {
+      return '<button class="btn xs primary" data-wact="claim" data-id="' + esc(w.id) + '">领取打款</button>'
+    }
+    if (w.status === '打款中') {
+      return (canPayout ? '<button class="btn xs primary" data-wact="payout" data-id="' + esc(w.id) + '">回填打款</button>' : '') +
+        (canPayout ? '<button class="btn xs danger" data-wact="fail" data-id="' + esc(w.id) + '">标记失败</button>' : '')
+    }
+    if (w.status === '打款失败' && canClaim) {
+      return '<button class="btn xs" data-wact="claim" data-id="' + esc(w.id) + '">重新打款</button>' +
+        '<button class="btn xs ghost" data-wact="cancel" data-id="' + esc(w.id) + '">退回余额</button>'
+    }
+    return '<span class="small" style="color:var(--muted-2)">' + (w.status === '已到账' ? '已完成' : '—') + '</span>'
+  }
+
+  async function finApproveWithdraw(w) {
+    const ok = await confirm({
+      title: '通过提现申请',
+      message: '确认提现单 ' + w.id + '（净额 ' + money(finPayableOf(w)) + '）信息无误？通过后进入待打款，由财务领取打款。',
+      okText: '通过'
+    })
+    if (!ok) return
+    try {
+      await api('promote.withdrawApprove', { id: w.id })
+      toast('已通过，等待财务打款')
+      finReload('withdrawals')
+    } catch (err) { toast(err.message, 'err') }
+  }
+
+  function finRejectWithdraw(w) {
+    const m = modal({
+      title: '驳回提现申请',
+      sub: w.nick + ' · 净额 ' + money(finPayableOf(w)),
+      body: field('驳回原因（会通知推广者）', '<textarea id="fr-reason" rows="3" maxlength="200" placeholder="例如：收款卡信息有误，请补全后重新申请"></textarea>'),
+      footer: '<button class="btn" data-close="1">取消</button><button class="btn danger" id="fr-ok">确认驳回</button>'
+    })
+    m.foot.querySelector('#fr-ok').onclick = async function () {
+      const reason = m.body.querySelector('#fr-reason').value.trim()
+      if (!reason) return toast('请填写驳回原因', 'err')
+      try {
+        await api('promote.withdrawReject', { id: w.id, reason })
+        closeModal()
+        toast('已驳回，金额已退回可提现余额')
+        finReload('withdrawals')
+      } catch (err) { toast(err.message, 'err') }
+    }
+  }
+
+  async function finClaimWithdraw(w) {
+    try {
+      await api('promote.payoutClaim', { id: w.id })
+      toast('已领取，请按银行卡打款后回填')
+      finReload('withdrawals')
+    } catch (err) { toast(err.message, 'err') }
+  }
+
+  function finFailWithdraw(w) {
+    const m = modal({
+      title: '登记打款失败',
+      sub: w.nick + ' · 净额 ' + money(finPayableOf(w)),
+      body: field('失败原因（会通知推广者，金额保留）', '<textarea id="ff-reason" rows="3" maxlength="200" placeholder="例如：银行卡号与户名不一致，银行退回"></textarea>'),
+      footer: '<button class="btn" data-close="1">取消</button><button class="btn danger" id="ff-ok">确认失败</button>'
+    })
+    m.foot.querySelector('#ff-ok').onclick = async function () {
+      const reason = m.body.querySelector('#ff-reason').value.trim()
+      if (!reason) return toast('请填写失败原因', 'err')
+      try {
+        await api('promote.payoutMark', { id: w.id, result: 'failed', failReason: reason })
+        closeModal()
+        toast('已登记失败，可重新打款')
+        finReload('withdrawals')
+      } catch (err) { toast(err.message, 'err') }
+    }
+  }
+
+  async function finCancelWithdraw(w) {
+    const ok = await confirm({
+      title: '退回可提现余额',
+      message: '退回后该提现单终止，净额 ' + money(finPayableOf(w)) + ' 回到推广者可提现余额，推广者需重新申请。',
+      okText: '确认退回', danger: true
+    })
+    if (!ok) return
+    try {
+      await api('promote.payoutCancel', { id: w.id })
+      toast('已退回余额')
+      finReload('withdrawals')
+    } catch (err) { toast(err.message, 'err') }
+  }
+
+  /* 打款回填：单据号 / 实际金额 / 凭证 / 复核人，金额必须与净额闭合 */
+  function openFinPayout(w, done) {
+    if (!w) return
+    const payable = finPayableOf(w)
+    const nowLocal = (function () {
+      const d = new Date()
+      const pad = function (n) { return String(n).padStart(2, '0') }
+      return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes())
+    })()
+    const m = modal({
+      title: '回填打款',
+      sub: '提现单 ' + w.id + ' · 应付净额 ' + money(payable),
+      wide: true,
+      body:
+        '<div class="setting-row" style="margin-bottom:12px"><div class="info">' +
+          '<div class="small" style="color:var(--muted-2)">请按推广者登记的收款银行卡打款</div>' +
+          '<div class="strong">' + esc(w.bankHolder || '未填写持卡人') + ' · ' + esc(w.bankName || '未填写开户行') + '</div>' +
+          '<div class="mono strong" style="font-size:16px">' + esc(w.bankAccount || w.bankAccountMasked || '未登记卡号') + '</div>' +
+          (w.bankReady === false ? '<div class="small" style="color:var(--danger)">该提现单未登记完整银行卡，请先让推广者补全后再回填</div>' : '') +
+        '</div></div>' +
+        field('出款单据号（银行流水号 / 分账单号，全局唯一）', '<input id="fp-no" placeholder="如 BANK-20261118-001">') +
+        field('实际出款金额（元）', '<input id="fp-amount" type="number" step="0.01" min="0" value="' + payable.toFixed(2) + '">' +
+          '<div class="small" style="color:var(--muted-2)">必须等于应付净额 ' + payable.toFixed(2) + ' 元；差额请走「退回余额」后重新申请。</div>') +
+        field('打款凭证（截图）', '<div style="display:flex;gap:8px;align-items:center">' +
+          '<input id="fp-voucher" placeholder="上传后自动填入" style="flex:1">' +
+          '<button class="btn xs" id="fp-upload">' + icon('file') + '<span>上传</span></button>' +
+          '<button class="btn xs ghost" id="fp-view" style="display:none">查看</button>' +
+          '</div>') +
+        field('出款时间', '<input id="fp-paid" type="datetime-local" value="' + nowLocal + '">') +
+        field('复核人（≥ ¥5000 必填，且不能与审核人 / 执行人相同）', '<input id="fp-checker" placeholder="复核人姓名（账号名）">'),
+      footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="fp-ok">确认已打款</button>'
+    })
+    const viewBtn = m.body.querySelector('#fp-view')
+    m.body.querySelector('#fp-upload').onclick = async function () {
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.accept = 'image/*'
+      input.onchange = async function () {
+        const file = input.files && input.files[0]
+        if (!file) return
+        try {
+          const fileId = await mediaUpload(file)
+          m.body.querySelector('#fp-voucher').value = fileId
+          viewBtn.style.display = ''
+          viewBtn.onclick = function () { previewImage(fileId) }
+          toast('凭证已上传')
+        } catch (err) { toast(err.message, 'err') }
+      }
+      input.click()
+    }
+    m.foot.querySelector('#fp-ok').onclick = async function () {
+      const payoutNo = m.body.querySelector('#fp-no').value.trim()
+      const amount = Number(m.body.querySelector('#fp-amount').value)
+      const voucherUrl = m.body.querySelector('#fp-voucher').value.trim()
+      const paidAt = m.body.querySelector('#fp-paid').value
+      const checkedBy = m.body.querySelector('#fp-checker').value.trim()
+      if (!payoutNo) return toast('请填写出款单据号', 'err')
+      if (!voucherUrl) return toast('请上传打款凭证', 'err')
+      if (!(amount > 0)) return toast('请填写实际出款金额', 'err')
+      if (Math.abs(amount - payable) > 0.001) return toast('实际出款金额必须等于应付净额 ' + payable.toFixed(2) + ' 元', 'err')
+      const btn = m.foot.querySelector('#fp-ok')
+      btn.disabled = true
+      try {
+        await api('promote.payoutMark', {
+          id: w.id,
+          payoutNo,
+          payoutAmount: amount,
+          voucherUrl,
+          checkedBy,
+          payoutAt: paidAt ? new Date(paidAt).getTime() : undefined
+        })
+        closeModal()
+        toast('已回填，提现单已完成')
+        if (typeof done === 'function') done()
+      } catch (err) { toast(err.message, 'err'); btn.disabled = false }
+    }
+  }
+
+  /* ---------------- 佣金设置：客服绑定推广（两级）/ 普通推广（一级）+ 客服委托比例（仅管理员） ---------------- */
+  async function renderFinRates(root) {
+    const [pmRaw, csRaw] = await Promise.all([
+      api('promote.settings', {}),
+      api('cs.settings', {})
+    ])
+    const pm = (pmRaw && (pmRaw.settings || pmRaw)) || {}
+    const cs = (csRaw && (csRaw.settings || csRaw)) || {}
+    const l1 = Math.round(Number(pm.commissionRate === undefined ? 0.15 : pm.commissionRate) * 1000) / 10
+    /* 客服绑定用户一级比例：老配置没有该字段时按一级比例展示，避免出现 0 */
+    const csL1 = Math.round(Number(pm.csLevel1Rate === undefined ? (pm.commissionRate === undefined ? 0.15 : pm.commissionRate) : pm.csLevel1Rate) * 1000) / 10
+    const l2 = Math.round(Number(pm.level2Rate === undefined ? 0.15 : pm.level2Rate) * 1000) / 10
+    const agency = Math.round(Number(cs.agencyRate === undefined ? 0.2 : cs.agencyRate) * 1000) / 10
+    /* 区间取平台配置的最低 / 最高比例，避免表单允许的区间与服务端校验不一致 */
+    const rateMin = Math.round(Number(pm.rateMin === undefined ? 0.05 : pm.rateMin) * 1000) / 10
+    const rateMax = Math.round(Number(pm.rateMax === undefined ? 0.3 : pm.rateMax) * 1000) / 10
+    const rateHint = '可设 ' + rateMin + '%–' + rateMax + '%'
+    const agencyMin = Math.round(Number(cs.agencyRateMin === undefined ? 0 : cs.agencyRateMin) * 100)
+    const agencyMax = Math.round(Number(cs.agencyRateMax === undefined ? 0.5 : cs.agencyRateMax) * 100)
+    const rateInput = function (id, label, value, min, max, hint) {
+      return '<div class="field"><label>' + esc(label) + '</label>' +
+        '<div class="flex" style="gap:6px;align-items:center">' +
+        '<input id="' + id + '" type="number" min="' + min + '" max="' + max + '" step="0.5" value="' + value + '" style="max-width:120px">' +
+        '<span class="small">%</span></div>' +
+        (hint ? '<div class="small" style="color:var(--muted-2);margin-top:4px">' + esc(hint) + '</div>' : '') + '</div>'
+    }
+    root.innerHTML =
+      '<div class="grid g2" style="align-items:start">' +
+      card('客服绑定用户推广（两级佣金）',
+        '<div class="small" style="color:var(--muted-2);margin-bottom:12px">客服绑定的推广账号可拿两级：其直接下级首次付款计一级，下级的直接下级首次付款计二级。两级比例在这里分开设置，与普通推广互不影响。</div>' +
+        rateInput('fr-cs-l1', '一级佣金比例（客服绑定）', csL1, rateMin, rateMax, '默认 15%，' + rateHint) +
+        rateInput('fr-l2', '二级佣金比例（客服绑定）', l2, rateMin, rateMax, '默认 15%，' + rateHint) +
+        '<div style="margin-top:14px"><button class="btn primary" id="fr-save-cs">' + icon('check') + '<span>保存客服绑定推广比例</span></button></div>',
+        '<span class="small">对应动作 promote.saveSettings</span>') +
+      card('普通用户推广（仅一级佣金）',
+        '<div class="small" style="color:var(--muted-2);margin-bottom:12px">未绑定客服的推广人（含商机会员）只有一级佣金：其直接下级首次付款按这里的比例计佣，没有二级。调整只影响之后新产生的佣金，已计提佣金不变。</div>' +
+        rateInput('fr-l1', '一级佣金比例（普通推广）', l1, rateMin, rateMax, '默认 15%，' + rateHint) +
+        '<div class="small" style="color:var(--muted-2);margin-top:10px">普通推广人无二级佣金，二级比例不适用。</div>' +
+        '<div style="margin-top:14px"><button class="btn primary" id="fr-save-promote">' + icon('check') + '<span>保存普通推广比例</span></button></div>',
+        '<span class="small">对应动作 promote.saveSettings</span>') +
+      '</div>' +
+      '<div class="grid g2" style="align-items:start;margin-top:14px">' +
+      card('客服委托佣金比例',
+        '<div class="small" style="color:var(--muted-2);margin-bottom:12px">代采 / 代售服务费实收 × 比例计入客服工资。单个客服的专属比例在「客服业务」页设置，优先于此处全局默认。</div>' +
+        rateInput('fr-agency', '全局委托佣金比例', agency, agencyMin, agencyMax, '默认 20%，可设 ' + agencyMin + '%–' + agencyMax + '%；绑定即锁定') +
+        '<div style="margin-top:14px"><button class="btn primary" id="fr-save-agency">' + icon('check') + '<span>保存委托比例</span></button></div>',
+        '<span class="small">对应动作 cs.saveSettings</span>') +
+      card('收入与支出口径', kvList([
+        ['会员开通收入', '会员订单实收（微信支付 / 手动开通 / Apple 内购），计入总营收，资金总览可按业务类型与渠道查看'],
+        ['委托服务费收入', '代采 / 代售 / 租赁服务费到账（财务确认）后计入总营收，可在收款入账台账逐笔查看、修改备注与凭证'],
+        ['客服绑定推广佣金', '一级 + 二级两笔计提，进佣金台账，可查可审核；退款自动冲正'],
+        ['普通推广佣金', '仅一级计提，进佣金台账；退款自动冲正'],
+        ['客服委托佣金', '按委托比例计提，进客服工资与佣金台账，退款冲正']
+      ])) +
+      '</div>'
+    /* 两张卡各存各的，但都提交完整三项，避免把另一组的比例改回默认 */
+    const savePromote = function (btn, tip) {
+      btn.onclick = async function () {
+        btn.disabled = true
+        try {
+          await api('promote.saveSettings', {
+            commissionRate: Number(root.querySelector('#fr-l1').value) / 100,
+            csLevel1Rate: Number(root.querySelector('#fr-cs-l1').value) / 100,
+            level2Rate: Number(root.querySelector('#fr-l2').value) / 100
+          })
+          toast(tip)
+          finReload('rates')
+        } catch (err) { toast(err.message, 'err'); btn.disabled = false }
+      }
+    }
+    savePromote(root.querySelector('#fr-save-promote'), '普通推广佣金比例已更新')
+    savePromote(root.querySelector('#fr-save-cs'), '客服绑定推广佣金比例已更新')
+    const aBtn = root.querySelector('#fr-save-agency')
+    aBtn.onclick = async function () {
+      aBtn.disabled = true
+      try {
+        await api('cs.saveSettings', { agencyRate: Number(root.querySelector('#fr-agency').value) / 100 })
+        toast('客服委托佣金比例已更新')
+        finReload('rates')
+      } catch (err) { toast(err.message, 'err'); aBtn.disabled = false }
+    }
+  }
+
+  /* ---------------- 佣金台账：客服委托 / 推广者，两种口径合并查询 ---------------- */
+  async function renderFinCommissions(root) {
+    const data = await api('finance.commissions', {
+      month: FIN.commission.month,
+      type: FIN.commission.type,
+      keyword: FIN.commission.keyword,
+      page: FIN.commission.page,
+      limit: FIN.commission.limit
+    })
+    const items = data.items || []
+    const totals = data.totals || {}
+    root.innerHTML = card('佣金台账',
+      '<div class="filters">' +
+      '<div class="field"><label>月份</label><select id="fc-month">' + options(finMonthList(), FIN.commission.month) + '</select></div>' +
+      '<div class="field"><label>类型</label><select id="fc-type">' +
+        options([{ value: '', label: '全部类型' }].concat((data.types || []).map(function (t) { return { value: t, label: t } })), FIN.commission.type) +
+        '</select></div>' +
+      '<div class="field"><label>关键词</label><input id="fc-kw" placeholder="客服 / 用户 / 记录号" value="' + esc(FIN.commission.keyword) + '"></div>' +
+      '<div class="field" style="justify-content:flex-end"><button class="btn" id="fc-search">' + icon('search') + '<span>查询</span></button></div>' +
+      '</div>' +
+      '<div class="grid g3" style="margin-bottom:12px">' +
+      kpi('筛选合计', money(totals.all), num(totals.count) + ' 条计提记录') +
+      kpi('客服委托佣金', money(totals.csAgency), '进客服工资') +
+      kpi('推广者佣金', money(totals.promoter), '进推广者余额') +
+      '</div>' +
+      table(['月份', '类型', '归属', '用户', '计提基数', '比例', '佣金', '状态', '时间'], items.map(function (r) {
+        return '<td>' + esc(r.month || '—') + '</td>' +
+          '<td>' + badge(r.type, r.type === '推广佣金' ? 'warn' : 'ok', true) + '</td>' +
+          '<td class="strong">' + esc(r.staffName || r.staffId || '—') + '</td>' +
+          '<td class="small"><div>' + esc(r.userLabel || r.uid || '—') + '</div>' +
+            (r.bizLabel ? '<div style="color:var(--muted-2)">' + esc(r.bizLabel) + '</div>' : '') + '</td>' +
+          '<td class="mono">' + money(r.base) + '</td>' +
+          '<td class="small">' + esc(r.rateText || '—') + '</td>' +
+          '<td class="mono strong">' + money(r.amount) + '</td>' +
+          '<td>' + autoBadge(r.status || '已计提') + '</td>' +
+          '<td class="small">' + esc(r.paidText || '—') + '</td>'
+      }), '该条件下暂无佣金记录') + pager(data.total, data.page || FIN.commission.page, data.limit || FIN.commission.limit),
+      '<span class="small">比例在客服绑定账号时锁定，之后调价不追溯；佣金按自然月汇入客服工资 / 推广者余额，退款会冲正对应佣金。</span>')
+
+    root.querySelector('#fc-search').onclick = function () {
+      FIN.commission.month = root.querySelector('#fc-month').value
+      FIN.commission.type = root.querySelector('#fc-type').value
+      FIN.commission.keyword = root.querySelector('#fc-kw').value.trim()
+      FIN.commission.page = 1
+      finReload('commissions')
+    }
+    root.querySelector('#fc-kw').onkeydown = function (e) {
+      if (e.key === 'Enter') root.querySelector('#fc-search').click()
+    }
+    wirePager(root, function (page) {
+      FIN.commission.page = page
+      finReload('commissions')
+    })
+  }
+
+  /* 编辑收款记录：只改备注与凭证，金额与状态不可改，全部留审计 */
+  function openFinEditPayment(row, done) {
+    const m = modal({
+      title: '编辑入账记录',
+      sub: (row.bizType || '') + ' · ' + (row.nick || row.uid) + ' · 实收 ' + money(row.received) + ' · ' + row.paidText,
+      body: field('入账说明', '<textarea id="fe-note" rows="3" maxlength="200" placeholder="例如：对公转账尾号 8899，已与银行流水核对">' + esc(row.note || '') + '</textarea>') +
+        field('回款凭证', '<div style="display:flex;gap:8px;align-items:center">' +
+          '<input id="fe-voucher" placeholder="上传后自动填入" value="' + esc(row.voucher || '') + '" style="flex:1">' +
+          '<button class="btn xs" id="fe-upload">' + icon('file') + '<span>上传</span></button>' +
+          '<button class="btn xs ghost" id="fe-view" style="display:' + (row.voucher ? '' : 'none') + '">查看</button>' +
+          '</div>'),
+      footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="fe-ok">保存</button>'
+    })
+    const viewBtn = m.body.querySelector('#fe-view')
+    if (row.voucher) viewBtn.onclick = function () { previewImage(row.voucher) }
+    m.body.querySelector('#fe-upload').onclick = function () {
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.accept = 'image/*'
+      input.onchange = async function () {
+        const file = input.files && input.files[0]
+        if (!file) return
+        try {
+          const fileId = await mediaUpload(file)
+          m.body.querySelector('#fe-voucher').value = fileId
+          viewBtn.style.display = ''
+          viewBtn.onclick = function () { previewImage(fileId) }
+          toast('凭证已上传')
+        } catch (err) { toast(err.message, 'err') }
+      }
+      input.click()
+    }
+    m.foot.querySelector('#fe-ok').onclick = async function () {
+      const note = m.body.querySelector('#fe-note').value.trim()
+      const voucher = m.body.querySelector('#fe-voucher').value.trim()
+      if (!note) return toast('请填写入账说明', 'err')
+      try {
+        await api('payment.updateNote', { id: row.id, note, voucher })
+        closeModal()
+        toast('已保存')
+        if (typeof done === 'function') done()
+      } catch (err) { toast(err.message, 'err') }
+    }
+  }
+
+  /* 补录线下收入：固定「其他」类型，直接记已确认，需要说明与凭证 */
+  function openFinManualPayment(done) {
+    const m = modal({
+      title: '补录入账',
+      sub: '仅用于微信支付之外的线下收入（对公转账 / 现金等），补录后直接计入收款台账',
+      wide: true,
+      body: '<div style="margin-bottom:12px">' + userQuery('mp', '搜索并选择付款用户（昵称 / 手机号 / 用户ID）') + '</div>' +
+        field('入账金额（元）', '<input id="mp-amount" type="number" step="0.01" min="0" placeholder="0.00">') +
+        field('收款方式', '<select id="mp-method">' + options(PAY_METHOD_FALLBACK, '对公转账') + '</select>') +
+        field('收款时间', '<input id="mp-paid" type="datetime-local" value="' + (function () {
+          const d = new Date()
+          const pad = function (n) { return String(n).padStart(2, '0') }
+          return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes())
+        })() + '">') +
+        field('入账说明', '<textarea id="mp-note" rows="2" maxlength="200" placeholder="例如：XX 公司代采服务费尾款，合同号 2026-118"></textarea>') +
+        field('回款凭证', '<div style="display:flex;gap:8px;align-items:center">' +
+          '<input id="mp-voucher" placeholder="上传后自动填入" style="flex:1">' +
+          '<button class="btn xs" id="mp-upload">' + icon('file') + '<span>上传</span></button>' +
+          '<button class="btn xs ghost" id="mp-view" style="display:none">查看</button>' +
+          '</div>'),
+      footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="mp-ok">确认入账</button>'
+    })
+    let picked = null
+    wireUserQuery(m.body, 'mp', function (user) { picked = user })
+    const viewBtn = m.body.querySelector('#mp-view')
+    m.body.querySelector('#mp-upload').onclick = function () {
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.accept = 'image/*'
+      input.onchange = async function () {
+        const file = input.files && input.files[0]
+        if (!file) return
+        try {
+          const fileId = await mediaUpload(file)
+          m.body.querySelector('#mp-voucher').value = fileId
+          viewBtn.style.display = ''
+          viewBtn.onclick = function () { previewImage(fileId) }
+          toast('凭证已上传')
+        } catch (err) { toast(err.message, 'err') }
+      }
+      input.click()
+    }
+    m.foot.querySelector('#mp-ok').onclick = async function () {
+      if (!picked) return toast('请先搜索并选择付款用户', 'err')
+      const amount = Number(m.body.querySelector('#mp-amount').value)
+      const note = m.body.querySelector('#mp-note').value.trim()
+      const method = m.body.querySelector('#mp-method').value
+      const voucher = m.body.querySelector('#mp-voucher').value.trim()
+      const paid = m.body.querySelector('#mp-paid').value
+      if (!(amount > 0)) return toast('请填写入账金额', 'err')
+      if (!note) return toast('请填写入账说明', 'err')
+      const btn = m.foot.querySelector('#mp-ok')
+      btn.disabled = true
+      try {
+        await api('payment.manual', {
+          uid: picked.id,
+          amount,
+          method,
+          note,
+          voucher,
+          paidAt: paid ? new Date(paid).getTime() : undefined
+        })
+        closeModal()
+        toast('补录成功')
+        if (typeof done === 'function') done()
+      } catch (err) { toast(err.message, 'err'); btn.disabled = false }
+    }
   }
 
   /* 用户发起的退款申请：财务核对后通过即执行退款并停用会员权限，驳回必须写原因 */
@@ -5441,6 +7296,8 @@
 
   /* 离开消息页就清空当前会话，避免下次进入时把残留会话的未读直接当成已读 */
   C.onAfterRender = function (page) {
+    /* 离开工单台 / 工单中心后停止轮询，进入对应页面时会重新启动 */
+    if (page !== 'workbench' && page !== 'consult') cfStopPoll()
     if (page === 'messages') return
     msgStopPoll()
     MSG_BOX.uid = ''
@@ -5526,7 +7383,17 @@
         directUnread = Number(d.unread) || 0
       } catch (err) { /* 直聊统计失败不影响用户留言刷新 */ }
     }
-    const sig = msgSig(threads, unread, direct, directUnread)
+    /* 当前打开的会话单独取一次消息指纹：避免会话摘要未变时新消息不显示 */
+    let openSig = ''
+    if (MSG_BOX.uid) {
+      try {
+        const res = await api('msg.list', { uid: MSG_BOX.uid, page: 1, limit: 30 })
+        const list = res.items || []
+        const last = list[list.length - 1] || {}
+        openSig = list.length + '|' + (last.id || '') + '|' + (last.createdAt || '')
+      } catch (err) { openSig = 'err' }
+    }
+    const sig = msgSig(threads, unread, direct, directUnread) + '|' + (MSG_BOX.uid || '') + '|' + openSig
     if (sig === msgPollSig) return
     msgPollSig = sig
     MSG_BOX.threads = threads
@@ -5557,6 +7424,11 @@
     const key = (location.hash || '').replace(/^#\/?/, '')
     if (key && key !== 'messages') return
     pollMessages(view)
+  }
+
+  /* 切回前台时工单台也立即补一次，避免后台节流导致工单与消息延迟 */
+  C.cfPollNow = function () {
+    if (document.getElementById('cf-body')) cfAutoRefresh()
   }
 
   /* ---------------- 推广管理（人工分账交付版） ---------------- */
@@ -5627,7 +7499,7 @@
       rejected: '已驳回', reject: '已驳回',
       cancelled: '已撤销', canceled: '已撤销', revoked: '已撤销',
       pendingSettle: '待结算', settled: '已结算', frozen: '已冻结', reversed: '已冲正',
-      active: '正常', normal: '正常', banned: '封禁', blocked: '封禁', disabled: '已停用'
+      active: '正常', normal: '正常', none: '未开通', banned: '封禁', blocked: '封禁', disabled: '已停用'
     }
     return map[s] || s || '—'
   }
@@ -5656,6 +7528,7 @@
     return {
       raw: row,
       uid: promotePick(row, ['uid', 'userId', 'id'], ''),
+      userNo: promotePick(row, ['userNo'], ''),
       nick: promotePick(row, ['nick', 'nickname', 'name', 'userNick'], '未命名用户'),
       refCode: promotePick(row, ['refCode', 'code', 'promoteCode'], '—'),
       bound: promoteNum(row, ['referrals', 'boundCount', 'bindCount', 'referralCount', 'inviteCount', 'boundUsers']),
@@ -5687,6 +7560,7 @@
       id: promotePick(row, ['id', 'withdrawalId'], ''),
       no: promotePick(row, ['no', 'withdrawalNo', 'orderNo', 'id'], '—'),
       uid: promotePick(row, ['uid', 'userId'], ''),
+      userNo: promotePick(row, ['userNo'], ''),
       nick: promotePick(row, ['nick', 'nickname', 'userNick', 'payeeName'], '—'),
       gross: gross,
       fee: fee,
@@ -5701,6 +7575,12 @@
       payoutAt: promoteMs(promotePick(row, ['payoutAt', 'paidAt', 'finishedAt'], 0)),
       deadlineAt: promoteMs(promotePick(row, ['payoutDeadlineAt', 'deadlineAt', 'payoutDeadline'], 0)),
       voucherUrl: promotePick(row, ['voucherUrl', 'voucher', 'proofUrl'], ''),
+      /* 收款银行卡：审核 / 打款前先核对卡号与持卡人 */
+      bankHolder: promotePick(row, ['bankHolder', 'payeeName'], ''),
+      bankName: promotePick(row, ['bankName', 'bank'], ''),
+      bankAccount: promotePick(row, ['bankAccount'], ''),
+      bankAccountMasked: promotePick(row, ['bankAccountMasked', 'bankMasked'], ''),
+      bankReady: row.bankReady !== false,
       checkedBy: promotePick(row, ['checkedBy', 'checker'], ''),
       note: promotePick(row, ['note', 'remark'], ''),
       failReason: promotePick(row, ['failReason', 'errorMsg'], ''),
@@ -5712,6 +7592,8 @@
     const o = (s && (s.settings || s.config)) || s || {}
     return {
       commissionRate: promoteNum(o, ['commissionRate', 'rate']),
+      /* 客服绑定用户的一级比例：与普通推广人分开设置 */
+      csLevel1Rate: promoteNum(o, ['csLevel1Rate']),
       level2Rate: promoteNum(o, ['level2Rate']),
       feeRate: promoteNum(o, ['feeRate']),
       minWithdraw: promoteNum(o, ['minWithdraw']),
@@ -5728,7 +7610,16 @@
   }
   function promoteCanView() {
     const role = state.account && state.account.role
-    return role === 'admin' || role === 'finance'
+    /* 客服可查看推广者与提现单并做审核；打款回填仍由财务 / 管理员操作 */
+    return role === 'admin' || role === 'finance' || role === 'cs'
+  }
+  /* 按动作权限裁剪页签：客服看不到待打款 / 出款明细 / 对账，避免点进去 403 */
+  function promoteTabsFor() {
+    return PROMOTE_TABS.filter(function (t) {
+      if (t[0] === 'payout' || t[0] === 'items') return C.can('promote.payoutList')
+      if (t[0] === 'rules') return C.can('promote.reconcile')
+      return true
+    })
   }
   function promoteTodoCard(stats) {
     const s = (stats && stats.stats) || stats || {}
@@ -5772,11 +7663,13 @@
 
   Pages.promote = async function (view, ctx) {
     const query = (ctx && ctx.query) || {}
-    if (query.tab && PROMOTE_TABS.some(function (t) { return t[0] === query.tab })) PROMOTE.tab = query.tab
+    const tabs = promoteTabsFor()
+    if (query.tab && tabs.some(function (t) { return t[0] === query.tab })) PROMOTE.tab = query.tab
+    if (!tabs.some(function (t) { return t[0] === PROMOTE.tab })) PROMOTE.tab = 'promoters'
     view.innerHTML = pageHead('推广管理', '推广者绑定、佣金结算与人工分账出款全流程；审核与执行分离，所有资金动作留痕',
       '<button class="btn" id="pm-refresh">' + icon('refresh') + '<span>刷新</span></button>') +
       '<div id="pm-stats">' + loadingBlock('读取推广数据') + '</div>' +
-      '<div class="tabs" id="pm-tabs" style="margin-top:14px">' + PROMOTE_TABS.map(function (t) {
+      '<div class="tabs" id="pm-tabs" style="margin-top:14px">' + tabs.map(function (t) {
         return '<button data-pm-tab="' + t[0] + '"' + (PROMOTE.tab === t[0] ? ' class="on"' : '') + '>' + t[1] + '</button>'
       }).join('') + '</div>' +
       '<div id="pm-body" style="margin-top:14px">' + loadingBlock('读取列表') + '</div>'
@@ -5819,8 +7712,8 @@
   async function renderPromotePromoters(root) {
     const f = PROMOTE.promoters
     root.innerHTML = filterBar([
-      '<div class="field" style="min-width:240px"><label>推广者</label><input id="pm-p-q" placeholder="昵称 / 推广码 / 用户ID" value="' + esc(f.q) + '"></div>',
-      field('状态', '<select id="pm-p-status">' + options(['正常', '封禁'], f.status) + '</select>'),
+      '<div class="field" style="min-width:240px"><label>推广者</label><input id="pm-p-q" placeholder="昵称 / 用户ID / 推广码（可搜未开通用户）" value="' + esc(f.q) + '"></div>',
+      field('状态', '<select id="pm-p-status">' + options(['正常', '封禁', '未开通'], f.status) + '</select>'),
       '<div class="field" style="justify-content:flex-end"><button class="btn primary" id="pm-p-search">' + icon('search') + '<span>查询</span></button></div>'
     ]) + '<div id="pm-p-list" style="margin-top:12px">' + loadingBlock('读取推广者') + '</div>'
     root.querySelector('#pm-p-search').onclick = function () {
@@ -5837,7 +7730,7 @@
         const p = promotePromoter(item)
         const banned = p.status === '封禁' || p.status === 'banned'
         const nameCell = '<div class="strong">' + esc(p.nick) + '</div>' +
-          '<div class="small mono" style="color:var(--muted-2)">' + esc(p.uid) + '</div>' +
+          '<div class="small mono" style="color:var(--muted-2)">' + esc(p.userNo || p.uid) + '</div>' +
           (p.csBound ? '<div class="small" style="color:#2563eb">客服绑定' + (p.csName ? ' · ' + esc(p.csName) : '') + '</div>' : '')
         return '<td>' + nameCell + '</td>' +
           '<td class="mono">' + esc(p.refCode) + '</td>' +
@@ -5850,7 +7743,8 @@
           '<td>' + promoteStatusBadge(p.status) + (p.statusText ? '<div class="small" style="color:var(--muted-2)">' + esc(p.statusText) + '</div>' : '') + '</td>' +
           '<td><div class="flex" style="gap:5px;flex-wrap:wrap">' +
           '<button class="btn xs" data-pm-detail="' + esc(p.uid) + '">查看详情</button>' +
-          (promoteIsAdmin() && p.status !== 'none' ? '<button class="btn xs ' + (banned ? '' : 'danger') + '" data-pm-ban="' + esc(p.uid) + '" data-name="' + esc(p.nick) + '" data-status="' + esc(banned ? '正常' : '封禁') + '">' + (banned ? '解封' : '封禁') + '</button>' : '') +
+          (promoteIsAdmin() && p.status === '未开通' ? '<button class="btn xs primary" data-pm-open="' + esc(p.uid) + '" data-name="' + esc(p.nick) + '">开通推广</button>' : '') +
+          (promoteIsAdmin() && p.status !== '未开通' ? '<button class="btn xs ' + (banned ? '' : 'danger') + '" data-pm-ban="' + esc(p.uid) + '" data-name="' + esc(p.nick) + '" data-status="' + esc(banned ? '正常' : '封禁') + '">' + (banned ? '解封' : '封禁') + '</button>' : '') +
           '</div></td>'
       })
       box.innerHTML = table(['昵称', '推广码', '一级 / 二级人数', '一级佣金', '二级佣金', '待结算', '可提现', '欠款', '状态', '操作'], rows, '暂无推广者') +
@@ -5858,6 +7752,13 @@
       wirePager(box, function (page) { f.page = page; renderPromotePromoters(root) })
       box.querySelectorAll('[data-pm-detail]').forEach(function (btn) {
         btn.onclick = function () { openPromoteDetail(btn.getAttribute('data-pm-detail'), root) }
+      })
+      box.querySelectorAll('[data-pm-open]').forEach(function (btn) {
+        btn.onclick = function () {
+          grantPromoteTo(btn.getAttribute('data-pm-open'), btn.getAttribute('data-name'), function () {
+            renderPromotePromoters(root)
+          })
+        }
       })
       box.querySelectorAll('[data-pm-ban]').forEach(function (btn) {
         btn.onclick = async function () {
@@ -5912,7 +7813,7 @@
       const wds = promoteList(wdData).map(promoteWithdraw)
       const childRow = function (r, withParent) {
         return '<td><div class="strong">' + esc(r.nick || '未命名用户') + '</div>' +
-          '<div class="small mono" style="color:var(--muted-2)">' + esc(r.uid) + '</div></td>' +
+          '<div class="small mono" style="color:var(--muted-2)">' + esc(r.userNo || r.uid) + '</div></td>' +
           (withParent ? '<td>' + esc(r.parentNick || r.parentUid || '—') + '</td>' : '') +
           '<td>' + (r.member ? '<span style="color:#059669">' + esc(r.memberText || '已开通会员') + '</span>' : '<span class="small" style="color:var(--muted-2)">未开通会员</span>') + '</td>' +
           '<td>' + (r.promoterStatus === 'active'
@@ -5927,8 +7828,10 @@
         ['状态', (d.statusText ? esc(d.statusText) : promoteStatusBadge(d.status)) + (d.csBound ? ' · 客服绑定' : '')],
         ['一级人数', num(counts.level1 || level1.length) + ' 人（开通会员 ' + num(opened.level1Member) + ' · 开通推广 ' + num(opened.level1Promoter) + '）'],
         ['二级人数', num(counts.level2 || level2.length) + ' 人（开通会员 ' + num(opened.level2Member) + ' · 开通推广 ' + num(opened.level2Promoter) + '）'],
-        ['一级佣金', promoteMoney(d.level1Earning) + ' <span class="small" style="color:var(--muted-2)">单价 ' + promoteRate(d.rateText || PROMOTE.settings.commissionRate) + '</span>'],
-        ['二级佣金', promoteMoney(d.level2Earning) + ' <span class="small" style="color:var(--muted-2)">单价 ' + promoteRate(d.level2RateText || PROMOTE.settings.level2Rate) + '</span>'],
+        ['一级佣金', promoteMoney(d.level1Earning) + ' <span class="small" style="color:var(--muted-2)">单价 ' + promoteRate(d.rateText || (d.csBound ? PROMOTE.settings.csLevel1Rate : PROMOTE.settings.commissionRate)) + '</span>'],
+        ['二级佣金', d.csBound
+          ? promoteMoney(d.level2Earning) + ' <span class="small" style="color:var(--muted-2)">单价 ' + promoteRate(d.level2RateText || PROMOTE.settings.level2Rate) + '</span>'
+          : '<span class="small" style="color:var(--muted-2)">普通推广无二级佣金</span>'],
         ['待结算 / 可提现', promoteMoney(d.pending) + ' / ' + promoteMoney(d.available)],
         ['欠款', '<span' + (Number(d.debt) > 0 ? ' style="color:var(--danger)"' : '') + '>' + promoteMoney(d.debt) + '</span>']
       ]) +
@@ -5994,8 +7897,10 @@
         const st = promotePick(c, ['status'], '')
         const reversed = st === '已冲正' || st === 'reversed'
         const paymentId = promotePick(c, ['paymentId'], '')
+        const userNo = promotePick(c, ['userNo'], '')
         return '<td><div class="strong">' + esc(promotePick(c, ['nick', 'userNick', 'uid'], '—')) + '</div>' +
-          '<div class="small" style="color:var(--muted-2)">' + esc(promoteDate(promotePick(c, ['createdAt', 'settledAt'], 0))) + '</div></td>' +
+          '<div class="small" style="color:var(--muted-2)">' + (userNo ? '<span class="mono">' + esc(userNo) + '</span> · ' : '') +
+            esc(promoteDate(promotePick(c, ['createdAt', 'settledAt'], 0))) + '</div></td>' +
           '<td class="mono">' + esc(promotePick(c, ['orderNo', 'orderId', 'id'], '—')) + '</td>' +
           '<td class="mono">' + esc(promotePick(c, ['transactionId', 'tradeNo', 'payNo'], '—')) + '</td>' +
           '<td>' + esc(promotePick(c, ['channel', 'payChannel'], '—')) + '</td>' +
@@ -6121,12 +8026,18 @@
         return promoteOverdueRow('' +
           '<td>' + (pending ? '<input type="checkbox" data-pm-wdsel="' + esc(w.id) + '"' + (f.checked[w.id] ? ' checked' : '') + '>' : '') + '</td>' +
           '<td class="mono">' + esc(w.no) + (overdue ? '<div class="small" style="color:var(--danger)">超 ' + timeoutHours + ' 小时未审核</div>' : '') + '</td>' +
-          '<td><div class="strong">' + esc(w.nick) + '</div><div class="small mono" style="color:var(--muted-2)">' + esc(w.uid) + '</div></td>' +
+          '<td><div class="strong">' + esc(w.nick) + '</div><div class="small mono" style="color:var(--muted-2)">' + esc(w.userNo || w.uid) + '</div></td>' +
+          '<td>' + '<div class="strong">' + esc(w.bankHolder || '未填写') + '</div>' +
+            '<div class="small" style="color:var(--muted-2)">' + esc(w.bankName || '—') + '</div>' +
+            '<div class="small mono">' + esc(w.bankAccount || w.bankAccountMasked || '—') + '</div>' +
+            (w.bankReady === false ? '<div class="small" style="color:var(--danger)">未补全收款卡</div>' : '') + '</td>' +
           '<td class="mono">' + promoteMoney(w.gross) + '</td>' +
           '<td class="mono">' + promoteMoney(w.fee) + '</td>' +
           '<td class="mono strong">' + promoteMoney(w.net) + '</td>' +
           '<td>' + esc(promoteDate(w.appliedAt)) + '</td>' +
-          '<td>' + promoteStatusBadge(w.status) + '</td>' +
+          '<td>' + promoteStatusBadge(w.status) +
+            (w.failReason ? '<div class="small" style="color:var(--danger)">' + esc(w.failReason) + '</div>' : '') +
+            (w.voucherUrl ? '<div><button class="btn xs ghost" data-pm-wdvoucher="' + esc(w.voucherUrl) + '">查看打款凭证</button></div>' : '') + '</td>' +
           '<td>' + esc(w.reviewedBy || '—') + '</td>' +
           '<td><div class="flex" style="gap:5px;flex-wrap:wrap">' +
           (pending
@@ -6136,7 +8047,7 @@
           '<button class="btn xs" data-pm-wditems="' + esc(w.no) + '">出款明细</button>' +
           '</div></td>', overdue)
       })
-      box.innerHTML = table(['', '提现单号', '推广者', '毛额', '手续费', '提现净额', '申请时间', '状态', '审核人', '操作'], rows, f.status === '待审核' ? '暂无待审核提现' : '暂无提现记录') +
+      box.innerHTML = table(['', '提现单号', '推广者', '收款银行卡', '毛额', '手续费', '提现净额', '申请时间', '状态', '审核人', '操作'], rows, f.status === '待审核' ? '暂无待审核提现' : '暂无提现记录') +
         (rows.length ? pager(promoteTotal(data, raw), f.page, f.limit) : '')
       const toolbar = document.createElement('div')
       toolbar.className = 'flex flex-wrap'
@@ -6182,6 +8093,13 @@
           C.renderPage()
         }
       })
+      box.querySelectorAll('[data-pm-wdvoucher]').forEach(function (btn) {
+        btn.onclick = function () { previewImage(btn.getAttribute('data-pm-wdvoucher')) }
+      })
+      /* 客服没有出款明细页权限时，隐藏「出款明细」入口，避免点击后 403 */
+      if (!C.can('promote.payoutList')) {
+        box.querySelectorAll('[data-pm-wditems]').forEach(function (btn) { btn.style.display = 'none' })
+      }
       const batch = box.querySelector('#pm-wd-batch')
       if (batch) {
         batch.onclick = async function () {
@@ -6291,11 +8209,17 @@
         const canCancel = w.status === '待打款' || w.status === '打款中' || w.status === '打款失败'
         return promoteOverdueRow('' +
           '<td class="mono">' + esc(w.no) + (overdue ? '<div class="small" style="color:var(--danger)">已超时</div>' : '') + '</td>' +
-          '<td><div class="strong">' + esc(w.nick) + '</div><div class="small mono" style="color:var(--muted-2)">' + esc(w.uid) + '</div></td>' +
+          '<td><div class="strong">' + esc(w.nick) + '</div><div class="small mono" style="color:var(--muted-2)">' + esc(w.userNo || w.uid) + '</div></td>' +
+          '<td><div class="strong">' + esc(w.bankHolder || '未填写') + '</div>' +
+            '<div class="small" style="color:var(--muted-2)">' + esc(w.bankName || '—') + '</div>' +
+            '<div class="small mono">' + esc(w.bankAccount || w.bankAccountMasked || '—') + '</div>' +
+            (w.bankReady === false ? '<div class="small" style="color:var(--danger)">未补全收款卡</div>' : '') + '</td>' +
           '<td class="mono strong">' + promoteMoney(w.net) + '</td>' +
           '<td>' + esc(promotePathText(w.method)) + '</td>' +
           '<td>' + esc(promoteDate(generated)) + '<div class="small" style="color:var(--muted-2)">截止 ' + esc(promoteDate(deadline)) + '</div></td>' +
-          '<td>' + promoteStatusBadge(w.status) + '</td>' +
+          '<td>' + promoteStatusBadge(w.status) +
+            (w.failReason ? '<div class="small" style="color:var(--danger)">' + esc(w.failReason) + '</div>' : '') +
+            (w.voucherUrl ? '<div><button class="btn xs ghost" data-pm-o-voucher="' + esc(w.voucherUrl) + '">查看打款凭证</button></div>' : '') + '</td>' +
           '<td>' + esc(w.claimedBy || '—') + '</td>' +
           '<td><div class="flex" style="gap:5px;flex-wrap:wrap">' +
           '<button class="btn xs" data-pm-o-claim="' + esc(w.id) + '" data-no="' + esc(w.no) + '"' + (w.status === '待打款' ? '' : ' disabled') + '>领取</button>' +
@@ -6305,9 +8229,12 @@
           '<button class="btn xs" data-pm-o-cancel="' + esc(w.id) + '" data-no="' + esc(w.no) + '"' + (canCancel ? '' : ' disabled') + '>退回余额</button>' +
           '</div></td>', overdue)
       })
-      box.innerHTML = table(['提现单号', '收款人', '金额', '路径', '生成 / 截止时间', '状态', '执行人', '操作'], rows, '暂无待打款记录') +
+      box.innerHTML = table(['提现单号', '收款人', '收款银行卡', '金额', '路径', '生成 / 截止时间', '状态', '执行人', '操作'], rows, '暂无待打款记录') +
         (rows.length ? pager(promoteTotal(data, raw), f.page, f.limit) : '')
       wirePager(box, function (page) { f.page = page; renderPromotePayout(root) })
+      box.querySelectorAll('[data-pm-o-voucher]').forEach(function (btn) {
+        btn.onclick = function () { previewImage(btn.getAttribute('data-pm-o-voucher')) }
+      })
       const byId = {}
       raw.forEach(function (item) { const w = promoteWithdraw(item); byId[w.id] = w })
       box.querySelectorAll('[data-pm-o-claim]').forEach(function (btn) {
@@ -6407,7 +8334,13 @@
       title: '回填出款',
       sub: '提现单 ' + w.no + ' · 净额 ' + promoteMoney(w.net),
       wide: true,
-      body: field('出款路径', '<select id="pm-f-path"><option value="">请选择</option>' +
+      body: '<div class="setting-row" style="margin-bottom:12px"><div class="info">' +
+          '<div class="small" style="color:var(--muted-2)">请按推广者登记的收款银行卡打款</div>' +
+          '<div class="strong">' + esc(w.bankHolder || '未填写持卡人') + ' · ' + esc(w.bankName || '未填写开户行') + '</div>' +
+          '<div class="mono strong" style="font-size:16px">' + esc(w.bankAccount || w.bankAccountMasked || '未登记卡号') + '</div>' +
+          (w.bankReady === false ? '<div class="small" style="color:var(--danger)">该提现单未登记完整银行卡，请先让推广者在推广中心补全后再回填</div>' : '') +
+        '</div></div>' +
+        field('出款路径', '<select id="pm-f-path"><option value="">请选择</option>' +
           '<option value="A"' + (promotePathValue(w.method) === 'A' ? ' selected' : '') + '>A 手动分账（微信服务商）</option>' +
           '<option value="B"' + (promotePathValue(w.method) === 'B' ? ' selected' : '') + '>B 手动转账（银行卡 / 微信）</option></select>') +
         field('单据号', '<input id="pm-f-no" placeholder="微信分账单号 / 银行流水号，全局唯一" value="' + esc(w.payoutNo) + '">') +
@@ -6595,11 +8528,19 @@
       reconcileError = err.message
     }
     root.innerHTML = card('规则配置',
+      '<div class="strong" style="margin-bottom:8px">客服绑定用户推广（两级佣金）</div>' +
       '<div class="grid g3" style="gap:12px">' +
-        field('一级佣金比例（%）', '<input id="pm-r-rate" type="number" step="0.01" min="0" max="100" value="' + ratePct(s.commissionRate) + '"' + disabled + '><div class="small" style="color:var(--muted-2)">好友首次开会员时给直接推广人</div>') +
-        field('二级佣金比例（%）', '<input id="pm-r-l2rate" type="number" step="0.01" min="0" max="100" value="' + ratePct(s.level2Rate) + '"' + disabled + '><div class="small" style="color:var(--muted-2)">仅客服绑定账号享有：其下级首次开会员时另计一级给该账号</div>') +
+        field('一级佣金比例（%）', '<input id="pm-r-cs1" type="number" step="0.01" min="0" max="100" value="' + ratePct(s.csLevel1Rate === undefined ? s.commissionRate : s.csLevel1Rate) + '"' + disabled + '><div class="small" style="color:var(--muted-2)">客服绑定的推广账号：直接下级首次付款计一级</div>') +
+        field('二级佣金比例（%）', '<input id="pm-r-l2rate" type="number" step="0.01" min="0" max="100" value="' + ratePct(s.level2Rate) + '"' + disabled + '><div class="small" style="color:var(--muted-2)">客服绑定的推广账号：其下级的直接下级首次付款计二级</div>') +
+      '</div>' +
+      '<div class="strong" style="margin:14px 0 8px">普通用户推广（仅一级佣金，含商机会员）</div>' +
+      '<div class="grid g3" style="gap:12px">' +
+        field('一级佣金比例（%）', '<input id="pm-r-rate" type="number" step="0.01" min="0" max="100" value="' + ratePct(s.commissionRate) + '"' + disabled + '><div class="small" style="color:var(--muted-2)">未绑定客服的推广人：好友首次开会员时给直接推广人，无二级佣金</div>') +
+      '</div>' +
+      '<div class="strong" style="margin:14px 0 8px">提现与结算</div>' +
+      '<div class="grid g3" style="gap:12px">' +
         field('手续费率（%）', '<input id="pm-r-fee" type="number" step="0.01" min="0" max="100" value="' + ratePct(s.feeRate) + '"' + disabled + '>') +
-        field('最低提现（元）', '<input id="pm-r-min" type="number" step="0.01" min="0" value="' + (Number(s.minWithdraw) || 0).toFixed(2) + '"' + disabled + '>') +
+        field('最低提现（元）', '<input id="pm-r-min" type="number" step="0.01" min="0.01" value="' + (Number(s.minWithdraw) || 0.01).toFixed(2) + '"' + disabled + '><div class="small" style="color:var(--muted-2)">填 0.01 即不设起提门槛</div>') +
         field('冻结日（1-31）', '<input id="pm-r-freeze" type="number" step="1" min="1" max="31" value="' + (s.freezeDay || 1) + '"' + disabled + '><div class="small" style="color:var(--muted-2)">次月解冻日，冻结期内佣金不可提现</div>') +
         field('分账比例上限（%）', '<input id="pm-r-maxsplit" type="number" step="0.1" min="0" max="100" value="' + (ratePct(s.maxSplitRatio) || 30) + '"' + disabled + '><div class="small" style="color:var(--muted-2)">商户平台分账上限，须满足佣金比例 × 95% ≤ 上限</div>') +
         field('路径 A 分账开关', '<select id="pm-r-split"' + disabled + '><option value="off"' + (s.splitEnabled ? '' : ' selected') + '>关闭（推荐：资金不冻结，只留佣金，全部走 B 商家转账）</option><option value="on"' + (s.splitEnabled ? ' selected' : '') + '>开启（整单资金冻结最长 180 天，可分账订单优先走 A）</option></select>') +
@@ -6610,7 +8551,7 @@
         ? '<div class="field" style="margin-top:10px"><label>变更原因（保存必填）</label><input id="pm-r-reason" placeholder="如：2026 年 Q4 推广政策调整"></div>' +
           '<div class="flex" style="justify-content:flex-end;margin-top:12px"><button class="btn primary" id="pm-r-save">保存规则</button></div>'
         : '<div class="small" style="margin-top:10px;color:var(--muted-2)">规则仅管理员可修改，财务只读。</div>'),
-      '<div class="small" style="color:var(--muted-2)">比例按平台统一口径执行，单个推广者不单独设置比例。</div>') +
+      '<div class="small" style="color:var(--muted-2)">两组推广比例分开生效：客服绑定账号按「客服绑定」两级计提，其余推广人（含商机会员）只按普通一级计提。</div>') +
       '<div style="margin-top:16px">' + card('对账',
         '<div class="flex flex-wrap" style="align-items:center;gap:10px;margin-bottom:10px">' +
           '<div class="grow small" style="color:var(--muted-2)">核对系统佣金台账与人工回填出款明细，差异单需逐笔核实。</div>' +
@@ -6632,6 +8573,7 @@
         const reason = root.querySelector('#pm-r-reason').value.trim()
         if (!reason) return toast('请填写变更原因', 'err')
         const rate = Number(root.querySelector('#pm-r-rate').value)
+        const csL1Rate = Number(root.querySelector('#pm-r-cs1').value)
         const l2Rate = Number(root.querySelector('#pm-r-l2rate').value)
         const fee = Number(root.querySelector('#pm-r-fee').value)
         const minWithdraw = Number(root.querySelector('#pm-r-min').value)
@@ -6640,18 +8582,20 @@
         const splitOn = root.querySelector('#pm-r-split').value === 'on'
         const check = Number(root.querySelector('#pm-r-check').value)
         const timeout = Number(root.querySelector('#pm-r-timeout').value)
-        if (!(rate > 0 && rate <= 100)) return toast('一级佣金比例需在 0-100 之间', 'err')
-        if (!(l2Rate > 0 && l2Rate <= 100)) return toast('二级佣金比例需在 0-100 之间', 'err')
+        if (!(rate > 0 && rate <= 100)) return toast('普通推广一级佣金比例需在 0-100 之间', 'err')
+        if (!(csL1Rate > 0 && csL1Rate <= 100)) return toast('客服绑定一级佣金比例需在 0-100 之间', 'err')
+        if (!(l2Rate > 0 && l2Rate <= 100)) return toast('客服绑定二级佣金比例需在 0-100 之间', 'err')
         if (!(fee >= 0 && fee <= 100)) return toast('手续费率需在 0-100 之间', 'err')
-        if (!(minWithdraw >= 0)) return toast('最低提现金额不正确', 'err')
+        if (!(minWithdraw >= 0.01)) return toast('最低提现金额需不少于 0.01 元', 'err')
         if (!(freezeDay >= 1 && freezeDay <= 31)) return toast('冻结日需在 1-31 之间', 'err')
         if (!(maxSplit > 0 && maxSplit <= 100)) return toast('分账比例上限需在 0-100 之间', 'err')
-        if (splitOn && (rate * 0.95 > maxSplit || l2Rate * 0.95 > maxSplit)) return toast('佣金比例 × 95% 不得超过分账比例上限', 'err')
+        if (splitOn && (rate * 0.95 > maxSplit || csL1Rate * 0.95 > maxSplit || l2Rate * 0.95 > maxSplit)) return toast('佣金比例 × 95% 不得超过分账比例上限', 'err')
         if (!(check > 0)) return toast('双人复核阈值需大于 0', 'err')
         if (!(timeout > 0)) return toast('打款超时小时需大于 0', 'err')
         save.disabled = true
         const next = {
           commissionRate: Number((rate / 100).toFixed(6)),
+          csLevel1Rate: Number((csL1Rate / 100).toFixed(6)),
           level2Rate: Number((l2Rate / 100).toFixed(6)),
           feeRate: Number((fee / 100).toFixed(6)),
           minWithdraw: Number(minWithdraw.toFixed(2)), freezeDay: freezeDay,
@@ -6705,12 +8649,170 @@
     }
   }
 
+  /**
+   * 管理端手动开通推广：给任意未开通账号生成推广码，开通后分享任意页面即可绑定。
+   * 已封禁账号不能从这里绕过，需要先在推广管理里「解封」。
+   */
+  async function grantPromoteTo(uid, name, onDone) {
+    if (!uid) return
+    const ok = await confirm({
+      title: '开通推广权限',
+      message: '确认给 <b>' + esc(name || uid) + '</b> 开通推广权限？开通后会自动生成推广码，TA 分享任意页面即可绑定下级并按平台比例计佣。',
+      okText: '确认开通'
+    })
+    if (!ok) return
+    try {
+      const res = await api('promote.openByAdmin', { uid: uid })
+      toast(res && res.opened === false ? '该用户已开通推广' : '已开通推广')
+      if (onDone) onDone()
+    } catch (err) {
+      toast(err.message, 'err')
+    }
+  }
+
+  /**
+   * 用户详情「推广」页：佣金、提现、下级与付款转化一并展示。
+   * 二级关系与二级佣金仅客服绑定账号可见（平台规则：两级各按 15% 计佣）。
+   */
+  async function renderUserPromoteTab(host, u, uid) {
+    if (!host) return
+    host.innerHTML = loadingBlock('读取推广数据')
+    let detail
+    let commissionData
+    let withdrawData
+    let settingData
+    try {
+      const res = await Promise.all([
+        api('promote.detail', { uid: uid }),
+        api('promote.commissions', { uid: uid, page: 1, limit: 10 }).catch(function () { return {} }),
+        api('promote.withdrawList', { uid: uid, page: 1, limit: 10 }).catch(function () { return {} }),
+        PROMOTE.settings.commissionRate ? Promise.resolve(PROMOTE.settings) : api('promote.settings', {}).catch(function () { return {} })
+      ])
+      detail = res[0] || {}
+      commissionData = res[1] || {}
+      withdrawData = res[2] || {}
+      settingData = res[3] || {}
+    } catch (err) {
+      host.innerHTML = '<div class="small" style="color:var(--danger)">推广数据加载失败：' + esc(err.message) + '</div>'
+      return
+    }
+    const d = detail
+    const settings = promoteSettingsOf(settingData || PROMOTE.settings)
+    const stats = d.commissionStats || {}
+    const funnel = d.funnel || {}
+    const l1 = funnel.level1 || {}
+    const l2 = funnel.level2 || {}
+    const all = funnel.total || {}
+    const ws = d.withdrawStats || {}
+    const counts = d.counts || {}
+    const opened = d.opened || {}
+    const csBound = d.csBound === true
+    const rate1 = d.rateText || promoteRate(csBound ? settings.csLevel1Rate : settings.commissionRate)
+    const rate2 = d.level2RateText || promoteRate(settings.level2Rate)
+    const commissions = (commissionData.items || [])
+    const withdrawals = (withdrawData.items || [])
+    const dash = '<span style="color:var(--muted-2)">—</span>'
+
+    const childTable = function (rows, emptyText) {
+      return table(['下级用户', '会员', '推广资格', '绑定时间', '付款', '累计付款', '贡献佣金'], (rows || []).map(function (r) {
+        return '<td><div class="strong">' + esc(r.nick || '未命名用户') + '</div>' +
+            '<div class="small mono" style="color:var(--muted-2)">' + esc(r.userNo || r.uid) + (r.parentNick ? ' · 上级 ' + esc(r.parentNick) : '') + '</div></td>' +
+          '<td>' + esc(r.memberText || (r.member ? '已开通' : '未开通')) + '</td>' +
+          '<td>' + esc(r.promoterStatusText || '—') + '</td>' +
+          '<td>' + (r.boundAt ? dateText(r.boundAt) : '—') + '</td>' +
+          '<td>' + (r.paid ? badge('已付款 ' + num(r.paidCount) + ' 次', 'ok') : badge('未付款')) + '</td>' +
+          '<td class="mono">' + promoteMoney(r.paidAmount) + '</td>' +
+          '<td class="mono strong">' + promoteMoney(r.commission) + '</td>'
+      }), emptyText)
+    }
+
+    host.innerHTML =
+      '<div class="flex" style="align-items:center;gap:8px;margin-bottom:10px">' +
+        '<div class="strong">推广与佣金</div>' +
+        '<span class="small" style="color:var(--muted-2)">' + (csBound ? '客服绑定推广（一级 / 二级）：' + esc(rate1) + ' / ' + esc(rate2) : '普通推广（仅一级）：' + esc(rate1)) + '</span>' +
+        '<div class="grow"></div>' +
+        (promoteIsAdmin() && (d.status === 'none' || d.statusText === '未开通')
+          ? '<button class="btn xs primary" id="u-promote-open">开通推广</button>' : '') +
+        '<button class="btn xs" id="u-promote-refresh">刷新</button>' +
+      '</div>' +
+      kpiRow([
+        ['累计佣金（毛额）', promoteMoney(stats.total || d.earning)],
+        ['可提现', promoteMoney(d.available)],
+        ['待结算', promoteMoney(d.pending)],
+        ['已提现', promoteMoney(ws.withdrawn || d.withdrawn)],
+        ['欠款 / 提现中', promoteMoney(d.debt) + ' / ' + promoteMoney(ws.withdrawing)]
+      ]) +
+      '<div style="margin-top:14px">' + kpiRow([
+        ['下级用户', num(all.total)],
+        ['已付款用户', num(all.paid)],
+        ['付款比例', pct(all.rate)],
+        ['累计付款金额', promoteMoney(all.paidAmount)],
+        ['下级会员 / 推广员', num(all.member) + ' / ' + num(all.promoter)]
+      ]) + '</div>' +
+      '<div style="margin-top:16px">' + kvList([
+        ['推广状态', promoteStatusBadge(d.statusText || d.status)],
+        ['推广码', d.refCode ? '<span class="mono">' + esc(d.refCode) + '</span>' : dash],
+        ['客服绑定', csBound
+          ? badge('已绑定' + (d.csName ? ' · ' + esc(d.csName) : ''), 'ok')
+          : badge('未绑定客服（仅一级佣金）', 'info')],
+        ['开通时间', d.openedAt ? dateText(d.openedAt) : dash],
+        ['一级 / 二级人数', num(counts.level1) + ' / ' + (csBound ? num(counts.level2) : dash)],
+        ['一级 / 二级已付款', num(l1.paid) + ' / ' + (csBound ? num(l2.paid) : dash)],
+        ['一级 / 二级付款比例', pct(l1.rate) + ' / ' + (csBound ? pct(l2.rate) : dash)],
+        ['一级 / 二级会员', num(opened.level1Member) + ' / ' + (csBound ? num(opened.level2Member) : dash)],
+        ['一级 / 二级佣金', promoteMoney(d.level1Earning) + ' / ' + (csBound ? promoteMoney(d.level2Earning) : dash)],
+        ['佣金明细笔数 / 冲正', num(stats.count) + ' 笔 / ' + promoteMoney(stats.reversed) + '（' + num(stats.level1Count) + ' 一级 · ' + num(stats.level2Count) + ' 二级）'],
+        ['提现记录', num(ws.total) + ' 笔 · 已到账 ' + num(ws.paidCount) + ' 笔'],
+        ['佣金口径', '一级 ' + esc(rate1) + ' · 二级 ' + esc(rate2) + (csBound ? '（客服绑定账号两级均计佣）' : '（未绑定客服只计一级）')]
+      ]) + '</div>' +
+      '<div class="strong" style="margin:18px 0 8px">层级转化</div>' +
+      table(['层级', '下级人数', '已付款', '付款比例', '累计付款', '贡献佣金', '佣金比例'], [
+        '<td>一级</td><td>' + num(l1.total) + '</td><td>' + num(l1.paid) + '</td><td>' + pct(l1.rate) + '</td>' +
+          '<td class="mono">' + promoteMoney(l1.paidAmount) + '</td><td class="mono strong">' + promoteMoney(d.level1Earning) + '</td><td>' + esc(rate1) + '</td>',
+        csBound
+          ? '<td>二级</td><td>' + num(l2.total) + '</td><td>' + num(l2.paid) + '</td><td>' + pct(l2.rate) + '</td>' +
+            '<td class="mono">' + promoteMoney(l2.paidAmount) + '</td><td class="mono strong">' + promoteMoney(d.level2Earning) + '</td><td>' + esc(rate2) + '</td>'
+          : '<td>二级</td><td colspan="6" class="small" style="color:var(--muted-2)">该账号未绑定客服，按平台规则只计一级佣金，二级数据不展示</td>'
+      ]) +
+      '<div class="strong" style="margin:18px 0 8px">一级下级（' + num(counts.level1) + '）</div>' +
+      childTable(d.level1, '暂无一级下级') +
+      (csBound
+        ? '<div class="strong" style="margin:18px 0 8px">二级下级（' + num(counts.level2) + '）</div>' +
+          childTable(d.level2, '暂无二级下级')
+        : '') +
+      '<div class="strong" style="margin:18px 0 8px">佣金明细（最近 ' + num(commissions.length) + ' 笔）</div>' +
+      table(['时间', '层级', '买家', '订单金额', '佣金', '状态'], commissions.map(function (c) {
+        return '<td>' + esc(dateText(c.createdAt)) + '</td>' +
+          '<td>' + (Number(c.level) === 2 ? '二级' : '一级') + '</td>' +
+          '<td class="mono">' + esc(c.buyerUid || '—') + '</td>' +
+          '<td class="mono">' + promoteMoney(c.paidAmount) + '</td>' +
+          '<td class="mono strong">' + promoteMoney(c.amount) + '</td>' +
+          '<td>' + promoteStatusBadge(c.status) + '</td>'
+      }), '暂无佣金记录') +
+      '<div class="strong" style="margin:18px 0 8px">提现记录（最近 ' + num(withdrawals.length) + ' 笔）</div>' +
+      table(['提现单号', '申请金额', '到账净额', '状态', '申请时间', '到账时间'], withdrawals.map(function (w) {
+        return '<td class="mono">' + esc(w.id || w.payoutNo || '—') + '</td>' +
+          '<td class="mono">' + promoteMoney(w.amount) + '</td>' +
+          '<td class="mono strong">' + promoteMoney(w.net) + '</td>' +
+          '<td>' + promoteStatusBadge(w.status) + '</td>' +
+          '<td>' + esc(promoteDate(w.applyAt)) + '</td>' +
+          '<td>' + (w.paidAt ? esc(dateText(w.paidAt)) : '—') + '</td>'
+      }), '暂无提现记录')
+
+    const refresh = host.querySelector('#u-promote-refresh')
+    if (refresh) refresh.onclick = function () { renderUserPromoteTab(host, u, uid) }
+    const openBtn = host.querySelector('#u-promote-open')
+    if (openBtn) openBtn.onclick = function () {
+      grantPromoteTo(uid, (u && (u.nick || u.name)) || uid, function () { renderUserPromoteTab(host, u, uid) })
+    }
+  }
+
   async function renderUserPromote(host, u, uid) {
     if (!host) return
     host.innerHTML = '<div class="strong" style="margin-bottom:8px">推广信息</div>' + loadingBlock('读取推广信息')
     try {
       const [listData, wdData, settingData] = await Promise.all([
-        api('promote.list', { uid: uid, page: 1, limit: 5 }).catch(function () { return {} }),
+        api('promote.list', { q: uid, uid: uid, page: 1, limit: 5 }).catch(function () { return {} }),
         api('promote.withdrawList', { uid: uid, page: 1, limit: 5 }).catch(function () { return {} }),
         PROMOTE.settings.commissionRate ? Promise.resolve(PROMOTE.settings) : api('promote.settings', {}).catch(function () { return {} })
       ])
@@ -6723,8 +8825,9 @@
       const settings = promoteSettingsOf(settingData || PROMOTE.settings)
       if (!hit) {
         host.innerHTML = '<div class="strong" style="margin-bottom:8px">推广信息</div>' +
-          '<div class="small" style="color:var(--muted-2)">该用户尚未开通推广，或推广关系尚未同步。平台佣金比例：一级 ' +
-          promoteRate(settings.commissionRate) + ' / 二级 ' + promoteRate(settings.level2Rate) + '（只读）。</div>'
+          '<div class="small" style="color:var(--muted-2)">该用户尚未开通推广，或推广关系尚未同步。平台佣金比例：客服绑定推广 一级 ' +
+          promoteRate(settings.csLevel1Rate) + ' / 二级 ' + promoteRate(settings.level2Rate) +
+          '；普通推广 仅一级 ' + promoteRate(settings.commissionRate) + '（只读）。</div>'
         return
       }
       const p = promotePromoter(hit)
@@ -6732,14 +8835,21 @@
       const banned = p.status === '封禁'
       const pathHint = banned ? '账号已封禁，暂停推广与提现'
         : (!splitReady ? '仅转账（未添加分账接收方，仅路径 B）' : '可分账（路径 A / B）')
-      host.innerHTML = '<div class="strong" style="margin-bottom:8px">推广信息</div>' +
+      host.innerHTML = '<div class="flex" style="align-items:center;gap:8px;margin-bottom:8px">' +
+          '<div class="strong">推广信息</div>' +
+          '<div class="grow"></div>' +
+          (promoteIsAdmin() && p.status === '未开通'
+            ? '<button class="btn xs primary" id="u-promote-open-inline">开通推广</button>' : '') +
+        '</div>' +
         kvList([
           ['推广状态', promoteStatusBadge(p.status)],
           ['推广码', '<span class="mono">' + esc(p.refCode) + '</span>'],
           ['绑定关系', '上级：' + esc(promotePick(hit, ['parentNick', 'referrerNick', 'parentId', 'referrerId'], '平台直推')) +
             ' · 绑定人数：' + num(p.bound)],
           ['绑定时间', esc(promoteDate(promotePick(hit, ['boundAt', 'referrerBoundAt', 'createdAt'], 0)))],
-          ['平台比例（只读）', '一级 ' + promoteRate(settings.commissionRate) + ' / 二级 ' + promoteRate(settings.level2Rate)],
+          ['平台比例（只读）', hit.csBound
+            ? '客服绑定推广 一级 ' + promoteRate(settings.csLevel1Rate) + ' / 二级 ' + promoteRate(settings.level2Rate)
+            : '普通推广 仅一级 ' + promoteRate(settings.commissionRate)],
           ['待结算 / 可提现', promoteMoney(p.pending) + ' / ' + promoteMoney(p.available)],
           ['已到账', promoteMoney(p.withdrawn)],
           ['欠款', '<span' + (p.debt > 0 ? ' style="color:var(--danger)"' : '') + '>' + promoteMoney(p.debt) + '</span>'],
@@ -6753,6 +8863,10 @@
             '<td>' + promoteStatusBadge(w.status) + '</td>' +
             '<td>' + esc(promoteDate(w.appliedAt)) + '</td>'
         }), '暂无提现记录')
+      const inlineOpen = host.querySelector('#u-promote-open-inline')
+      if (inlineOpen) inlineOpen.onclick = function () {
+        grantPromoteTo(uid, (u && (u.nick || u.name)) || uid, function () { renderUserPromote(host, u, uid) })
+      }
     } catch (err) {
       host.innerHTML = '<div class="strong" style="margin-bottom:8px">推广信息</div>' +
         '<div class="small" style="color:var(--danger)">推广信息加载失败：' + esc(err.message) + '</div>'
@@ -6809,7 +8923,8 @@
           '<div class="t">' + esc(t.nick || t.uid) + (t.unread ? ' <span class="badge danger">' + num(t.unread) + '</span>' : '') + '</div>' +
           (t.leadId
             ? '<div class="s" style="color:var(--muted-2)">委托 ' + esc(t.agencyTitle || '代采代售') +
-              ' · ' + esc(t.consultStageLabel || '待领取') + '</div>'
+              ' · ' + esc(t.consultStageLabel || '待领取') +
+              (t.leadClaimedByOther ? ' · <span style="color:var(--warn)">' + esc(t.consultCsName || '他人') + '已领取</span>' : '') + '</div>'
             : '<div class="s" style="color:var(--muted-2)">直接咨询 · 未关联委托（不产生工单）</div>') +
           '<div class="s">' + esc(t.lastBody || '暂无内容') + '</div>' +
           '<div class="m"><span>' + (t.lastFrom === 'user' ? '用户' : '平台') + '</span><span class="grow"></span><span>' + esc(ago(t.lastAt)) + '</span></div>' +
@@ -6950,6 +9065,7 @@
     if (!panel) return
     panel.innerHTML = loadingBlock('加载会话')
     let data
+    const thread = MSG_BOX.threads.find(function (t) { return t.uid === uid })
     try {
       data = await api('msg.list', { uid: uid, page: 1, limit: 30 })
     } catch (err) {
@@ -6957,8 +9073,13 @@
       return
     }
     const items = data.items || []
-    const thread = MSG_BOX.threads.find(function (t) { return t.uid === uid })
     const unread = thread ? Number(thread.unread) || 0 : 0
+    /* 已被他人领取：管理员可查看历史，但不能回复 / 发图片视频，需先转单 */
+    const locked = !!(thread && thread.leadClaimedByOther)
+    const lockNote = locked
+      ? '<div class="chat-note" style="text-align:left">该咨询已由 ' + esc(thread.consultCsName || '其他客服') +
+        ' 领取，只有领取人可以回复；需要接手请先转单</div>'
+      : ''
     const step = thread && thread.consultStage ? cfStepIndex(thread.consultStage) : -1
     /* 咨询三态分流：待领取只进工作台；磋商中在本会话谈条件；谈妥后才生成工单进工单中心 */
     const ticketState = (thread && thread.ticketState) || ''
@@ -7009,18 +9130,24 @@
           msgContentHtml(m, { uid: data.uid || uid, nick: data.nick }) + '</div>'
       }).join('') : emptyState('会话暂无内容')) +
       '</div>' +
-      '<div style="display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:12px">' +
-      '<textarea id="msg-reply" rows="3" placeholder="输入回复内容，请勿索要手机号 / 证件号（最多 500 字）"></textarea>' +
-      '<input type="file" id="msg-img-file" accept="image/*" hidden>' +
-      '<input type="file" id="msg-video-file" accept="video/mp4,video/quicktime,video/x-m4v,.mp4,.mov,.m4v" hidden>' +
-      '<div class="flex" style="justify-content:flex-end;gap:8px">' +
-      '<button class="btn" id="msg-send-image">图片</button>' +
-      '<button class="btn" id="msg-send-video">视频</button>' +
-      (unread ? '<button class="btn" id="msg-mark-read">标为已读</button>' : '') +
-      '<button class="btn primary" id="msg-send">发送回复</button></div></div>'
+      (locked
+        ? lockNote
+        : '<div style="display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:12px">' +
+          quickReplyBar(thread && thread.consultStage) +
+          '<textarea id="msg-reply" rows="3" placeholder="输入回复内容，请勿索要手机号 / 证件号（最多 500 字）"></textarea>' +
+          '<input type="file" id="msg-img-file" accept="image/*" hidden>' +
+          '<input type="file" id="msg-video-file" accept="video/mp4,video/quicktime,video/x-m4v,.mp4,.mov,.m4v" hidden>' +
+          '<div class="flex" style="justify-content:flex-end;gap:8px">' +
+          '<button class="btn" id="msg-send-image">图片</button>' +
+          '<button class="btn" id="msg-send-video">视频</button>' +
+          (unread ? '<button class="btn" id="msg-mark-read">标为已读</button>' : '') +
+          '<button class="btn primary" id="msg-send">发送回复</button></div></div>')
 
     /* 图片点击先调 msg.mediaOpen 续期，再打开灯箱；视频首次播放时续期 */
     mediaBind(panel)
+
+    /* 常用语：点一下填入回复框，客服可先改再发 */
+    wireQuickReplies(panel, '#msg-reply')
 
     /* 跳转委托工单：工单页会按 leadId 定位，右侧直接是委托内容与双方联系方式 */
     const consultBtn = panel.querySelector('#msg-open-consult')
@@ -7087,6 +9214,7 @@
     }
 
     /* 图片 / 视频：选中后校验大小并上传，成功后走 msg.reply 发送并刷新会话 */
+    const threadId = (thread && thread.leadId) || ''
     const imgInput = panel.querySelector('#msg-img-file')
     const videoInput = panel.querySelector('#msg-video-file')
     const pickFile = function (input) {
@@ -7094,23 +9222,29 @@
       input.value = ''
       input.click()
     }
-    panel.querySelector('#msg-send-image').onclick = function () { pickFile(imgInput) }
-    panel.querySelector('#msg-send-video').onclick = function () { pickFile(videoInput) }
+    const sendImgBtn = panel.querySelector('#msg-send-image')
+    const sendVideoBtn = panel.querySelector('#msg-send-video')
+    if (sendImgBtn) sendImgBtn.onclick = function () { pickFile(imgInput) }
+    if (sendVideoBtn) sendVideoBtn.onclick = function () { pickFile(videoInput) }
     if (imgInput) imgInput.onchange = function () {
-      mediaSendToUser(uid, 'image', this.files && this.files[0])
+      mediaSendToUser(uid, 'image', this.files && this.files[0], threadId)
     }
     if (videoInput) videoInput.onchange = function () {
-      mediaSendToUser(uid, 'video', this.files && this.files[0])
+      mediaSendToUser(uid, 'video', this.files && this.files[0], threadId)
     }
 
-    panel.querySelector('#msg-send').onclick = async function () {
+    const sendBtn = panel.querySelector('#msg-send')
+    if (sendBtn) sendBtn.onclick = async function () {
       const btn = this
       const box = panel.querySelector('#msg-reply')
       const body = box.value.trim()
       if (!body) return toast('请先输入回复内容', 'err')
       btn.disabled = true
       try {
-        await api('msg.reply', { uid: uid, body: body })
+        const payload = { uid: uid, body: body }
+        /* 咨询会话必须带 threadId，后端据此校验领取归属 */
+        if (threadId) payload.threadId = threadId
+        await api('msg.reply', payload)
         toast('回复已发送')
         box.value = ''
         openMsgThread(uid)
@@ -7235,7 +9369,15 @@
       }
       wirePager(root, function (page) { SERVICE_FILTER.page = page; loadService(root) })
       root.querySelectorAll('[data-lead]').forEach(function (btn) {
-        btn.onclick = function () { openLeadDrawer(btn.getAttribute('data-lead'), function () { loadService(root) }) }
+        btn.onclick = function () {
+          const leadId = btn.getAttribute('data-lead')
+          /* 客服点工单号回到工作台（同一页三栏）看服务进度；管理员仍用详情抽屉 */
+          if (((state.account && state.account.role) || '') === 'cs') {
+            C.navigate('workbench', { leadId: leadId })
+            return
+          }
+          openLeadDrawer(leadId, function () { loadService(root) })
+        }
       })
     } catch (err) {
       root.innerHTML = card('客服服务记录', '<div class="small" style="color:var(--danger)">' + esc(err.message) + '</div>')
@@ -7641,7 +9783,9 @@
   /* ================= 11. 商品管理（用户发布货源） ================= */
 
   const PRODUCT_STATUS_OPTIONS = ['草稿', '在售', '洽谈中', '已下架', '已成交']
-  const PRODUCT_FILTER = { q: '', status: '', cat: '', page: 1, limit: 20, items: [], truncated: false }
+  const PRODUCT_FILTER = { q: '', status: '', cat: '', bizPool: '', page: 1, limit: 20, items: [], truncated: false }
+  /* 商品批量转移：勾选集合跨分页保留，进入页面时清空 */
+  const PRODUCT_PICK = new Set()
 
   async function loadAllRows(action, params) {
     const limit = 50
@@ -7820,6 +9964,7 @@
         ['数量', num(p.qty) + (p.minQty ? '（起订 ' + num(p.minQty) + '）' : '')],
         ['成色', esc(p.cond || '—') + (p.condLevel ? ' · ' + esc(p.condLevel) : '')],
         ['可见范围', esc(p.visibilityLabel || '—')],
+        ['发布方式', esc(channelLabelOf(p))],
         ['热度 / 浏览', num(p.heat) + ' 人 · ' + num(p.views) + ' 次'],
         ['发布时间', esc(dateText(p.createdAt))],
         ['商品 ID', '<span class="mono small">' + esc(p.id) + '</span>']
@@ -7842,7 +9987,7 @@
 
     const root = openDrawer({
       title: p.title || '商品详情',
-      titleTag: isPrivateItem(p) ? privateTag('私密发布') : '',
+      titleTag: isPrivateItem(p) ? privateTag('私密发布') : (isPoolOnlyItem(p) ? poolTag() : ''),
       sub: [p.tradeMode, p.cat, p.ownerLabel].filter(Boolean).map(esc).join(' · '),
       badges: autoBadge(p.status) + (p.visibilityLabel ? ' ' + badge(p.visibilityLabel, 'info') : '') + (p.heat ? ' ' + badge('热度 ' + num(p.heat), 'warn') : ''),
       body: body,
@@ -7866,6 +10011,7 @@
   }
 
   Pages.products = async function (view) {
+    PRODUCT_PICK.clear()
     view.innerHTML = pageHead(
       '商品管理',
       '用户发布的货源发布后直接对外展示，平台不审核、不干预；仅在违规或信息异常时下架，日常上下架由发布人自行操作。',
@@ -7875,6 +10021,7 @@
       '<div class="field" style="min-width:240px"><label>关键词</label><input id="pd-q" placeholder="标题 / 品类 / 品牌 / 型号 / ID" value="' + esc(PRODUCT_FILTER.q) + '"></div>',
       field('状态', '<select id="pd-status">' + options(PRODUCT_STATUS_OPTIONS, PRODUCT_FILTER.status) + '</select>'),
       field('品类', '<input id="pd-cat" placeholder="如 GPU 服务器" value="' + esc(PRODUCT_FILTER.cat) + '">'),
+      field('发布方式', '<select id="pd-pool">' + options(['普通发布', '仅发商机池', '私密发布'], PRODUCT_FILTER.bizPool) + '</select>'),
       '<div class="field" style="justify-content:flex-end"><button class="btn primary" id="pd-search">' + icon('search') + '<span>查询</span></button></div>'
     ]) +
     card('商品列表', '<div id="pd-list">' + loadingBlock('加载商品') + '</div>', '', true)
@@ -7886,14 +10033,31 @@
       return (PRODUCT_FILTER.items || []).filter(function (p) {
         if (PRODUCT_FILTER.status && p.status !== PRODUCT_FILTER.status) return false
         if (PRODUCT_FILTER.cat && String(p.cat || '').indexOf(PRODUCT_FILTER.cat) < 0) return false
+        if (PRODUCT_FILTER.bizPool === '私密发布' && !isPrivateItem(p)) return false
+        if (PRODUCT_FILTER.bizPool === '仅发商机池' && !isPoolOnlyItem(p)) return false
+        if (PRODUCT_FILTER.bizPool === '普通发布' && (isPrivateItem(p) || isPoolOnlyItem(p))) return false
         if (!q) return true
         return [p.title, p.cat, p.brand, p.model, p.city, p.ownerLabel, p.id].join(' ').toLowerCase().indexOf(q) >= 0
       })
     }
 
+    function bulkBar() {
+      return '<div class="flex flex-wrap" style="gap:8px;align-items:center;margin-bottom:10px">' +
+        '<button class="btn" id="pd-all-btn">全选本页</button>' +
+        '<span class="small" id="pd-sel" style="color:var(--muted-2)">已选 0 项</span>' +
+        '<button class="btn primary" id="pd-transfer" disabled>转移归属</button>' +
+        '<span class="small" style="color:var(--muted-2)">可跨页勾选，单次最多 50 个</span>' +
+        '</div>'
+    }
+
     function render() {
       const all = PRODUCT_FILTER.items || []
       const items = matched()
+      const canTransfer = C.can('product.transfer')
+      /* 过滤条件变化后，把已不在结果里的勾选剔除 */
+      const valid = {}
+      items.forEach(function (p) { valid[p.id] = 1 })
+      Array.from(PRODUCT_PICK).forEach(function (id) { if (!valid[id]) PRODUCT_PICK.delete(id) })
       const limit = PRODUCT_FILTER.limit
       const pages = Math.max(1, Math.ceil(items.length / limit))
       if (PRODUCT_FILTER.page > pages) PRODUCT_FILTER.page = pages
@@ -7903,8 +10067,11 @@
       all.forEach(function (p) { byId[p.id] = p })
 
       const rows = slice.map(function (p) {
-        return '<tr>' +
-          '<td><div class="strong">' + esc(p.title || '—') + (isPrivateItem(p) ? ' ' + privateTag() : '') + '</div><div class="small mono" style="color:var(--muted-2)">' + esc(p.id) + '</div></td>' +
+        const pick = canTransfer
+          ? '<td><input type="checkbox" class="pd-pick" data-id="' + esc(p.id) + '"' + (PRODUCT_PICK.has(p.id) ? ' checked' : '') + '></td>'
+          : ''
+        return '<tr>' + pick +
+          '<td><div class="strong">' + esc(p.title || '—') + (isPoolOnlyItem(p) ? ' ' + poolTag() : '') + (isPrivateItem(p) ? ' ' + privateTag() : '') + '</div><div class="small mono" style="color:var(--muted-2)">' + esc(p.id) + '</div></td>' +
           '<td>' + esc(p.ownerLabel || '—') + '</td>' +
           '<td>' + esc(p.tradeMode || '—') + '</td>' +
           '<td>' + amountOf(p, 'price', 'priceMax', 'priceMode', 'priceUnit') + '</td>' +
@@ -7916,7 +10083,11 @@
           '</tr>'
       })
 
-      list.innerHTML = table(['标题', '发布主体', '交易方式', '价格', '数量', '成色', '状态', '发布时间', '操作'], rows, '当前筛选下暂无商品') +
+      const heads = ['标题', '发布主体', '交易方式', '价格', '数量', '成色', '状态', '发布时间', '操作']
+      if (canTransfer) heads.unshift('<input type="checkbox" id="pd-all" aria-label="全选本页">')
+
+      list.innerHTML = (canTransfer ? bulkBar() : '') +
+        table(heads, rows, '当前筛选下暂无商品') +
         pager(items.length, page, limit) +
         (PRODUCT_FILTER.truncated ? '<div class="small" style="margin-top:8px;color:var(--muted-2)">数据量较大，已加载最近 ' + num(all.length) + ' 条，可结合状态 / 品类缩小范围。</div>' : '')
 
@@ -7933,6 +10104,135 @@
           if (item) productAction(btn.getAttribute('data-pd-act'), item, load)
         }
       })
+      if (canTransfer) wirePick()
+    }
+
+    /* 勾选状态与批量按钮联动：全选框只作用于当前页，跨页勾选会累计 */
+    function wirePick() {
+      const allBox = list.querySelector('#pd-all')
+      const selText = list.querySelector('#pd-sel')
+      const transferBtn = list.querySelector('#pd-transfer')
+      const pageIds = function () {
+        return Array.prototype.map.call(list.querySelectorAll('.pd-pick'), function (box) {
+          return box.getAttribute('data-id')
+        })
+      }
+      function sync() {
+        if (selText) selText.textContent = '已选 ' + PRODUCT_PICK.size + ' 项'
+        if (transferBtn) transferBtn.disabled = !PRODUCT_PICK.size
+        if (allBox) {
+          const ids = pageIds()
+          allBox.checked = ids.length > 0 && ids.every(function (id) { return PRODUCT_PICK.has(id) })
+        }
+      }
+      list.querySelectorAll('.pd-pick').forEach(function (box) {
+        box.onchange = function () {
+          const id = box.getAttribute('data-id')
+          if (box.checked) PRODUCT_PICK.add(id)
+          else PRODUCT_PICK.delete(id)
+          sync()
+        }
+      })
+      if (allBox) allBox.onchange = function () {
+        pageIds().forEach(function (id) {
+          if (allBox.checked) PRODUCT_PICK.add(id)
+          else PRODUCT_PICK.delete(id)
+        })
+        render()
+      }
+      const allBtn = list.querySelector('#pd-all-btn')
+      if (allBtn) allBtn.onclick = function () {
+        const ids = pageIds()
+        const allOn = ids.length > 0 && ids.every(function (id) { return PRODUCT_PICK.has(id) })
+        ids.forEach(function (id) {
+          if (allOn) PRODUCT_PICK.delete(id)
+          else PRODUCT_PICK.add(id)
+        })
+        render()
+      }
+      if (transferBtn) transferBtn.onclick = openTransferModal
+      sync()
+    }
+
+    /* 转移归属：先按 ID / 编号 / 手机号 / 昵称定位接收人，再批量提交 */
+    function openTransferModal() {
+      if (!PRODUCT_PICK.size) return toast('请先勾选要转移的商品', 'err')
+      if (PRODUCT_PICK.size > 50) return toast('单次最多转移 50 个商品', 'err')
+      const ids = Array.from(PRODUCT_PICK)
+      let target = null
+      const root = modal({
+        title: '转移商品归属',
+        sub: '已选 ' + ids.length + ' 个商品，转移后由接收人管理并接收咨询',
+        body: '<div class="form-grid">' +
+          '<div class="field"><label>接收人</label><div class="flex" style="gap:8px">' +
+          '<input id="pd-target-q" placeholder="用户 ID / 用户编号 / 手机号 / 昵称">' +
+          '<button class="btn" id="pd-target-search">查找</button>' +
+          '</div></div>' +
+          '<div id="pd-target-list" class="small" style="color:var(--muted-2)">输入后点击「查找」，最多显示 10 个候选</div>' +
+          field('转移说明', '<input id="pd-target-reason" maxlength="60" placeholder="选填，例如：客户更换账号 / 员工离职交接">') +
+          '</div>',
+        footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="pd-target-ok" disabled>确认转移</button>'
+      })
+      if (!root) return
+      const box = root.body.querySelector('#pd-target-list')
+      const okBtn = root.body.querySelector('#pd-target-ok')
+
+      function renderTargets(items) {
+        if (!items.length) {
+          box.innerHTML = '未找到用户，请确认输入的是完整手机号或用户编号'
+          return
+        }
+        box.innerHTML = items.map(function (u) {
+          const disabled = u.status === '停用'
+          return '<label style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">' +
+            '<input type="radio" name="pd-target" value="' + esc(u.id) + '"' + (disabled ? ' disabled' : '') + '>' +
+            '<span class="strong">' + esc(u.nick || '未设置昵称') + '</span>' +
+            badge(u.status || '正常', disabled ? 'danger' : 'info') +
+            '<span class="small mono" style="color:var(--muted-2);margin-left:auto">' + esc(u.userNo) + '</span>' +
+            '</label>'
+        }).join('')
+        box.querySelectorAll('input[name="pd-target"]').forEach(function (radio) {
+          radio.onchange = function () {
+            target = items.filter(function (u) { return u.id === radio.value })[0] || null
+            okBtn.disabled = !target || target.status === '停用'
+          }
+        })
+      }
+
+      async function doSearch() {
+        const q = root.body.querySelector('#pd-target-q').value.trim()
+        if (!q) return toast('请输入用户 ID、编号、手机号或昵称', 'err')
+        box.textContent = '查找中…'
+        try {
+          const res = await api('product.transferTargets', { q: q })
+          renderTargets(res.items || [])
+        } catch (err) {
+          box.textContent = err.message || '查找失败'
+        }
+      }
+
+      root.body.querySelector('#pd-target-search').onclick = doSearch
+      root.body.querySelector('#pd-target-q').onkeydown = function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); doSearch() }
+      }
+      okBtn.onclick = async function () {
+        if (!target) return
+        okBtn.disabled = true
+        try {
+          const res = await api('product.transfer', {
+            productIds: ids,
+            targetId: target.id,
+            reason: (root.body.querySelector('#pd-target-reason').value || '').trim()
+          })
+          closeModal()
+          PRODUCT_PICK.clear()
+          toast('已转移 ' + num(res.moved) + ' 个商品' + (res.skipped && res.skipped.length ? '，跳过 ' + res.skipped.length + ' 个' : ''))
+          load()
+        } catch (err) {
+          toast(err.message, 'err')
+          okBtn.disabled = false
+        }
+      }
     }
 
     async function load() {
@@ -7951,6 +10251,7 @@
       PRODUCT_FILTER.q = (view.querySelector('#pd-q').value || '').trim()
       PRODUCT_FILTER.status = view.querySelector('#pd-status').value
       PRODUCT_FILTER.cat = (view.querySelector('#pd-cat').value || '').trim()
+      PRODUCT_FILTER.bizPool = view.querySelector('#pd-pool').value
       PRODUCT_FILTER.page = 1
       render()
     }
@@ -7959,6 +10260,7 @@
     view.querySelector('#pd-q').onkeydown = function (e) { if (e.key === 'Enter') search() }
     view.querySelector('#pd-cat').onkeydown = function (e) { if (e.key === 'Enter') search() }
     view.querySelector('#pd-status').onchange = search
+    view.querySelector('#pd-pool').onchange = search
     view.querySelector('#pd-refresh').onclick = function () { load() }
     load()
   }
@@ -7966,7 +10268,9 @@
   /* ================= 12. 需求管理（用户发布求购） ================= */
 
   const DEMAND_STATUS_OPTIONS = ['草稿', '求购中', '已对接', '已关闭', '已下架']
-  const DEMAND_FILTER = { q: '', status: '', cat: '', page: 1, limit: 20, items: [], truncated: false }
+  const DEMAND_FILTER = { q: '', status: '', cat: '', bizPool: '', page: 1, limit: 20, items: [], truncated: false }
+  /* 批量转移归属的勾选集合：可跨页累计，切换筛选后自动剔除已不在结果里的项 */
+  const DEMAND_PICK = new Set()
 
   function demandActions(item, noDetail) {
     const ops = noDetail ? [] : ['<button class="btn xs" data-dm-detail="' + esc(item.id) + '">详情</button>']
@@ -8074,6 +10378,7 @@
         ['数量', num(d.qty)],
         ['响应 / 浏览', num(d.responses) + ' 条 · ' + num(d.views) + ' 次'],
         ['可见范围', esc(d.visibilityLabel || '—')],
+        ['发布方式', esc(channelLabelOf(d))],
         ['发布时间', esc(dateText(d.createdAt))],
         ['需求 ID', '<span class="mono small">' + esc(d.id) + '</span>']
       ]) +
@@ -8089,7 +10394,7 @@
 
     const root = openDrawer({
       title: d.title || '需求详情',
-      titleTag: isPrivateItem(d) ? privateTag('私密发布') : '',
+      titleTag: isPrivateItem(d) ? privateTag('私密发布') : (isPoolOnlyItem(d) ? poolTag() : ''),
       sub: [d.tradeMode, d.cat, d.publisherLabel].filter(Boolean).map(esc).join(' · '),
       badges: autoBadge(d.status) + (d.heat ? ' ' + badge('热度 ' + num(d.heat), 'warn') : ''),
       body: body,
@@ -8119,6 +10424,7 @@
       '<div class="field" style="min-width:240px"><label>关键词</label><input id="dm-q" placeholder="标题 / 品类 / 品牌 / 型号 / ID" value="' + esc(DEMAND_FILTER.q) + '"></div>',
       field('状态', '<select id="dm-status">' + options(DEMAND_STATUS_OPTIONS, DEMAND_FILTER.status) + '</select>'),
       field('品类', '<input id="dm-cat" placeholder="如 GPU 服务器" value="' + esc(DEMAND_FILTER.cat) + '">'),
+      field('发布方式', '<select id="dm-pool">' + options(['普通发布', '仅发商机池', '私密发布'], DEMAND_FILTER.bizPool) + '</select>'),
       '<div class="field" style="justify-content:flex-end"><button class="btn primary" id="dm-search">' + icon('search') + '<span>查询</span></button></div>'
     ]) +
     card('需求列表', '<div id="dm-list">' + loadingBlock('加载需求') + '</div>', '', true)
@@ -8130,14 +10436,31 @@
       return (DEMAND_FILTER.items || []).filter(function (d) {
         if (DEMAND_FILTER.status && d.status !== DEMAND_FILTER.status) return false
         if (DEMAND_FILTER.cat && String(d.cat || '').indexOf(DEMAND_FILTER.cat) < 0) return false
+        if (DEMAND_FILTER.bizPool === '私密发布' && !isPrivateItem(d)) return false
+        if (DEMAND_FILTER.bizPool === '仅发商机池' && !isPoolOnlyItem(d)) return false
+        if (DEMAND_FILTER.bizPool === '普通发布' && (isPrivateItem(d) || isPoolOnlyItem(d))) return false
         if (!q) return true
         return [d.title, d.cat, d.brand, d.model, d.city, d.publisherLabel, d.id].join(' ').toLowerCase().indexOf(q) >= 0
       })
     }
 
+    function bulkBar() {
+      return '<div class="flex flex-wrap" style="gap:8px;align-items:center;margin-bottom:10px">' +
+        '<button class="btn" id="dm-all-btn">全选本页</button>' +
+        '<span class="small" id="dm-sel" style="color:var(--muted-2)">已选 0 项</span>' +
+        '<button class="btn primary" id="dm-transfer" disabled>转移归属</button>' +
+        '<span class="small" style="color:var(--muted-2)">可跨页勾选，单次最多 50 个</span>' +
+        '</div>'
+    }
+
     function render() {
       const all = DEMAND_FILTER.items || []
       const items = matched()
+      const canTransfer = C.can('demand.transfer')
+      /* 过滤条件变化后，把已不在结果里的勾选剔除 */
+      const valid = {}
+      items.forEach(function (d) { valid[d.id] = 1 })
+      Array.from(DEMAND_PICK).forEach(function (id) { if (!valid[id]) DEMAND_PICK.delete(id) })
       const limit = DEMAND_FILTER.limit
       const pages = Math.max(1, Math.ceil(items.length / limit))
       if (DEMAND_FILTER.page > pages) DEMAND_FILTER.page = pages
@@ -8147,8 +10470,11 @@
       all.forEach(function (d) { byId[d.id] = d })
 
       const rows = slice.map(function (d) {
-        return '<tr>' +
-          '<td><div class="strong">' + esc(d.title || '—') + (isPrivateItem(d) ? ' ' + privateTag() : '') + '</div><div class="small mono" style="color:var(--muted-2)">' + esc(d.id) + '</div></td>' +
+        const pick = canTransfer
+          ? '<td><input type="checkbox" class="dm-pick" data-id="' + esc(d.id) + '"' + (DEMAND_PICK.has(d.id) ? ' checked' : '') + '></td>'
+          : ''
+        return '<tr>' + pick +
+          '<td><div class="strong">' + esc(d.title || '—') + (isPoolOnlyItem(d) ? ' ' + poolTag() : '') + (isPrivateItem(d) ? ' ' + privateTag() : '') + '</div><div class="small mono" style="color:var(--muted-2)">' + esc(d.id) + '</div></td>' +
           '<td>' + esc(d.publisherLabel || '—') + '</td>' +
           '<td>' + esc(d.tradeMode || '—') + '</td>' +
           '<td>' + (d.budget || d.budgetMode === 'nego' ? amountOf(d, 'budget', 'budgetMax', 'budgetMode', 'budgetUnit') : '面议') + '</td>' +
@@ -8160,7 +10486,11 @@
           '</tr>'
       })
 
-      list.innerHTML = table(['需求标题', '发布主体', '交易方式', '预算', '数量', '成色要求', '状态', '发布时间', '操作'], rows, '当前筛选下暂无需求') +
+      const heads = ['需求标题', '发布主体', '交易方式', '预算', '数量', '成色要求', '状态', '发布时间', '操作']
+      if (canTransfer) heads.unshift('<input type="checkbox" id="dm-all" aria-label="全选本页">')
+
+      list.innerHTML = (canTransfer ? bulkBar() : '') +
+        table(heads, rows, '当前筛选下暂无需求') +
         pager(items.length, page, limit) +
         (DEMAND_FILTER.truncated ? '<div class="small" style="margin-top:8px;color:var(--muted-2)">数据量较大，已加载最近 ' + num(all.length) + ' 条，可结合状态 / 品类缩小范围。</div>' : '')
 
@@ -8177,6 +10507,135 @@
           if (item) demandAction(btn.getAttribute('data-dm-act'), item, load)
         }
       })
+      if (canTransfer) wirePick()
+    }
+
+    /* 勾选状态与批量按钮联动：全选框只作用于当前页，跨页勾选会累计 */
+    function wirePick() {
+      const allBox = list.querySelector('#dm-all')
+      const selText = list.querySelector('#dm-sel')
+      const transferBtn = list.querySelector('#dm-transfer')
+      const pageIds = function () {
+        return Array.prototype.map.call(list.querySelectorAll('.dm-pick'), function (box) {
+          return box.getAttribute('data-id')
+        })
+      }
+      function sync() {
+        if (selText) selText.textContent = '已选 ' + DEMAND_PICK.size + ' 项'
+        if (transferBtn) transferBtn.disabled = !DEMAND_PICK.size
+        if (allBox) {
+          const ids = pageIds()
+          allBox.checked = ids.length > 0 && ids.every(function (id) { return DEMAND_PICK.has(id) })
+        }
+      }
+      list.querySelectorAll('.dm-pick').forEach(function (box) {
+        box.onchange = function () {
+          const id = box.getAttribute('data-id')
+          if (box.checked) DEMAND_PICK.add(id)
+          else DEMAND_PICK.delete(id)
+          sync()
+        }
+      })
+      if (allBox) allBox.onchange = function () {
+        pageIds().forEach(function (id) {
+          if (allBox.checked) DEMAND_PICK.add(id)
+          else DEMAND_PICK.delete(id)
+        })
+        render()
+      }
+      const allBtn = list.querySelector('#dm-all-btn')
+      if (allBtn) allBtn.onclick = function () {
+        const ids = pageIds()
+        const allOn = ids.length > 0 && ids.every(function (id) { return DEMAND_PICK.has(id) })
+        ids.forEach(function (id) {
+          if (allOn) DEMAND_PICK.delete(id)
+          else DEMAND_PICK.add(id)
+        })
+        render()
+      }
+      if (transferBtn) transferBtn.onclick = openDemandTransferModal
+      sync()
+    }
+
+    /* 转移归属：先按 ID / 编号 / 手机号 / 昵称定位接收人，再批量提交（与商品转移同一套逻辑） */
+    function openDemandTransferModal() {
+      if (!DEMAND_PICK.size) return toast('请先勾选要转移的需求', 'err')
+      if (DEMAND_PICK.size > 50) return toast('单次最多转移 50 个需求', 'err')
+      const ids = Array.from(DEMAND_PICK)
+      let target = null
+      const root = modal({
+        title: '转移需求归属',
+        sub: '已选 ' + ids.length + ' 个需求，转移后由接收人管理并接收咨询',
+        body: '<div class="form-grid">' +
+          '<div class="field"><label>接收人</label><div class="flex" style="gap:8px">' +
+          '<input id="dm-target-q" placeholder="用户 ID / 用户编号 / 手机号 / 昵称">' +
+          '<button class="btn" id="dm-target-search">查找</button>' +
+          '</div></div>' +
+          '<div id="dm-target-list" class="small" style="color:var(--muted-2)">输入后点击「查找」，最多显示 10 个候选</div>' +
+          field('转移说明', '<input id="dm-target-reason" maxlength="60" placeholder="选填，例如：客户更换账号 / 员工离职交接">') +
+          '</div>',
+        footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" id="dm-target-ok" disabled>确认转移</button>'
+      })
+      if (!root) return
+      const box = root.body.querySelector('#dm-target-list')
+      const okBtn = root.body.querySelector('#dm-target-ok')
+
+      function renderTargets(items) {
+        if (!items.length) {
+          box.innerHTML = '未找到用户，请确认输入的是完整手机号或用户编号'
+          return
+        }
+        box.innerHTML = items.map(function (u) {
+          const disabled = u.status === '停用'
+          return '<label style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)">' +
+            '<input type="radio" name="dm-target" value="' + esc(u.id) + '"' + (disabled ? ' disabled' : '') + '>' +
+            '<span class="strong">' + esc(u.nick || '未设置昵称') + '</span>' +
+            badge(u.status || '正常', disabled ? 'danger' : 'info') +
+            '<span class="small mono" style="color:var(--muted-2);margin-left:auto">' + esc(u.userNo) + '</span>' +
+            '</label>'
+        }).join('')
+        box.querySelectorAll('input[name="dm-target"]').forEach(function (radio) {
+          radio.onchange = function () {
+            target = items.filter(function (u) { return u.id === radio.value })[0] || null
+            okBtn.disabled = !target || target.status === '停用'
+          }
+        })
+      }
+
+      async function doSearch() {
+        const q = root.body.querySelector('#dm-target-q').value.trim()
+        if (!q) return toast('请输入用户 ID、编号、手机号或昵称', 'err')
+        box.textContent = '查找中…'
+        try {
+          const res = await api('demand.transferTargets', { q: q })
+          renderTargets(res.items || [])
+        } catch (err) {
+          box.textContent = err.message || '查找失败'
+        }
+      }
+
+      root.body.querySelector('#dm-target-search').onclick = doSearch
+      root.body.querySelector('#dm-target-q').onkeydown = function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); doSearch() }
+      }
+      okBtn.onclick = async function () {
+        if (!target) return
+        okBtn.disabled = true
+        try {
+          const res = await api('demand.transfer', {
+            demandIds: ids,
+            targetId: target.id,
+            reason: (root.body.querySelector('#dm-target-reason').value || '').trim()
+          })
+          closeModal()
+          DEMAND_PICK.clear()
+          toast('已转移 ' + num(res.moved) + ' 个需求' + (res.skipped && res.skipped.length ? '，跳过 ' + res.skipped.length + ' 个' : ''))
+          load()
+        } catch (err) {
+          toast(err.message, 'err')
+          okBtn.disabled = false
+        }
+      }
     }
 
     async function load() {
@@ -8195,6 +10654,7 @@
       DEMAND_FILTER.q = (view.querySelector('#dm-q').value || '').trim()
       DEMAND_FILTER.status = view.querySelector('#dm-status').value
       DEMAND_FILTER.cat = (view.querySelector('#dm-cat').value || '').trim()
+      DEMAND_FILTER.bizPool = view.querySelector('#dm-pool').value
       DEMAND_FILTER.page = 1
       render()
     }
@@ -8203,6 +10663,7 @@
     view.querySelector('#dm-q').onkeydown = function (e) { if (e.key === 'Enter') search() }
     view.querySelector('#dm-cat').onkeydown = function (e) { if (e.key === 'Enter') search() }
     view.querySelector('#dm-status').onchange = search
+    view.querySelector('#dm-pool').onchange = search
     view.querySelector('#dm-refresh').onclick = function () { load() }
     load()
   }
@@ -8210,28 +10671,18 @@
   /* ================= 13. 代采代售（委托管理） ================= */
 
   /**
-   * 委托进度：提交委托 → 待审核 → 已上架（审核通过即上架）→ 平台确认成交（委托方只收通知）
-   * → 服务费到账 → 已完成（客服在工单点「确认完成」，委托同步归档）。
-   * 到截止时间未成交会自动关闭并标记为「已到期」，与人工关闭 / 驳回同属终态。
-   * 「待确认成交」是取消委托方确认之前的历史状态，仅用于处理旧数据。
+   * 委托列表只保留 4 个业务分组 + 全部：
+   * 全部 / 上架审核中 / 已上架（含锁定、已成交） / 已完成 / 已到期或已下架（到期、下架、驳回）。
+   * 旧状态「待确认」「已通过」「待确认成交」只存在于历史数据，按上述口径合并展示。
+   * 新发布与修改都会在工作台生成上架审核工单；成交必须在工单中心按流程登记。
    * 商机会员不在这里，统一在「用户管理 · 商机会员」维护。
    */
   const AGENCY_STAGE_TABS = [
-    { key: 'review', label: '待核对', statuses: ['待审核'] },
-    { key: 'active', label: '已上架 · 等待咨询', statuses: ['已上架'] },
-    { key: 'locked', label: '已锁定 · 唯一对接方', statuses: ['已锁定'] },
-    { key: 'deal', label: '待确认成交（旧）', statuses: ['待确认成交'] },
-    { key: 'dealt', label: '已成交 / 完成', statuses: ['已成交', '已完成'] },
-    { key: 'closed', label: '已到期 / 已关闭 / 打回', statuses: ['已关闭', '已驳回'] },
-    { key: '', label: '全部委托', statuses: [] }
-  ]
-  /* 工单状态：完成 / 终止的委托不再占用工作台，统一回到本页筛选查看 */
-  const AGENCY_CONSULT_TABS = [
-    { key: '', label: '全部工单' },
-    { key: 'active', label: '工单进行中' },
-    { key: 'done', label: '工单已完成' },
-    { key: 'aborted', label: '工单已终止' },
-    { key: 'none', label: '未生成工单' }
+    { key: '', label: '全部', statuses: [] },
+    { key: 'review', label: '上架审核中', statuses: ['待审核', '待确认'] },
+    { key: 'active', label: '已上架', statuses: ['已上架', '已通过', '已锁定', '已成交', '待确认成交'] },
+    { key: 'done', label: '已完成', statuses: ['已完成'] },
+    { key: 'closed', label: '已到期或已下架', statuses: ['已关闭', '已驳回'] }
   ]
   /* 排序口径：与后端 agency.list 的 sort 参数一一对应 */
   const AGENCY_SORTS = [
@@ -8241,7 +10692,7 @@
     { key: 'deadline_asc', label: '截止时间最近' },
     { key: 'updated_desc', label: '最近更新' }
   ]
-  const AGENCY_FILTER = { stage: '', side: '', consult: '', sort: 'created_desc', q: '', page: 1, limit: 12, counts: {}, sideCounts: {}, consultCounts: {} }
+  const AGENCY_FILTER = { stage: '', side: '', sort: 'created_desc', q: '', page: 1, limit: 12, counts: {}, sideCounts: {} }
 
   /* 商机权限开通：与「用户管理 · 开通会员」不是同一套套餐，函数名必须区分，否则会被后者覆盖 */
   function openBizGrantModal(member, plans, onDone) {
@@ -8456,7 +10907,7 @@
   }
 
   Pages.biz = async function (view) {
-    /* 工作台待审核弹窗可直接跳到「待核对」筛选 */
+    /* 工作台待审核弹窗可直接跳到「待审核」筛选 */
     const jumpReview = (state.pageQuery && state.pageQuery.agencyStatus) || ''
     if (jumpReview) {
       state.pageQuery = null
@@ -8465,7 +10916,7 @@
     }
     view.innerHTML = pageHead(
       '代采代售委托',
-      '提交委托 → 平台人工核对 → 审核通过即上架 → 等待用户咨询 → 平台确认成交 → 委托方支付服务费 → 客服确认完成。已成交 / 已完成 / 已关闭的委托，以及已完成 / 已终止的咨询工单，都在本页按状态筛选、按需排序；商机会员已移至「用户管理」。',
+      '提交委托 → 平台核对 → 审核通过即上架 → 对接中 → 工单中心按流程登记成交 → 服务费到账 → 确认完成。状态只保留「待审核 / 对接中 / 交易中 / 已完成 / 已结束」；成交必须在工单中心走「确定对接方 → 合同归档 → 登记成交」，本页不提供直接成交入口。',
       '<button class="btn" data-go="users">' + icon('users') + '<span>用户管理</span></button>' +
       '<button class="btn" id="bz-refresh" style="margin-left:8px">刷新</button>'
     ) + '<div id="bz-body" style="margin-top:14px">' + loadingBlock('加载委托') + '</div>'
@@ -8503,8 +10954,8 @@
         '<td>' + esc(a.city || '不限') + '</td>' +
         '<td>' + money(a.serviceFee) + '</td>' +
         '<td>' + agencyOrderBadge(a) + consultLine +
-        (dealPending ? '<div class="small" style="color:var(--warn)">待补确认（旧数据）</div>'
-          : (a.status === '已上架' || agencyExpired(a)) && deadline
+        (dealPending ? '<div class="small" style="color:var(--warn)">旧数据 · 请到工单中心登记成交</div>'
+          : (a.status === '已上架' || a.status === '已锁定' || agencyExpired(a)) && deadline
             ? '<div class="small" style="color:var(--muted-2)">' + (agencyExpired(a) ? '到期 ' : '截止 ') + esc(deadline) + '</div>' : '') + '</td>' +
         '<td class="small">' + esc(a.createdText || dateText(a.createdAt)) + '</td>' +
         '</tr>'
@@ -8515,17 +10966,13 @@
       AGENCY_FILTER.counts = counts
       const sideCounts = data.sideCounts || AGENCY_FILTER.sideCounts || {}
       AGENCY_FILTER.sideCounts = sideCounts
-      const consultCounts = data.consultCounts || AGENCY_FILTER.consultCounts || {}
-      AGENCY_FILTER.consultCounts = consultCounts
-      const consultTotal = Number(consultCounts.active || 0) + Number(consultCounts.done || 0) +
-        Number(consultCounts.aborted || 0) + Number(consultCounts.none || 0)
       body.innerHTML =
         '<div class="grid g5">' +
-          kpi('待核对', num(counts['待审核'] || 0), '提交后先核对资料与上传材料') +
-          kpi('已上架 · 等待咨询', num(counts['已上架'] || 0), '审核通过即上架，等待用户发起咨询') +
-          kpi('已锁定 · 唯一对接方', num(counts['已锁定'] || 0), '合同上传后手动确定，委托立即退出商机池') +
-          kpi('已成交 / 完成', num(Number(counts['已成交'] || 0) + Number(counts['已完成'] || 0)), '服务费到账后客服确认完成') +
-          kpi('已到期 / 已关闭', num(counts['已关闭'] || 0), '到期自动关闭，不再展示') +
+          kpi('全部委托', num(sideCounts.all || 0), '代采 / 代售全部委托') +
+          kpi('上架审核中', num(Number(counts['待审核'] || 0) + Number(counts['待确认'] || 0)), '提交后自动生成审核工单，在工作台核对资料') +
+          kpi('已上架', num(Number(counts['已上架'] || 0) + Number(counts['已通过'] || 0) + Number(counts['已锁定'] || 0) + Number(counts['已成交'] || 0) + Number(counts['待确认成交'] || 0)), '已上架对外展示，成交在工单中心按流程登记') +
+          kpi('已完成', num(counts['已完成'] || 0), '工单走完且服务费到账') +
+          kpi('已到期或已下架', num(Number(counts['已关闭'] || 0) + Number(counts['已驳回'] || 0)), '到期、人工下架或审核驳回') +
         '</div>' +
         '<div style="height:14px"></div>' +
         /* 方向 tab 带总量：代采 / 代售各自多少单一眼可见，切换方向不影响角标口径 */
@@ -8543,18 +10990,15 @@
             }).join('') + '</select></div>',
           '<div class="field" style="justify-content:flex-end"><button class="btn primary" id="bz-search">' + icon('search') + '<span>查询</span></button></div>'
         ]) +
-        '<div class="seg" id="bz-stages" style="margin-bottom:10px">' + AGENCY_STAGE_TABS.map(function (t) {
-          const c = t.statuses.reduce(function (n, s) { return n + Number(counts[s] || 0) }, 0)
-          return '<button data-stage="' + t.key + '"' + (AGENCY_FILTER.stage === t.key ? ' class="on"' : '') + '>' +
-            esc(t.label) + ' ' + num(c) + '</button>'
-        }).join('') + '</div>' +
-        /* 工单状态分栏：完成 / 终止的工单不在工作台，回到这里筛选与排序 */
-        '<div class="seg" id="bz-consults" style="margin-bottom:12px">' + AGENCY_CONSULT_TABS.map(function (t) {
-          const c = t.key === '' ? consultTotal : Number(consultCounts[t.key] || 0)
-          return '<button data-consult="' + t.key + '"' + (AGENCY_FILTER.consult === t.key ? ' class="on"' : '') + '>' +
-            esc(t.label) + ' ' + num(c) + '</button>'
-        }).join('') + '</div>' +
-        card(stageOf().label,
+        /* 分类以横向 Tab 固定在委托列表正上方，切 Tab 即按阶段过滤 */
+        card('委托列表',
+          '<div class="tabs" id="bz-stages">' + AGENCY_STAGE_TABS.map(function (t) {
+            const c = t.statuses.length
+              ? t.statuses.reduce(function (n, s) { return n + Number(counts[s] || 0) }, 0)
+              : Number(sideCounts.all || 0)
+            return '<button data-stage="' + t.key + '"' + (AGENCY_FILTER.stage === t.key ? ' class="on"' : '') + '>' +
+              esc(t.label) + '<span class="count">' + num(c) + '</span></button>'
+          }).join('') + '</div>' +
           table(['委托单', '方向', '委托方', '数量 / 金额', '城市', '服务费', '进度', '提交时间'], items.map(rowHtml), '该阶段暂无委托') +
           (data.total > data.limit ? pager(data.total, data.page, data.limit) : ''), '', true)
 
@@ -8576,13 +11020,6 @@
       body.querySelectorAll('[data-stage]').forEach(function (btn) {
         btn.onclick = function () {
           AGENCY_FILTER.stage = btn.getAttribute('data-stage')
-          AGENCY_FILTER.page = 1
-          load()
-        }
-      })
-      body.querySelectorAll('[data-consult]').forEach(function (btn) {
-        btn.onclick = function () {
-          AGENCY_FILTER.consult = btn.getAttribute('data-consult')
           AGENCY_FILTER.page = 1
           load()
         }
@@ -8611,7 +11048,6 @@
       const payload = { page: AGENCY_FILTER.page, limit: AGENCY_FILTER.limit, sort: AGENCY_FILTER.sort || 'created_desc' }
       if (stage.statuses.length) payload.statuses = stage.statuses
       if (AGENCY_FILTER.side) payload.side = AGENCY_FILTER.side
-      if (AGENCY_FILTER.consult) payload.consult = AGENCY_FILTER.consult
       if (AGENCY_FILTER.q) payload.keyword = AGENCY_FILTER.q
       try {
         const data = await api('agency.list', payload)
@@ -8641,15 +11077,14 @@
     ['done', '已完成']
   ]
   /* 分栏顺序即业务推进顺序：待领取 → 沟通 → 合同 → 服务费 → 待完成
-     已完成 / 已终止的工单不在工作台展示，改到「代采代售」按工单状态查看；
-     deal_pending 只可能来自升级前的旧工单，单独留一栏便于清理 */
+     已完成 / 已终止的工单不在工作台展示，改到「代采代售」按工单状态查看 */
   const CF_TABS = [
     ['all', '全部'],
     ['unclaimed', '待领取'],
+    ['audit', '上架审核'],
     ['communicating', '沟通中'],
     ['review', '合同待审核'],
     ['contract', '合同进度'],
-    ['deal_pending', '待确认成交（旧）'],
     ['fee', '待付服务费'],
     ['paid', '待完成']
   ]
@@ -8662,9 +11097,104 @@
     items: [],
     detail: null,
     msgs: [],
+    msgsSig: '',
     revealed: null,
     denied: '',
     staff: []
+  }
+
+  /* ---------------- 工单台自动刷新 ---------------- */
+
+  /* 每 15 秒拉一次工单列表；选中工单仍在时只重画列表，不打断正在看的会话与回复草稿 */
+  let cfPollTimer = null
+  let cfPollSig = ''
+
+  function cfMsgsSig(list) {
+    return (list || []).map(function (m) {
+      return m.id || (m.createdAt + '|' + String(m.body || '').length)
+    }).join(',')
+  }
+
+  function cfStopPoll() {
+    if (cfPollTimer) {
+      clearInterval(cfPollTimer)
+      cfPollTimer = null
+    }
+  }
+
+  function cfStartPoll() {
+    cfStopPoll()
+    cfPollTimer = setInterval(cfAutoRefresh, 15000)
+  }
+
+  async function cfAutoRefresh() {
+    const body = document.getElementById('cf-body')
+    if (!body) { cfStopPoll(); return }
+    /* 弹窗打开或正在输入时暂停，避免打断操作 */
+    const modalEl = document.getElementById('modal')
+    if (modalEl && !modalEl.hidden) return
+    const active = document.activeElement
+    if (active && (active.id === 'cf-reply' || active.id === 'cf-q')) return
+    let data
+    try {
+      data = await api('consult.list', { tab: CF.tab, q: CF.q, page: 1, limit: 80 })
+    } catch (err) { return }
+    const items = data.items || []
+    const counts = data.counts || {}
+    const sig = JSON.stringify([items, counts])
+    const keep = CF.leadId
+    const before = (CF.items || []).find(function (it) { return it.leadId === keep }) || {}
+    if (sig !== cfPollSig) {
+      cfPollSig = sig
+      const draftEl = document.getElementById('cf-reply')
+      const draft = draftEl ? draftEl.value : ''
+      CF.items = items
+      CF.counts = counts
+      cfPaintTabs()
+      const current = items.find(function (it) { return it.leadId === keep })
+      if (!current) {
+        CF.leadId = items.length ? items[0].leadId : ''
+        if (CF.leadId) await cfPick(CF.leadId)
+      } else {
+        cfPaintList()
+        /* 阶段变了（用户付款 / 合同状态变化）才重拉详情，普通新消息只刷会话 */
+        if (current.stage !== before.stage || current.contractStatus !== before.contractStatus) {
+          await cfPick(keep)
+        } else if (draft) {
+          const box = document.getElementById('cf-reply')
+          if (box) box.value = draft
+        }
+      }
+    }
+    await cfSyncChat()
+  }
+
+  /* 会话增量刷新：只有消息发生变化才重画，保留回复草稿、焦点与阅读位置 */
+  async function cfSyncChat() {
+    if (!CF.detail || !CF.leadId) return
+    const lead = CF.detail.lead || {}
+    if (lead.ticketKind === 'audit') return
+    let res
+    try {
+      res = await api('msg.list', { threadId: cfThreadId(), limit: 80 })
+    } catch (err) { return }
+    const items = res.items || []
+    const sig = cfMsgsSig(items)
+    if (sig === CF.msgsSig) return
+    CF.msgsSig = sig
+    CF.msgs = items
+    const input = document.getElementById('cf-reply')
+    const draft = input ? input.value : ''
+    const focused = !!input && document.activeElement === input
+    const stream = document.getElementById('cf-stream')
+    const top = stream ? stream.scrollTop : 0
+    const nearBottom = stream ? (stream.scrollHeight - stream.scrollTop - stream.clientHeight < 100) : true
+    cfPaintChat()
+    const box = document.getElementById('cf-reply')
+    if (box && draft) box.value = draft
+    if (box && focused) box.focus()
+    const next = document.getElementById('cf-stream')
+    if (next) next.scrollTop = nearBottom ? next.scrollHeight : top
   }
 
   function cfTone(stage) {
@@ -8676,6 +11206,7 @@
 
   function cfStageText(stage) {
     if (stage === 'aborted') return '已终止'
+    if (stage === 'audit') return '上架审核中'
     for (let i = 0; i < CF_STAGES.length; i += 1) {
       if (CF_STAGES[i][0] === stage) return CF_STAGES[i][1]
     }
@@ -8734,7 +11265,8 @@
     }
     list.innerHTML = CF.items.map(function (it) {
       const on = it.leadId === CF.leadId
-      const title = it.title || '委托咨询'
+      const audit = it.ticketKind === 'audit'
+      const title = it.title || (audit ? '委托审核' : '委托咨询')
       const owner = it.unclaimed ? '待领取' : (it.ownerName || it.csName || '未指派')
       const review = it.contractStatus === '待审核'
       return '<div class="cf-list-item' + (on ? ' on' : '') + '" data-lead="' + esc(it.leadId) + '">' +
@@ -8752,7 +11284,9 @@
         '<span class="cf-list-ago">' + esc(ago(it.stageAt || it.createdAt)) + '</span>' +
         '</div>' +
         '<div class="cf-list-foot">' +
-        '<span>' + (it.unclaimed ? '待领取 · 点击领取并沟通' : review ? '合同待审核 · 点击处理' : '点击查看工单详情') + '</span>' +
+        '<span>' + (audit
+          ? (it.unclaimed ? '上架审核 · 领取后处理' : '上架审核 · 点击处理')
+          : (it.unclaimed ? '待领取 · 点击领取并沟通' : review ? '合同待审核 · 点击处理' : '点击查看工单详情')) + '</span>' +
         '<span class="cf-list-arrow">›</span></div>' +
         '</div>'
     }).join('')
@@ -8768,6 +11302,7 @@
     const c = CF.counts || {}
     el.innerHTML = kpiRow([
       ['待领取工单', num(c.unclaimed || 0), '<span class="small" style="color:' + (c.unclaimed ? 'var(--warn)' : 'var(--muted-2)') + '">先领取再沟通</span>'],
+      ['上架审核', num(c.audit || 0), '<span class="small" style="color:' + (c.audit ? 'var(--warn)' : 'var(--muted-2)') + '">新发布委托待审核</span>'],
       ['进行中', num(Math.max(0, Number(c.all || 0) - Number(c.unclaimed || 0))), '<span class="small" style="color:var(--muted-2)">已领取跟进</span>'],
       ['合同待审核', num(c.review || 0), '<span class="small" style="color:' + (c.review ? 'var(--danger)' : 'var(--muted-2)') + '">管理员处理</span>'],
       ['服务费待支付', num(c.fee || 0), '<span class="small" style="color:var(--muted-2)">等委托方打款 → 财务确认</span>'],
@@ -8827,6 +11362,7 @@
     }
     CF.items = data.items || []
     CF.counts = data.counts || {}
+    cfPollSig = JSON.stringify([CF.items, CF.counts])
     cfPaintTabs()
     const exists = CF.items.some(function (it) { return it.leadId === CF.leadId })
     /* 深链指向的工单可能在当前筛选 / 权限范围外，给出提示而不是空白 */
@@ -8855,6 +11391,7 @@
     CF.leadId = leadId
     CF.detail = null
     CF.msgs = []
+    CF.msgsSig = ''
     CF.revealed = null
     CF.denied = ''
     cfPaintList()
@@ -8876,12 +11413,16 @@
         return
       }
     }
-    if (CF.detail) {
+    /* 审核工单不面向用户对话，没有会话可拉，直接跳过 */
+    const isAudit = !!(CF.detail && CF.detail.lead && CF.detail.lead.ticketKind === 'audit')
+    if (CF.detail && !isAudit) {
       try {
         const res = await api('msg.list', { threadId: cfThreadId(), limit: 80 })
         CF.msgs = res.items || []
+        CF.msgsSig = cfMsgsSig(CF.msgs)
       } catch (err) {
         CF.msgs = []
+        CF.msgsSig = ''
       }
     }
     cfPaintChat()
@@ -8922,6 +11463,28 @@
     }
     const d = CF.detail
     const lead = d.lead || {}
+    /* 上架审核工单不面向用户沟通：不展示会话，也不提供回复框 */
+    if (lead.ticketKind === 'audit') {
+      const a = d.agency || {}
+      const audit = d.audit || {}
+      box.innerHTML =
+        '<div class="flex flex-wrap" style="align-items:center;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--line)">' +
+        '<div class="strong" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+        esc(lead.targetTitle || a.item || '委托审核') + '</div>' +
+        badge(lead.sideLabel || a.kind || '代采', 'brand') +
+        badge('上架审核中', 'warn') +
+        '<div class="grow"></div>' +
+        '<span class="small" style="color:var(--muted)">' + esc(lead.csName || '') + '</span>' +
+        '</div>' +
+        '<div class="chat-note" style="margin-top:18px;line-height:1.9">' +
+        '<div class="strong" style="color:var(--ink);margin-bottom:6px">审核工单无需对话</div>' +
+        '用户发布或修改委托后自动生成此工单。请在右侧核对委托内容与上传材料：' +
+        '一致即通过，通过后委托立即上架；有问题点驳回并填写原因，用户会收到站内信，可修改后重新提交。' +
+        '</div>' +
+        '<div class="small" style="color:var(--muted);margin-top:14px">提交时间 ' +
+        esc(dateText(audit.submittedAt || lead.createdAt)) + '</div>'
+      return
+    }
     const ended = d.stage === 'done' || d.stage === 'aborted'
     box.innerHTML =
       '<div class="flex flex-wrap" style="align-items:center;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--line)">' +
@@ -8937,13 +11500,17 @@
       '</div>' +
       (ended
         ? '<div class="chat-note">工单已结束，会话不再接收新消息</div>'
-        : '<div class="flex" style="gap:8px;border-top:1px solid var(--line);padding-top:10px">' +
+        : '<div style="border-top:1px solid var(--line);padding-top:10px">' +
+          quickReplyBar(d.stage) +
+          '<div class="flex" style="gap:8px">' +
           '<input id="cf-reply" placeholder="输入回复，回车发送" maxlength="1000" style="flex:1">' +
-          '<button class="btn primary" id="cf-send">发送</button></div>')
+          '<button class="btn primary" id="cf-send">发送</button></div></div>')
     const stream = box.querySelector('#cf-stream')
     if (stream) stream.scrollTop = stream.scrollHeight
     const send = box.querySelector('#cf-send')
     if (send) send.onclick = cfSend
+    /* 常用语：点一下填入回复框 */
+    wireQuickReplies(box, '#cf-reply')
     const input = box.querySelector('#cf-reply')
     if (input) {
       input.onkeydown = function (e) {
@@ -8966,6 +11533,7 @@
       input.value = ''
       const res = await api('msg.list', { threadId: cfThreadId(), limit: 80 })
       CF.msgs = res.items || []
+      CF.msgsSig = cfMsgsSig(CF.msgs)
       cfPaintChat()
       /* 重新拉详情：对话发生后底部才会出现「确认满足条件」 */
       try {
@@ -8984,6 +11552,8 @@
     try {
       await api('lead.claim', { leadId: CF.leadId })
       toast('已领取，可以开始联系双方', 'ok')
+      /* 领取后工单离开「待领取」分栏，切到全部，避免右侧会话跟着列表一起消失 */
+      if (CF.tab === 'unclaimed') CF.tab = 'all'
       await cfReload(true)
     } catch (err) {
       toast(err.message || '领取失败', 'err')
@@ -9194,6 +11764,32 @@
     const c = d.contract || {}
     const p = d.payment || {}
     const lead = d.lead || {}
+    /* 上架审核工单：底部只给「通过上架 / 驳回 / 转派」，不出现合同与收款动作 */
+    if (lead.ticketKind === 'audit') {
+      const a = d.agency || {}
+      const btns = []
+      const utils = []
+      if (C.can('agency.review') && a.status === '待审核') {
+        btns.push('<button class="btn primary" data-cf="audit-ok">通过并上架</button>')
+        btns.push('<button class="btn danger" data-cf="audit-no">驳回</button>')
+      }
+      if (!lead.assignedAccount) btns.push('<button class="btn primary" data-cf="claim">领取该工单</button>')
+      if (C.can('lead.assign')) {
+        utils.push('<button class="btn" data-cf="transfer">' + (lead.assignedAccount ? '转派客服' : '分配客服') + '</button>')
+      }
+      box.hidden = false
+      box.innerHTML =
+        '<div class="cf-foot-tip"><span class="k">下一步</span>' +
+        (a.status === '待审核'
+          ? '核对委托内容、主体资质与上传材料：一致即通过，通过后立即上架；有问题点驳回并填写原因'
+          : '该委托当前状态为「' + esc(a.status || '—') + '」，无需审核') + '</div>' +
+        (btns.length || utils.length
+          ? '<div class="cf-foot-btns">' + btns.join('') + '</div>' +
+            (utils.length ? '<div class="cf-foot-utils">' + utils.join('') + '</div>' : '')
+          : '')
+      cfBindInfo(box)
+      return
+    }
     const ended = d.stage === 'done' || d.stage === 'aborted'
     const canAudit = c.status === '待审核' && C.can('contract.review')
     /* 唯一对接方在「合同已上传、待审核」时手动确定：跟进客服或管理员都可一键结束其他对接；
@@ -9233,8 +11829,9 @@
     if (p.status === '待确认' && C.can('payment.feeConfirm')) {
       btns.push('<button class="btn primary" data-cf="fee-confirm">确认服务费到账</button>')
     }
-    if (!ended && lead.assignedAccount && C.can('lead.assign')) {
-      utils.push('<button class="btn" data-cf="transfer">转派客服</button>')
+    /* 转单：未指派时是「分配客服」，已有负责人时是「转派客服」，客服与管理员都可用 */
+    if (!ended && C.can('lead.assign')) {
+      utils.push('<button class="btn" data-cf="transfer">' + (lead.assignedAccount ? '转派客服' : '分配客服') + '</button>')
     }
     const abort = cfActionItems(d).filter(function (it) { return it.k === 'abort' })[0]
     if (abort) utils.push('<button class="btn danger" data-cf="abort">' + esc(abort.label) + '</button>')
@@ -9262,6 +11859,48 @@
     const d = CF.detail
     const lead = d.lead || {}
     const a = d.agency || {}
+    /* 上架审核工单：只核对委托内容与资质材料，不展示合同 / 收款 / 对接情况 */
+    if (lead.ticketKind === 'audit') {
+      const audit = d.audit || {}
+      const subjectRows = kvList([
+        ['主体名称', esc(a.subjectMasked || '未登记') + (a.subjectType ? ' · ' + esc(a.subjectType) : '')],
+        ['证照 / 信用代码', esc(a.creditMasked || '未登记')],
+        ['法定代表人', esc(a.legalMasked || '未登记')],
+        ['联系人手机号', esc(a.phoneMasked || '未登记')],
+        ['材料核验', a.status === '已上架' ? badge('已核验', 'ok') : badge('待核对', 'warn')]
+      ])
+      box.innerHTML =
+        '<div class="flex flex-wrap" style="align-items:center;gap:6px">' +
+        badge(lead.sideLabel || a.kind || '代采', 'brand') +
+        badge('上架审核中', 'warn') +
+        (lead.largeAmount ? badge('大额', 'warn') : '') +
+        '</div>' +
+        '<div class="strong" style="font-size:14px;line-height:1.5;margin:6px 0 2px">' +
+        esc(lead.targetTitle || a.item || '委托审核') + '</div>' +
+        '<div class="small" style="color:var(--muted)">工单 ' + esc(CF.leadId) +
+        (lead.csName ? ' · 客服 ' + esc(lead.csName) : '') +
+        ' · 提交 ' + esc(dateText(audit.submittedAt || lead.createdAt)) + '</div>' +
+        '<div class="cf-info-sec"><h4>审核说明</h4>' +
+        '<div class="small" style="color:var(--muted);line-height:1.8">' +
+        '用户发布 / 修改委托后自动生成此工单。核对下方委托内容、主体资质与上传材料：' +
+        '一致即「通过并上架」，委托立即生效；有问题点「驳回」并填写原因，用户会收到站内信，可修改后重新提交。' +
+        (audit.result
+          ? '<br>最近结论：' + esc(audit.result) + (audit.note ? ' · ' + esc(audit.note) : '')
+          : '') + '</div></div>' +
+        '<div class="cf-info-sec"><h4>委托内容</h4>' + cfAgencyHtml(a, 0) + '</div>' +
+        '<div class="cf-info-sec"><h4>委托人主体</h4>' + subjectRows + '</div>' +
+        '<div class="cf-info-sec"><h4>上传材料</h4>' +
+        (a.id
+          ? '<div class="small" style="color:var(--muted-2);margin-bottom:8px">点击图片可放大</div>' +
+            '<div class="rev-media" id="o-media-agency">' + loadingBlock('加载原件') + '</div>'
+          : '<div class="small" style="color:var(--muted)">委托单未关联或已删除</div>') +
+        '</div>' +
+        '<div class="cf-info-sec"><h4>阶段记录</h4>' + cfHistoryHtml(d) + '</div>'
+      cfBindInfo(box)
+      if (a.id) loadMediaPanel(box, a, 'agency')
+      cfPaintFoot(d)
+      return
+    }
     const head =
       '<div class="flex flex-wrap" style="align-items:center;gap:6px">' +
       badge(lead.sideLabel || a.kind || '代采', 'brand') +
@@ -9302,6 +11941,8 @@
         else if (act === 'abort') cfAbortModal()
         else if (act === 'review-ok') cfReview('approve')
         else if (act === 'review-no') cfReview('reject')
+        else if (act === 'audit-ok') cfAgencyAudit('approve')
+        else if (act === 'audit-no') cfAgencyAudit('reject')
         else if (act === 'lock') cfLockAgency()
         else if (act === 'claim') cfClaim()
         else if (act === 'transfer') cfTransferModal()
@@ -9622,6 +12263,51 @@
     }
   }
 
+  /**
+   * 上架审核：在工作台的审核工单里直接审核委托。
+   * 通过后委托立即上架、工单自动收尾；驳回必须写原因，用户会收到站内信。
+   */
+  async function cfAgencyAudit(decision) {
+    const d = CF.detail || {}
+    const a = d.agency || {}
+    if (!a.id) return toast('该工单未关联委托，无法审核', 'err')
+    if (decision === 'approve') {
+      const ok = await confirm({
+        title: '通过并上架',
+        message: '通过后委托立即上架（修改中的委托会用新内容覆盖并重新上架），审核工单自动收尾。确认通过？',
+        okText: '通过并上架'
+      })
+      if (!ok) return
+      try {
+        await api('agency.review', { id: a.id, decision: '通过' })
+        await cfAfterAction('已通过审核，委托已上架')
+      } catch (err) {
+        toast(err.message || '审核失败', 'err')
+      }
+      return
+    }
+    const root = modal({
+      title: '驳回委托',
+      sub: '驳回后用户会收到站内信，可按意见修改后重新提交；修改中的委托将恢复原上架内容',
+      body: '<div class="form-grid"><div class="field full"><label>驳回原因</label>' +
+        '<textarea id="cf-au-note" rows="3" maxlength="100" placeholder="例如：委托材料与填写型号不一致，请重新上传"></textarea></div></div>',
+      footer: '<button class="btn" data-close="1">取消</button><button class="btn danger" id="cf-au-ok">确认驳回</button>'
+    })
+    if (!root) return
+    root.querySelector('#cf-au-ok').onclick = async function () {
+      const note = root.querySelector('#cf-au-note').value.trim()
+      if (!note) return toast('请填写驳回原因', 'err')
+      this.disabled = true
+      try {
+        await api('agency.review', { id: a.id, decision: '驳回', note: note })
+        await cfAfterAction('已驳回委托，审核工单已收尾')
+      } catch (err) {
+        toast(err.message || '审核失败', 'err')
+        this.disabled = false
+      }
+    }
+  }
+
   /* 转派：工单处理中可把负责人换成其他客服，交接后新客服继续推进整条链路 */
   async function cfTransferModal() {
     const d = CF.detail || {}
@@ -9657,7 +12343,7 @@
         await api('lead.assign', {
           leadId: CF.leadId,
           assignee: root.querySelector('#cf-x-staff').value,
-          note: root.querySelector('#cf-x-note').value.trim()
+          reason: root.querySelector('#cf-x-note').value.trim()
         })
         closeModal()
         toast('已转派', 'ok')
@@ -9680,7 +12366,7 @@
     })
     if (!ok) return
     try {
-      await api('payment.feeConfirm', { paymentId: p.id })
+      await api('payment.feeConfirm', { id: p.id })
       toast('服务费已确认到账', 'ok')
       await cfReload(true)
     } catch (err) {
@@ -9721,13 +12407,28 @@
       if (e.key === 'Enter') view.querySelector('#cf-search').click()
     }
     await cfReload(false)
+    cfStartPoll()
   }
 
   /* ============================================================
-     客服业务：绑定用户、业绩提成、服务评价档案
-     —— 业绩口径：客服绑定用户的「直接下级」会员支付，按比例自动计提
+     客服业务：绑定用户、委托佣金、服务评价档案
+     —— 佣金口径：客服只有推广二级佣金（推广中心计提）与委托佣金（代采/代售服务费到账后按比例计提）
      ============================================================ */
-  const CS_VIEW = { staff: [], settings: { rate: 0.05 }, tags: [] }
+  const CS_VIEW = {
+    staff: [],
+    settings: { agencyRate: 0.2, idleMinutes: 30 },
+    tags: [],
+    tab: 'rate',
+    dailyCs: '',
+    dailyDays: 7,
+    daily: null
+  }
+
+  const CS_TABS = [
+    ['rate', '佣金配置'],
+    ['daily', '每日工作量'],
+    ['bind', '客服与绑定']
+  ]
 
   function csPct(value) {
     const n = Number(value) || 0
@@ -9748,13 +12449,58 @@
       (binding.boundAt ? '<div class="small" style="color:var(--muted-2)">' + dayText(binding.boundAt) + ' 绑定</div>' : '')
   }
 
+  /* 规则块：大号比例一眼看清，可编辑时直接在同一位置改 */
+  function csRuleBlock(title, hint, inputId, value, canEdit) {
+    const pctText = (Math.round((Number(value) || 0) * 1000) / 10).toFixed(1)
+    return '<div style="border:1px solid var(--line);border-radius:12px;padding:16px;background:var(--bg-2,transparent)">' +
+      '<div class="strong">' + esc(title) + '</div>' +
+      '<div class="flex" style="align-items:baseline;gap:6px;margin:8px 0 4px">' +
+        (canEdit
+          ? '<input id="' + inputId + '" type="number" min="0" max="50" step="0.1" value="' + pctText + '" ' +
+            'style="width:110px;font-size:28px;font-weight:700;line-height:1.2;padding:2px 8px">'
+          : '<span style="font-size:32px;font-weight:700;line-height:1.2">' + csPct(value) + '</span>') +
+        (canEdit ? '<span style="font-size:22px;font-weight:700">%</span>' : '') +
+      '</div>' +
+      '<div class="small" style="color:var(--muted-2)">' + esc(hint) + '</div>' +
+      '</div>'
+  }
+
+  /* 锁定比例单元格：已绑定展示绑定时刻快照，未绑定展示当前默认并提示绑定时锁定 */
+  function csLockCell(row) {
+    const bound = !!(row.binding && row.binding.uid)
+    const locked = Number(row.lockedAgencyRate) || 0
+    const current = Number(row.agencyRate) || 0
+    const changed = Math.abs(locked - current) > 0.0001
+    if (!bound) {
+      return '<div class="mono strong" style="color:var(--muted-2)">' + csPct(current) + '</div>' +
+        '<div class="small" style="color:var(--muted-2)">待绑定 · 当前默认</div>'
+    }
+    return '<div class="mono strong">' + csPct(locked) + '</div>' +
+      '<div>' + badge('绑定锁定', 'ok', true) + '</div>' +
+      '<div class="small" style="color:var(--muted-2)">' +
+        (changed ? '新绑定将按 ' + csPct(current) : '代采代售佣金') +
+      '</div>'
+  }
+
   Pages.cs = async function (view) {
     view.innerHTML = pageHead('客服业务',
-      '客服绑定用户的直接下级会员支付自动计入业绩并计提成；代采代售咨询由客服领取接入，结束服务后用户评价自动进档案',
+      '客服佣金只有两项：委托佣金（代采代售服务费到账后按比例计提，进工资）与推广二级佣金（推广中心计提）；客服绑定用户由管理员在此设置，客服无权限修改',
       '<button class="btn" id="cs-refresh">' + icon('refresh') + '<span>刷新</span></button>') +
-      '<div id="cs-stats">' + loadingBlock('读取客服数据') + '</div>' +
-      '<div id="cs-body" style="margin-top:14px">' + loadingBlock('读取客服列表') + '</div>'
+      '<div id="cs-stats"></div>' +
+      '<div class="tabs" id="cs-tabs" style="margin-top:14px">' + CS_TABS.map(function (t) {
+        return '<button data-cs-tab="' + t[0] + '"' + (CS_VIEW.tab === t[0] ? ' class="on"' : '') + '>' + esc(t[1]) + '</button>'
+      }).join('') + '</div>' +
+      '<div id="cs-body" style="margin-top:14px">' + loadingBlock('读取客服数据') + '</div>'
     view.querySelector('#cs-refresh').onclick = function () { Pages.cs(view) }
+    view.querySelectorAll('[data-cs-tab]').forEach(function (btn) {
+      btn.onclick = function () {
+        const tab = btn.getAttribute('data-cs-tab')
+        if (CS_VIEW.tab === tab) return
+        CS_VIEW.tab = tab
+        view.querySelectorAll('[data-cs-tab]').forEach(function (b) { b.classList.toggle('on', b === btn) })
+        renderCsBody(view.querySelector('#cs-body'), view)
+      }
+    })
     let data = {}
     try {
       data = (await api('cs.settings', {})) || {}
@@ -9785,102 +12531,215 @@
     root.innerHTML = kpiRow([
       ['客服坐席', num(staff.length), '<span class="small" style="color:var(--muted-2)">含管理员</span>'],
       ['已绑定用户', num(staff.filter(function (r) { return r.binding && r.binding.uid }).length), '<span class="small" style="color:var(--muted-2)">一对一绑定</span>'],
-      ['本月业绩', money(sum('monthPerformance')), '<span class="small" style="color:var(--muted-2)">下级会员支付</span>'],
-      ['本月提成', money(sum('monthCommission')), '<span class="small" style="color:var(--muted-2)">按比例自动计提</span>'],
+      ['本月委托业绩', money(sum('monthAgencyFee')), '<span class="small" style="color:var(--muted-2)">委托服务费实收</span>'],
+      ['本月委托佣金', money(sum('monthCommission')), '<span class="small" style="color:var(--muted-2)">按委托比例计提</span>'],
       ['平均评分', rated ? (ratingTotal / rated).toFixed(1) + ' 星' : '—', '<span class="small" style="color:var(--muted-2)">' + num(sum('ratingCount')) + ' 条评价</span>']
     ])
   }
 
   function renderCsBody(root, view) {
+    if (CS_VIEW.tab === 'daily') return renderCsDaily(root, view)
+    if (CS_VIEW.tab === 'bind') return renderCsBind(root, view)
+    return renderCsRate(root, view)
+  }
+
+  /* 佣金配置：全局委托比例 + 单客服默认比例（均仅管理员可改） */
+  function renderCsRate(root, view) {
     const canEdit = C.can('cs.saveSettings')
-    const globalRate = Number(CS_VIEW.settings.rate) || 0
     const globalAgencyRate = Number(CS_VIEW.settings.agencyRate) || 0
-    const rule = card('提成规则',
-      '<div class="flex flex-wrap" style="gap:20px;align-items:flex-end">' +
-      '<div class="field" style="min-width:230px"><label>分享开通提成比例</label>' +
-      (canEdit
-        ? '<div class="flex" style="gap:8px"><input id="cs-rate" type="number" min="0" max="30" step="0.1" value="' + (globalRate * 100).toFixed(1) + '"><button class="btn primary" id="cs-rate-save">保存</button></div>'
-        : '<div class="strong">' + csPct(globalRate) + '</div>') +
+    const globalIdle = Number(CS_VIEW.settings.idleMinutes) || 30
+    const agencyExample = Math.round(5000 * globalAgencyRate * 100) / 100
+    const rule = card('客服委托佣金规则（绑定即锁定）',
+      '<div class="grid g2" style="gap:14px">' +
+        csRuleBlock('全局委托佣金比例', '代采 / 代售委托服务费实收 × 此比例', 'cs-agency-rate', globalAgencyRate, canEdit) +
+        '<div style="border:1px solid var(--line);border-radius:12px;padding:16px">' +
+          '<div class="strong">客服佣金构成</div>' +
+          '<div class="small" style="color:var(--muted-2);line-height:1.9;margin-top:8px">' +
+            '① 委托佣金：代采 / 代售服务费到账后按本页比例计提，计入客服工资；<br>' +
+            '② 推广二级佣金：仅客服绑定用户在推广中心计提，不重复计入工资。<br>' +
+            '平台不设「客服会员提成」，会员付款不产生客服佣金。' +
+          '</div>' +
+        '</div>' +
       '</div>' +
-      '<div class="field" style="min-width:230px"><label>代采代售佣金比例</label>' +
       (canEdit
-        ? '<div class="flex" style="gap:8px"><input id="cs-agency-rate" type="number" min="0" max="50" step="0.1" value="' + (globalAgencyRate * 100).toFixed(1) + '"><button class="btn primary" id="cs-agency-rate-save">保存</button></div>'
-        : '<div class="strong">' + csPct(globalAgencyRate) + '</div>') +
+        ? '<div class="flex flex-wrap" style="gap:10px;align-items:flex-end;margin-top:14px">' +
+            '<div class="field" style="min-width:210px"><label>超时未回复自动结束（分钟）</label>' +
+            '<input id="cs-idle" type="number" min="5" max="240" step="1" value="' + globalIdle + '"></div>' +
+            '<button class="btn primary" id="cs-rule-save">' + icon('check') + '<span>保存佣金规则</span></button>' +
+          '</div>'
+        : '<div class="small" style="margin-top:12px;color:var(--muted-2)">超时自动结束：' + num(globalIdle) + ' 分钟 · 佣金比例仅管理员可修改</div>') +
+      '<div class="grid g2" style="margin-top:14px">' +
+        kpi('示例：委托服务费 ¥5,000', money(agencyExample), '委托佣金 × ' + csPct(globalAgencyRate)) +
+        kpi('单客服专属比例', num(CS_VIEW.staff.filter(function (r) { return r.agencyRateSource === 'staff' }).length) + ' 人已单独设置', '未设置时按全局默认') +
       '</div>' +
-      '<div class="small" style="color:var(--muted-2);max-width:560px;line-height:1.9">' +
-      '分享开通提成只统计绑定用户的<strong>直接下级</strong>会员支付；代采代售佣金 = 委托服务费实收 × 佣金比例（默认 20%，客服单独设置优先）。' +
-      '两笔提成相加即客服当月工资，退款冲正后自动扣回；同一笔支付只计提一次。' +
-      '</div></div>')
+      '<div class="small" style="color:var(--muted-2);margin-top:12px;line-height:1.9">' +
+        '<strong>绑定即锁定：</strong>保存后新比例只对之后新绑定的账号生效，已绑定账号按下表「锁定比例」计提，后续调价不追溯、不改动。' +
+        '委托服务费到账后系统自动计提并计入客服当月工资；退款冲正自动扣回，同一笔收款只计提一次。' +
+      '</div>')
 
     const rows = CS_VIEW.staff.map(function (row) {
+      const ops = []
+      if (C.can('cs.saveAgencyRate')) {
+        ops.push('<button class="btn xs" data-cs-agency-rate="' + esc(row.username) + '">设置默认比例</button>')
+      }
+      return '<td><div class="strong">' + esc(row.name || row.username) + '</div>' +
+        '<div class="small mono" style="color:var(--muted-2)">' + esc(row.username) + ' · ' + esc(row.roleName || '') + '</div></td>' +
+        '<td class="mono">' + csPct(row.agencyRate) +
+          '<div class="small" style="color:var(--muted-2)">' + (row.agencyRateSource === 'staff' ? '专属设置' : '沿用全局默认') + '</div></td>' +
+        '<td>' + csLockCell(row) + '</td>' +
+        '<td>' + (canEdit || ops.length ? '<div class="flex" style="gap:5px;flex-wrap:wrap">' + (ops.join('') || '<span class="small" style="color:var(--muted-2)">只读</span>') + '</div>' : '<span class="small" style="color:var(--muted-2)">只读</span>') + '</td>'
+    })
+
+    root.innerHTML = rule + '<div style="margin-top:14px">' +
+      card('各客服委托佣金比例',
+        table(['客服', '默认比例', '委托佣金（锁定）', '操作'], rows, '暂无客服账号'),
+        canEdit ? '' : '<span class="small" style="color:var(--muted-2)">仅管理员可调整</span>', true) + '</div>'
+
+    const ruleBtn = root.querySelector('#cs-rule-save')
+    if (ruleBtn) {
+      ruleBtn.onclick = async function () {
+        const rawAgency = root.querySelector('#cs-agency-rate').value.trim()
+        const rawIdle = root.querySelector('#cs-idle').value.trim()
+        const agencyRate = Number(rawAgency) / 100
+        const minutes = Number(rawIdle)
+        if (!rawAgency || !Number.isFinite(agencyRate) || agencyRate < 0 || agencyRate > 0.5) return toast('委托佣金比例需在 0–50% 之间', 'err')
+        if (!rawIdle || !Number.isFinite(minutes) || minutes < 5 || minutes > 240) {
+          return toast('超时时长需在 5–240 分钟之间', 'err')
+        }
+        const ok = await confirm({
+          title: '保存佣金规则',
+          message: '委托佣金 ' + csPct(agencyRate) +
+            '。新比例仅对之后新绑定的账号生效，已绑定账号维持原锁定比例，不会追溯调整。确认保存？',
+          okText: '确认保存'
+        })
+        if (!ok) return
+        ruleBtn.disabled = true
+        try {
+          await api('cs.saveSettings', { agencyRate: agencyRate, idleMinutes: Math.round(minutes) })
+          toast('佣金规则已保存')
+          Pages.cs(view)
+        } catch (err) {
+          toast(err.message, 'err')
+          ruleBtn.disabled = false
+        }
+      }
+    }
+    root.querySelectorAll('[data-cs-agency-rate]').forEach(function (btn) {
+      btn.onclick = function () { csAgencyRateModal(btn.getAttribute('data-cs-agency-rate'), function () { Pages.cs(view) }) }
+    })
+  }
+
+  /* 每日工作量：按北京时间自然日聚合，客服只看自己，管理员可查全部或指定客服 */
+  function renderCsDaily(root, view) {
+    const isAdmin = C.can('cs.saveSettings')
+    const options = CS_VIEW.staff.map(function (row) {
+      return '<option value="' + esc(row.username) + '"' + (CS_VIEW.dailyCs === row.username ? ' selected' : '') + '>' +
+        esc(row.name || row.username) + '（' + esc(row.username) + '）</option>'
+    }).join('')
+    const dayOptions = [7, 14, 30].map(function (d) {
+      return '<option value="' + d + '"' + (Number(CS_VIEW.dailyDays) === d ? ' selected' : '') + '>最近 ' + d + ' 天</option>'
+    }).join('')
+    const head = filterBar([
+      (isAdmin
+        ? '<div class="field" style="min-width:220px"><label>客服</label><select id="cs-daily-cs"><option value="">全部客服</option>' + options + '</select></div>'
+        : '<div class="field" style="min-width:220px"><label>客服</label><input value="' + esc((CS_VIEW.staff[0] && (CS_VIEW.staff[0].name || CS_VIEW.staff[0].username)) || '本人') + '" disabled></div>') +
+      '<div class="field" style="min-width:150px"><label>时间范围</label><select id="cs-daily-days">' + dayOptions + '</select></div>',
+      '<div class="field" style="justify-content:flex-end"><button class="btn primary" id="cs-daily-query">' + icon('search') + '<span>查询</span></button></div>'
+    ])
+    root.innerHTML = head + '<div id="cs-daily-body" style="margin-top:12px">' + loadingBlock('读取每日工作量') + '</div>'
+    const query = function () {
+      const csSel = root.querySelector('#cs-daily-cs')
+      CS_VIEW.dailyCs = csSel ? csSel.value : ''
+      CS_VIEW.dailyDays = Number(root.querySelector('#cs-daily-days').value) || 7
+      loadCsDaily(root, view)
+    }
+    root.querySelector('#cs-daily-query').onclick = query
+    if (!CS_VIEW.daily || Number(CS_VIEW.daily.days) !== Number(CS_VIEW.dailyDays)) loadCsDaily(root, view)
+    else renderCsDailyBody(root, view)
+  }
+
+  async function loadCsDaily(root, view) {
+    const host = root.querySelector('#cs-daily-body') || root
+    host.innerHTML = loadingBlock('读取每日工作量')
+    try {
+      CS_VIEW.daily = await api('cs.daily', { days: CS_VIEW.dailyDays, csId: CS_VIEW.dailyCs || undefined })
+      renderCsDailyBody(root, view)
+    } catch (err) {
+      host.innerHTML = card('每日工作量',
+        '<div class="small" style="color:var(--danger)">' + esc(err.message || '加载失败') + '</div>')
+    }
+  }
+
+  function renderCsDailyBody(root, view) {
+    const host = root.querySelector('#cs-daily-body') || root
+    const data = CS_VIEW.daily || {}
+    const items = data.items || []
+    if (!items.length) {
+      host.innerHTML = card('每日工作量', emptyState('暂无可统计的客服'))
+      return
+    }
+    const blocks = items.map(function (item) {
+      const totals = item.totals || {}
+      const dayRows = (item.items || []).map(function (d) {
+        return '<td class="mono small">' + esc(d.day) + '</td>' +
+          '<td class="mono">' + num(d.newLeads) + '</td>' +
+          '<td class="mono">' + num(d.claimed) + '</td>' +
+          '<td class="mono">' + num(d.ended) + '</td>' +
+          '<td class="mono">' + num(d.orders) + '</td>' +
+          '<td class="mono">' + money(d.feeAmount) + '</td>' +
+          '<td class="mono strong">' + money(d.commission) + '</td>' +
+          '<td class="mono">' + num(d.ratingCount) + (Number(d.ratingCount) > 0 ? ' · ' + Number(d.ratingAvg).toFixed(1) + ' 星' : '') + '</td>'
+      })
+      /* 最新日期在前，便于先看最近一天 */
+      dayRows.reverse()
+      return '<div style="margin-top:14px">' + card(
+        (item.name || item.csId) + ' · 每日工作量',
+        kpiRow([
+          ['新增咨询', num(totals.newLeads), ''],
+          ['领取工单', num(totals.claimed), ''],
+          ['结束服务', num(totals.ended), ''],
+          ['委托成交', num(totals.orders), ''],
+          ['委托服务费', money(totals.feeAmount), ''],
+          ['委托佣金', money(totals.commission), '']
+        ]) + '<div style="margin-top:12px">' +
+          table(['日期', '新增咨询', '领取', '结束', '委托成交', '服务费', '委托佣金', '评价'], dayRows, '该时间段暂无工作数据') +
+        '</div>',
+        '<span class="small" style="color:var(--muted-2)">客服 ' + esc(item.csId) + ' · 最近 ' + num(data.days) + ' 天</span>', true) + '</div>'
+    }).join('')
+    host.innerHTML = blocks
+  }
+
+  /* 客服与绑定：绑定关系只允许管理员设置与修改 */
+  function renderCsBind(root, view) {
+    const canBind = C.can('cs.bind')
+    const canUnbind = C.can('cs.unbind')
+    const rows = CS_VIEW.staff.map(function (row) {
       const s = row.stats || {}
-      const own = row.rateSource === 'staff'
       const ops = []
       if (row.binding && row.binding.uid) {
-        ops.push('<button class="btn xs" data-cs-unbind="' + esc(row.username) + '" data-cs-name="' + esc(row.name || row.username) + '">解绑</button>')
-      } else {
-        ops.push('<button class="btn xs" data-cs-bind="' + esc(row.username) + '">绑定用户</button>')
-      }
-      if (C.can('cs.saveRate')) {
-        ops.push('<button class="btn xs" data-cs-rate="' + esc(row.username) + '">比例</button>')
-      }
-      if (C.can('cs.saveAgencyRate')) {
-        ops.push('<button class="btn xs" data-cs-agency-rate="' + esc(row.username) + '">佣金比例</button>')
+        if (canUnbind) ops.push('<button class="btn xs" data-cs-unbind="' + esc(row.username) + '" data-cs-name="' + esc(row.name || row.username) + '">解绑</button>')
+      } else if (canBind) {
+        ops.push('<button class="btn xs primary" data-cs-bind="' + esc(row.username) + '">绑定用户</button>')
       }
       ops.push('<button class="btn xs" data-cs-profile="' + esc(row.username) + '">档案</button>')
       return '<td><div class="strong">' + esc(row.name || row.username) + '</div>' +
         '<div class="small mono" style="color:var(--muted-2)">' + esc(row.username) + ' · ' + esc(row.roleName || '') + '</div></td>' +
         '<td>' + csBindingCell(row.binding) + '</td>' +
-        '<td class="mono">' + csPct(row.rate) + '<div class="small" style="color:var(--muted-2)">' + (own ? '单独设置' : '全局默认') + '</div></td>' +
-        '<td class="mono">' + csPct(row.agencyRate) +
-          '<div class="small" style="color:var(--muted-2)">' + (row.agencyRateSource === 'staff' ? '单独设置' : '全局默认') + '</div></td>' +
-        '<td class="mono">' + money(s.monthPerformance) + '<div class="small" style="color:var(--muted-2)">累计 ' + money(s.performanceTotal) + '</div></td>' +
+        '<td>' + csLockCell(row) + '</td>' +
+        '<td class="mono">' + money(s.monthAgencyFee) + '<div class="small" style="color:var(--muted-2)">累计 ' + money(s.agencyFeeTotal) + '</div></td>' +
         '<td class="mono strong">' + money(s.monthSalary) +
-          '<div class="small" style="color:var(--muted-2)">累计 ' + money(s.totalSalary) + ' · 佣金 ' + money(s.monthAgencyCommission) + '</div></td>' +
+          '<div class="small" style="color:var(--muted-2)">累计 ' + money(s.totalSalary) + ' · 委托 ' + money(s.monthAgencyCommission) + '</div></td>' +
         '<td>' + num(s.servedCount) + '<div class="small" style="color:var(--muted-2)">已结束 ' + num(s.endedCount) + '</div></td>' +
         '<td>' + csStars(s.ratingAvg) + '<div class="small" style="color:var(--muted-2)">' + num(s.ratingCount) + ' 条</div></td>' +
         '<td><div class="flex" style="gap:5px;flex-wrap:wrap">' + ops.join('') + '</div></td>'
     })
+    root.innerHTML = card('客服绑定关系',
+      (canBind || canUnbind
+        ? '<div class="small" style="color:var(--muted-2);margin-bottom:10px">一个客服只能绑定一个用户，绑定后该用户作为推广人可拿一级 + 二级佣金。绑定与解绑仅管理员可操作，客服无权限设置或修改。</div>'
+        : '<div class="small" style="color:var(--muted-2);margin-bottom:10px">绑定关系仅管理员可设置与修改，此处只读。</div>') +
+      table(['客服', '绑定用户', '委托佣金（锁定）', '本月 / 累计委托业绩', '本月 / 累计工资', '服务单', '评分', '操作'], rows, '暂无客服账号'),
+      '', true)
 
-    root.innerHTML = rule + '<div style="margin-top:14px">' +
-      card('客服业绩与档案',
-        table(['客服', '绑定用户', '分享提成', '佣金比例', '本月 / 累计业绩', '本月 / 累计工资', '服务单', '评分', '操作'], rows, '暂无客服账号'),
-        '', true) + '</div>'
-
-    const rateBtn = root.querySelector('#cs-rate-save')
-    if (rateBtn) {
-      rateBtn.onclick = async function () {
-        const raw = root.querySelector('#cs-rate').value.trim()
-        const rate = Number(raw) / 100
-        if (!raw || !Number.isFinite(rate) || rate < 0 || rate > 0.3) return toast('比例需在 0–30% 之间', 'err')
-        rateBtn.disabled = true
-        try {
-          await api('cs.saveSettings', { rate: rate })
-          toast('全局比例已保存')
-          Pages.cs(view)
-        } catch (err) {
-          toast(err.message, 'err')
-          rateBtn.disabled = false
-        }
-      }
-    }
-    const agencyRateBtn = root.querySelector('#cs-agency-rate-save')
-    if (agencyRateBtn) {
-      agencyRateBtn.onclick = async function () {
-        const raw = root.querySelector('#cs-agency-rate').value.trim()
-        const rate = Number(raw) / 100
-        if (!raw || !Number.isFinite(rate) || rate < 0 || rate > 0.5) return toast('佣金比例需在 0–50% 之间', 'err')
-        agencyRateBtn.disabled = true
-        try {
-          await api('cs.saveSettings', { agencyRate: rate })
-          toast('代采代售佣金比例已保存')
-          Pages.cs(view)
-        } catch (err) {
-          toast(err.message, 'err')
-          agencyRateBtn.disabled = false
-        }
-      }
-    }
     root.querySelectorAll('[data-cs-bind]').forEach(function (btn) {
       btn.onclick = function () { csBindModal(btn.getAttribute('data-cs-bind'), function () { Pages.cs(view) }) }
     })
@@ -9889,7 +12748,7 @@
         const name = btn.getAttribute('data-cs-name')
         const ok = await confirm({
           title: '解绑用户',
-          message: '解绑后该客服不再统计此用户下级的新增支付，历史业绩与提成保留。确认解绑「' + esc(name) + '」？',
+          message: '解绑后该客服不再统计此用户下级新增的委托服务费，历史业绩与佣金保留。确认解绑「' + esc(name) + '」？',
           okText: '确认解绑',
           danger: true
         })
@@ -9902,12 +12761,6 @@
           toast(err.message, 'err')
         }
       }
-    })
-    root.querySelectorAll('[data-cs-rate]').forEach(function (btn) {
-      btn.onclick = function () { csRateModal(btn.getAttribute('data-cs-rate'), function () { Pages.cs(view) }) }
-    })
-    root.querySelectorAll('[data-cs-agency-rate]').forEach(function (btn) {
-      btn.onclick = function () { csAgencyRateModal(btn.getAttribute('data-cs-agency-rate'), function () { Pages.cs(view) }) }
     })
     root.querySelectorAll('[data-cs-profile]').forEach(function (btn) {
       btn.onclick = function () { openCsProfile(btn.getAttribute('data-cs-profile')) }
@@ -9965,44 +12818,18 @@
     el.querySelector('#cs-bind-q').onkeydown = function (e) { if (e.key === 'Enter') search() }
   }
 
-  function csRateModal(csId, done) {
-    const row = csRowOf(csId)
-    const own = row.rateSource === 'staff'
-    const el = modal({
-      title: '设置提成比例',
-      sub: (row.name || csId) + ' · 留空表示按全局默认',
-      body: '<div class="field"><label>单独比例（%）</label>' +
-        '<input id="cs-rate-one" type="number" min="0" max="30" step="0.1" value="' + (own ? (Number(row.rate) * 100).toFixed(1) : '') + '"></div>' +
-        '<div class="small" style="color:var(--muted-2);line-height:1.8">全局默认 ' + csPct(CS_VIEW.settings.rate) + '；单独比例上限 30%。</div>',
-      footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" data-save="1">保存</button>'
-    })
-    if (!el) return
-    el.querySelector('[data-save]').onclick = async function () {
-      const raw = el.querySelector('#cs-rate-one').value.trim()
-      const rate = raw === '' ? null : Number(raw) / 100
-      if (raw !== '' && (!Number.isFinite(rate) || rate < 0 || rate > 0.3)) return toast('比例需在 0–30% 之间', 'err')
-      try {
-        await api('cs.saveRate', { csId: csId, rate: rate })
-        toast('已保存')
-        closeModal()
-        done()
-      } catch (err) {
-        toast(err.message, 'err')
-      }
-    }
-  }
-
   function csAgencyRateModal(csId, done) {
     const row = csRowOf(csId)
     const own = row.agencyRateSource === 'staff'
     const el = modal({
-      title: '设置代采代售佣金比例',
+      title: '设置该客服的默认委托佣金比例',
       sub: (row.name || csId) + ' · 留空表示按全局默认',
-      body: '<div class="field"><label>单独佣金比例（%）</label>' +
+      body: '<div class="field"><label>默认佣金比例（%）</label>' +
         '<input id="cs-agency-rate-one" type="number" min="0" max="50" step="0.1" value="' +
         (own ? (Number(row.agencyRate) * 100).toFixed(1) : '') + '"></div>' +
         '<div class="small" style="color:var(--muted-2);line-height:1.8">全局默认 ' + csPct(CS_VIEW.settings.agencyRate) +
-        '；佣金 = 委托服务费实收 × 比例，单独比例上限 50%。</div>',
+        '；佣金 = 委托服务费实收 × 比例，上限 50%。' +
+        '<br><strong>仅影响之后新绑定的账号</strong>，已绑定账号的锁定比例不会改变。</div>',
       footer: '<button class="btn" data-close="1">取消</button><button class="btn primary" data-save="1">保存</button>'
     })
     if (!el) return
@@ -10040,11 +12867,11 @@
       const ratings = results[1] || {}
       const cRows = (commissions.items || []).map(function (item) {
         return '<td class="mono small">' + dayText(item.paidAt) + '</td>' +
-          '<td class="mono">' + esc(item.payerUid || '—') + '</td>' +
-          '<td class="mono">' + money(item.amount) + '</td>' +
+          '<td class="small">' + esc(item.item || '代采代售') + '</td>' +
+          '<td class="mono">' + money(item.feeAmount) + '</td>' +
           '<td class="mono">' + csPct(item.rate) + '</td>' +
-          '<td class="mono strong">' + money(item.commission) + '</td>' +
-          '<td class="small">' + esc(item.planLabel || '会员') + '</td>'
+          '<td class="mono strong">' + money(item.commission - (Number(item.reversedCommission) || 0)) + '</td>' +
+          '<td class="small">' + esc(item.status || '已计提') + '</td>'
       })
       const rRows = (ratings.items || []).map(function (item) {
         return '<td class="mono small">' + dayText(item.createdAt) + '</td>' +
@@ -10054,11 +12881,11 @@
           '<td class="small mono">' + esc(item.agencyTitle || '—') + '</td>'
       })
       d.body.innerHTML = '<div class="grid g3">' +
-        kpi('累计业绩', money(s.performanceTotal), '<span class="small" style="color:var(--muted-2)">' + num(s.orderCount) + ' 笔支付</span>') +
-        kpi('累计提成', money(s.commissionTotal), '<span class="small" style="color:var(--muted-2)">本月 ' + money(s.monthCommission) + '</span>') +
+        kpi('累计委托业绩', money(s.agencyFeeTotal), '<span class="small" style="color:var(--muted-2)">' + num(s.orderCount) + ' 笔委托') +
+        kpi('累计委托佣金', money(s.commissionTotal), '<span class="small" style="color:var(--muted-2)">本月 ' + money(s.monthCommission) + '</span>') +
         kpi('服务咨询', num(s.servedCount), '<span class="small" style="color:var(--muted-2)">已结束 ' + num(s.endedCount) + '</span>') +
         '</div>' +
-        '<div style="margin-top:16px">' + card('提成流水', table(['日期', '付款用户', '支付金额', '比例', '提成', '套餐'], cRows, '暂无提成流水'), '', true) + '</div>' +
+        '<div style="margin-top:16px">' + card('委托佣金流水', table(['日期', '委托事项', '服务费', '比例', '佣金', '状态'], cRows, '暂无委托佣金流水'), '', true) + '</div>' +
         '<div style="margin-top:16px">' + card('评价记录', table(['日期', '评分', '标签', '内容', '咨询单'], rRows, '暂无评价'), '', true) + '</div>'
     } catch (err) {
       d.body.innerHTML = '<div class="small" style="color:var(--danger)">' + esc(err.message || '加载失败') + '</div>'
@@ -10076,6 +12903,7 @@
       badges: badge(csName ? '客服 ' + csName : '未分配客服', csName ? 'info' : 'warn'),
       body: '<div class="chat-stream" id="cs-chat-stream" style="max-height:50vh;overflow:auto">' + loadingBlock('加载会话') + '</div>' +
         '<div style="display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:12px;margin-top:12px">' +
+        quickReplyBar() +
         '<textarea id="cs-chat-input" rows="3" placeholder="输入回复内容，请勿索要手机号 / 证件号（最多 500 字）"></textarea>' +
         '<div class="flex" style="justify-content:flex-end"><button class="btn primary" id="cs-chat-send">发送回复</button></div></div>'
     })
@@ -10083,6 +12911,8 @@
     const stream = d.body.querySelector('#cs-chat-stream')
     const inputEl = d.body.querySelector('#cs-chat-input')
     const sendBtn = d.body.querySelector('#cs-chat-send')
+    /* 常用语：点一下填入回复框 */
+    wireQuickReplies(d.body, '#cs-chat-input')
 
     async function load() {
       try {

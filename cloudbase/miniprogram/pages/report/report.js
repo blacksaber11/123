@@ -1,6 +1,6 @@
 /* 举报 / 投诉 / 意见反馈：商品、资讯、用户主页共用同一张表单
    - 入口通过 query 带 targetType / targetId / targetTitle，提交后进入管理端「风险提示 - 举报反馈」队列；
-   - 处置结果在「我的 - 帮助与反馈」与站内信同步。 */
+   - 处置结果在站内信同步，处理进度可在「设置 - 帮助与反馈」底部查看。 */
 const { request } = require('../../utils/request')
 const auth = require('../../utils/auth')
 const guard = require('../../utils/guard')

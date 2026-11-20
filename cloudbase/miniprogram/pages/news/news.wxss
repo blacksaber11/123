@@ -120,6 +120,25 @@
   word-break: break-word;
 }
 
+/* 图片 / 视频 */
+.nw-media {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+  margin-top: 20rpx;
+}
+.nw-img {
+  width: 100%;
+  border-radius: 14rpx;
+  background: var(--line-2);
+}
+.nw-video {
+  width: 100%;
+  height: 420rpx;
+  border-radius: 14rpx;
+  background: #000;
+}
+
 /* 查看作者主页 */
 .nw-more {
   display: flex;

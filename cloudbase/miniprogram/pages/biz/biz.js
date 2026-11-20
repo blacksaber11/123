@@ -3,8 +3,10 @@ const biz = require('../../utils/biz')
 const guard = require('../../utils/guard')
 const fav = require('../../utils/fav')
 const sharePoster = require('../../utils/share-poster')
+const notify = require('../../utils/notify')
 const { request, xpayOrder } = require('../../utils/request')
 const { goThread } = require('../../utils/chat')
+const { CITY_TREE } = require('../../utils/board')
 
 /* 收藏类型：求购需求 / 代采代售委托 / 货源分开存，避免不同集合的 id 混淆 */
 function favTypeOf(o) {
@@ -53,21 +55,27 @@ const LOCAL_PLANS = withTerm(biz.PLANS)
 
 /* 提示力度：三档预设与后端 BIZ_PREF_PRESETS 同口径，离线预览时也能用 */
 const PREF_PRESETS = {
-  loose: { level: 'loose', brand: 'any', model: 'series', qty: 'any', cap: 'any', price: 'any', city: 'any', cond: 'any', tax: 'any', supply: 'any' },
-  standard: { level: 'standard', brand: 'any', model: 'core', qty: 'meet', cap: 'same', price: 'any', city: 'any', cond: 'same', tax: 'any', supply: 'any' },
-  strict: { level: 'strict', brand: 'same', model: 'exact', qty: 'exceed', cap: 'same', price: 'fit', city: 'same', cond: 'same', tax: 'same', supply: 'same' }
+  loose: { level: 'loose', brand: 'any', model: 'series', qty: 'any', cap: 'any', price: 'any', city: 'any', cond: 'any', tax: 'any', supply: 'any', cities: [] },
+  standard: { level: 'standard', brand: 'any', model: 'core', qty: 'meet', cap: 'same', price: 'any', city: 'any', cond: 'same', tax: 'any', supply: 'any', cities: [] },
+  strict: { level: 'strict', brand: 'same', model: 'exact', qty: 'exceed', cap: 'same', price: 'fit', city: 'same', cond: 'same', tax: 'same', supply: 'same', cities: [] }
 }
 const PREF_LEVELS = [
   { key: 'loose', name: '宽松', desc: '同系列即可，价格、城市、成色、税费都不限，看到的商机最多' },
   { key: 'standard', name: '标准', desc: '同核心型号、容量一致，数量达到起订量（默认，价格与地区不限）' },
   { key: 'strict', name: '严格', desc: '指定品牌、型号完全一致，库存量覆盖需求，只接同城且税费 / 现货口径一致' }
 ]
+
+/* 主体信息筛选：独立于匹配力度，默认「全部」；开启后服务端只返回公开主体的商机 */
+const SUBJECT_OPTIONS = [
+  { key: 'all', label: '全部' },
+  { key: 'open', label: '仅公开主体' }
+]
 const PREF_DIMS = [
   { key: 'brand', name: '品牌', options: [{ key: 'any', label: '不限品牌' }, { key: 'same', label: '只接指定品牌' }] },
   {
     key: 'model',
     name: '型号',
-    options: [{ key: 'series', label: '同系列即可' }, { key: 'core', label: '同核心型号' }, { key: 'exact', label: '型号完全一致' }]
+    options: [{ key: 'series', label: '同系列即可' }, { key: 'core', label: '同核心型号' }, { key: 'same', label: '同型号（不限品牌）' }, { key: 'exact', label: '型号完全一致' }]
   },
   {
     key: 'qty',
@@ -87,7 +95,11 @@ const PREF_DIMS = [
   {
     key: 'city',
     name: '城市',
-    options: [{ key: 'any', label: '不限地区' }, { key: 'same', label: '只接同城' }]
+    options: [
+      { key: 'any', label: '不限地区' },
+      { key: 'same', label: '只接同城' },
+      { key: 'pick', label: '指定城市（可多选）' }
+    ]
   },
   {
     key: 'cond',
@@ -106,8 +118,59 @@ const PREF_DIMS = [
   }
 ]
 const prefNameOf = (level) => ((PREF_LEVELS.filter((l) => l.key === level)[0] || {}).name || '自定义')
+
+/* 指定城市：按大区分组多选。热门城市与地区重复，只保留地区分组，避免同一城市出现两次 */
+const PREF_CITY_GROUPS = CITY_TREE.filter((g) => g.p !== '热门')
+const PREF_CITY_MAX = 20
+
+/* 已选城市归一：去「市」、去空、去重，与后端 bizCitiesOf 同口径 */
+function prefCitiesOf(prefs) {
+  const list = prefs && Array.isArray(prefs.cities) ? prefs.cities : []
+  const out = []
+  list.forEach((item) => {
+    const city = String(item == null ? '' : item).trim().replace(/市$/, '').replace(/\s+/g, '')
+    if (city && out.indexOf(city) < 0) out.push(city)
+  })
+  return out
+}
+
+/* 城市分组带上选中态：WXML 不支持 indexOf，先在这里算好 */
+function cityGroupsOf(prefs) {
+  const chosen = prefCitiesOf(prefs)
+  return PREF_CITY_GROUPS.map((g) => ({
+    p: g.p,
+    cities: g.cities.map((name) => ({ name, on: chosen.indexOf(name) >= 0 }))
+  }))
+}
+
+/* 已选城市摘要：设置入口和维度标题上都能一眼看到选了哪些城市 */
+function cityTextOf(prefs) {
+  if (!prefs || prefs.city !== 'pick') return ''
+  const list = prefCitiesOf(prefs)
+  if (!list.length) return '未选城市'
+  return list.length <= 2 ? list.join('/') : list.slice(0, 2).join('/') + ' 等 ' + list.length + ' 城'
+}
+
 /* 维度当前选中值冗余到 options 外层，避免 WXML 里做对象动态取值 */
-const dimsWithValue = (prefs) => PREF_DIMS.map((d) => Object.assign({}, d, { value: (prefs && prefs[d.key]) || '' }))
+const dimsWithValue = (prefs) => PREF_DIMS.map((d) => Object.assign({}, d, {
+  value: (prefs && prefs[d.key]) || '',
+  /* 城市维度额外给出已选摘要，收起或切到其他维度时也能确认 */
+  extra: d.key === 'city' ? cityTextOf(prefs) : ''
+}))
+
+/* 设置面板的一次性视图字段：改完偏好统一走这里，避免各处漏同步 */
+function prefView(prefs) {
+  const onlyOpenSubject = !!(prefs && prefs.onlyOpenSubject)
+  return {
+    prefs,
+    prefLevelName: prefNameOf(prefs.level),
+    prefDims: dimsWithValue(prefs),
+    prefCityGroups: cityGroupsOf(prefs),
+    prefCityText: cityTextOf(prefs),
+    /* 主体信息：全部 / 仅公开主体，默认全部 */
+    prefSubject: onlyOpenSubject ? 'open' : 'all'
+  }
+}
 
 /* 显示时间：与后端 BIZ_PREF_DAYS 同口径，3 / 7 / 30 天，也可手动填 1-90 天 */
 const DAY_OPTIONS = [
@@ -142,6 +205,9 @@ Page({
     daysLeft: 0,
     /* 微信虚拟支付进行中：按钮 loading，避免重复拉起收银台 */
     paying: false,
+    /* 7 天体验：每个账号一次，未开通且未用过时展示体验按钮 */
+    trialing: false,
+    trialAvailable: false,
     /* 会员四档：管理端设置页可改价格 / 天数，用户端在此选择 */
     plans: LOCAL_PLANS,
     planKey: 'month',
@@ -157,6 +223,8 @@ Page({
     filterMenu: '',
     items: [],
     total: 0,
+    /* 主体信息筛选开启后，服务端返回被筛掉的条数 */
+    hiddenCount: 0,
     /* 列表默认只展示 10 条，下滑继续加载；型号筛选只能从本次匹配到的型号里选 */
     showCount: 10,
     matchModels: [],
@@ -183,14 +251,24 @@ Page({
     /* 已领取 / 不满足独立列表页：只展示对应状态并按类别筛选，不展示概览与榜单 */
     listMode: false,
     /* 提示力度：三档预设 + 品牌 / 型号 / 数量 / 容量 / 价格 / 城市 / 成色 / 税费 / 供给九维微调 */
-    prefs: Object.assign({}, PREF_PRESETS.standard),
+    prefs: Object.assign({}, PREF_PRESETS.standard, { onlyOpenSubject: false }),
     prefLevels: PREF_LEVELS,
+    /* 主体信息：全部 / 仅公开主体，独立于提示力度 */
+    prefSubjectOptions: SUBJECT_OPTIONS,
+    prefSubject: 'all',
     prefDims: dimsWithValue(PREF_PRESETS.standard),
     prefLevelName: prefNameOf('standard'),
+    /* 城市选了「指定城市」时的多选面板与已选摘要 */
+    prefCityGroups: cityGroupsOf(PREF_PRESETS.standard),
+    prefCityText: '',
     prefOpen: false,
     prefSaving: false,
     /* 朋友圈单页模式：只做浏览，底部提示从右上角进入完整小程序 */
-    singlePage: false
+    singlePage: false,
+    /* 微信商机提醒：额度用完 / 未知时展示提示条，点一下即可开通或续订 */
+    wxRemain: -1,
+    wxNotifyTip: false,
+    wxNotifyBusy: false
   },
 
   onLoad(options) {
@@ -219,7 +297,37 @@ Page({
     guard.enableShare(true)
     const sp = guard.isSinglePage()
     if (sp !== this.data.singlePage) this.setData({ singlePage: sp })
+    this.syncNotify()
     this.refresh()
+  },
+
+  /* 微信商机提醒：一次授权只推一条，额度用完 / 未知时显示提示条 */
+  async syncNotify(force) {
+    if (!guard.boundToAccount()) {
+      this.setData({ wxNotifyTip: false })
+      return
+    }
+    await notify.loadConfig(force)
+    const n = notify.quota('biz')
+    const remain = n === null ? -1 : n
+    this.setData({ wxRemain: remain, wxNotifyTip: remain <= 0 })
+  },
+
+  /* 点提示条开通 / 续订：授权成功立即隐藏，不等服务端额度回流 */
+  async renewNotify() {
+    if (this.data.wxNotifyBusy) return
+    this.setData({ wxNotifyBusy: true })
+    const on = await notify.enable('biz')
+    if (on) {
+      this.setData({
+        wxNotifyBusy: false,
+        wxNotifyTip: false,
+        wxRemain: Math.max(1, Number(this.data.wxRemain) || 0)
+      })
+      return
+    }
+    this.setData({ wxNotifyBusy: false })
+    this.syncNotify(true)
   },
 
   /* 分享卡片：点某条商机的「分享」→ 分享该条；右上角分享 → 商机页整体 */
@@ -236,10 +344,10 @@ Page({
       const desc = [
         opp.org ? '主体 ' + opp.org : '',
         amount ? (isDemand ? '预算 ' : '报价 ') + amount : '',
-        '平台居中对接，条件匹配再沟通'
+        '登录查看对接条件与撮合进度'
       ].filter(Boolean).join(' · ')
       return {
-        title: guard.scrubContact(title),
+        title: guard.scrubContact(title + '，登录看对接条件'),
         desc: guard.scrubContact(desc),
         imageUrl: sharePoster.cached('biz', opp) || SHARE_CARD,
         /* 带上商机 id：对方点开直接定位到这一条，而不是停在列表 */
@@ -247,8 +355,8 @@ Page({
       }
     }
     return {
-      title: '算力聚合 · 实时货盘与囤货榜单',
-      desc: 'GPU / 内存 / CPU 品类榜与今日热词，帮你判断囤货方向',
+      title: '今日实时货盘 · 在售与求购价差，登录看完整盘口',
+      desc: 'GPU / 内存 / CPU 品类榜与今日热词，登录看完整买卖盘',
       imageUrl: SHARE_CARD,
       path: '/pages/biz/biz'
     }
@@ -259,13 +367,13 @@ Page({
     const focus = this.focusId ? this.findOpp(this.focusId) : null
     if (focus) {
       return {
-        title: guard.scrubContact([focus.kind, focus.model, focus.city].filter(Boolean).join(' · ') + ' · 算力聚合'),
+        title: guard.scrubContact([focus.kind, focus.model, focus.city].filter(Boolean).join(' · ') + ' · 登录看对接条件'),
         query: 'id=' + encodeURIComponent(focus.id),
         imageUrl: sharePoster.cached('biz', focus) || SHARE_CARD
       }
     }
     return {
-      title: '算力聚合 · 实时货盘与囤货榜单',
+      title: '今日实时货盘 · 在售与求购价差，登录看完整盘口',
       query: '',
       imageUrl: SHARE_CARD
     }
@@ -334,8 +442,15 @@ Page({
   /* 返回 null 表示云端不可用（不是「确实没有商机」） */
   async loadRemote() {
     try {
-      const res = await request('user', 'biz.list', {}, { silent: true })
+      /* 主列表加载即视为已读：服务端只对已开通会员记录 seenAt，首页角标随之清零；
+         「我的商机 / 已领取 / 不满足」不参与，避免看自己的记录把新商机提醒吃掉 */
+      const markSeen = !this.mineMode && !this.listMode
+      const res = await request('user', 'biz.list', markSeen ? { markSeen: true } : {}, { silent: true })
       if (!res || !Array.isArray(res.items)) return null
+      /* 上次查看时间：晚于它的商机属于「本次新增」，只在这一次置顶，退出后不再保留。
+         只取本次进入的第一次结果（onLoad / onShow 会各刷一次），否则第二次的 seenAt
+         已经把新商机算成「看过」，置顶与「新」标会立刻消失 */
+      if (this.newSince == null) this.newSince = markSeen ? (Number(res.lastSeenAt) || 0) : 0
       return res
     } catch (e) {
       return null
@@ -387,6 +502,8 @@ Page({
           /* 已领取的求购 / 货源即使对方没留联系方式，也要能发起站内对话 */
           canChat: !o.closed && (o.type === 'demand' || o.type === 'supply') && (!!o.claimed || !!o.contactVisible),
           consulted: !!(o.consulted || biz.isConsulted(o.id)),
+          /* 本次进入时新增的商机：这次置顶并标「新」，退出后 seenAt 前移，下次进入即按正常排序 */
+          isNew: !!this.newSince && (Number(o.at) || 0) > this.newSince,
           /* 右上角收藏：与首页商品卡同一套本地缓存 + 云端同步 */
           fav: fav.isFav(favTypeOf(o), o.id)
         })
@@ -412,14 +529,21 @@ Page({
       open: pool.filter((o) => !o.claimed && !o.unsatisfied).length,
       stock: { sku: Number(res.stockCount) || 0, qty: 0 }
     }
-    const prefs = res.prefs && typeof res.prefs === 'object' ? res.prefs : this.data.prefs
-    this.setData({
+    const savedPrefs = res.prefs && typeof res.prefs === 'object' ? res.prefs : this.data.prefs
+    /* 服务端未下发 onlyOpenSubject 时沿用本地已选值，避免刷新后又跳回「全部」 */
+    const prefs = Object.assign({}, savedPrefs, {
+      onlyOpenSubject: savedPrefs.onlyOpenSubject === undefined
+        ? this.data.prefs.onlyOpenSubject === true
+        : savedPrefs.onlyOpenSubject === true
+    })
+    this.setData(Object.assign(prefView(prefs), {
       remote: true,
       loadFailed: false,
       unlocked: !!res.unlocked,
-      prefs,
-      prefLevelName: prefNameOf(prefs.level),
-      prefDims: dimsWithValue(prefs),
+      /* 7 天体验：服务端按「未开通且未用过」下发，未下发时按不可用处理 */
+      trialAvailable: res.trialAvailable === true,
+      /* 服务端尚未下发 hiddenCount 时按 0 兼容 */
+      hiddenCount: Math.max(0, Math.floor(Number(res.hiddenCount) || 0)),
       dayLabel: dayLabelOf(prefs.days),
       sortLabel: sortLabelOf(prefs.sort),
       showCount: 10,
@@ -432,7 +556,7 @@ Page({
       selectedPlan,
       total: all.length,
       stats
-    })
+    }))
     /* 排序偏好刚更新，先 setData 再建列表，保证首屏就按选定排序 */
     this.applyList()
     if (!this.mineMode) this.preparePosters(this.data.items)
@@ -480,11 +604,14 @@ Page({
       remote: false,
       loadFailed: false,
       unlocked: info.unlocked,
+      /* 演示数据没有服务端会员状态，不展示 7 天体验入口 */
+      trialAvailable: false,
       expireText: info.expireText,
       daysLeft: Number(info.daysLeft) || 0,
       stats,
       total: all.length,
-      showCount: 10
+      showCount: 10,
+      hiddenCount: 0
     })
     this.applyList()
     this.preparePosters(this.data.items)
@@ -500,15 +627,20 @@ Page({
     return this.filtered.slice(0, this.data.showCount)
   },
 
-  /* 排序方式：最新发布 / 库存匹配优先（有匹配型号的在前）/ 数量从大到小 */
+  /* 排序方式：本次新增置顶 / 最新发布 / 库存匹配优先（有匹配型号的在前）/ 数量从大到小 */
   sortItems(list) {
     const sort = (this.data.prefs && this.data.prefs.sort) || 'latest'
     const at = (o) => Number(o.at) || 0
+    /* 本次进入时新增的商机只在这一次置顶，其余按当前排序；下次进入 isNew 全部为 false */
+    const fresh = (o) => (o && o.isNew ? 1 : 0)
     const arr = (list || []).slice()
     if (sort === 'match') {
-      arr.sort((a, b) => ((b.matchModel ? 1 : 0) - (a.matchModel ? 1 : 0)) || (at(b) - at(a)))
+      arr.sort((a, b) => (fresh(b) - fresh(a)) || ((b.matchModel ? 1 : 0) - (a.matchModel ? 1 : 0)) || (at(b) - at(a)))
     } else if (sort === 'qty') {
-      arr.sort((a, b) => ((Number(b.qty) || 0) - (Number(a.qty) || 0)) || (at(b) - at(a)))
+      arr.sort((a, b) => (fresh(b) - fresh(a)) || ((Number(b.qty) || 0) - (Number(a.qty) || 0)) || (at(b) - at(a)))
+    } else {
+      /* 最新发布：越晚发布越靠前 */
+      arr.sort((a, b) => (fresh(b) - fresh(a)) || (at(b) - at(a)))
     }
     return arr
   },
@@ -590,7 +722,7 @@ Page({
     const base = this.filterItems(this.source)
     const models = this.modelsOf(base)
     const modelFilter = models.indexOf(this.data.modelFilter) >= 0 ? this.data.modelFilter : ''
-    this.setData({ matchModels: models, modelFilter: modelFilter, teaserItems: this.sortItems(base).slice(0, 50) })
+    this.setData({ matchModels: models, modelFilter: modelFilter, teaserItems: this.sortItems(base) })
     this.setData({ items: this.buildList(this.source) })
     this.setData({ filteredCount: (this.filtered || []).length })
   },
@@ -704,8 +836,62 @@ Page({
     const preset = PREF_PRESETS[key]
     if (!preset) return
     /* 切档位不重置显示时间与排序：这两项在同一个设置面板里独立选择 */
-    const prefs = Object.assign({}, preset, { days: this.data.prefs.days, sort: this.data.prefs.sort })
-    this.setData({ prefs: prefs, prefDims: dimsWithValue(prefs) })
+    /* 已选城市也保留：切回「不限地区 / 只接同城」后再切回来不用重新勾 */
+    const prefs = Object.assign({}, preset, {
+      days: this.data.prefs.days,
+      sort: this.data.prefs.sort,
+      cities: prefCitiesOf(this.data.prefs),
+      /* 主体信息是独立开关，切档位时保持不变 */
+      onlyOpenSubject: this.data.prefs.onlyOpenSubject === true
+    })
+    this.setData(prefView(prefs))
+  },
+
+  /* 主体信息：全部 / 仅公开主体；切换后立即保存并刷新列表 */
+  async pickSubject(e) {
+    const key = String(e.currentTarget.dataset.key || 'all')
+    const onlyOpenSubject = key === 'open'
+    if (onlyOpenSubject === (this.data.prefs.onlyOpenSubject === true)) return
+    if (this.subjectSaving) return
+    const before = this.data.prefs
+    const prefs = Object.assign({}, before, { onlyOpenSubject })
+    this.setData(prefView(prefs))
+    /* 未登录预览：只改本地展示，不落库 */
+    if (!this.remote && !guard.boundToAccount()) {
+      this.applyList()
+      return
+    }
+    this.subjectSaving = true
+    try {
+      const payload = Object.assign({ save: true }, prefs, { onlyOpenSubject })
+      const res = await request('user', 'biz.prefs', payload, { silent: true })
+      const next = Object.assign({ onlyOpenSubject }, (res && res.prefs) || prefs)
+      this.setData(Object.assign(prefView(next), {
+        dayLabel: dayLabelOf(next.days),
+        sortLabel: sortLabelOf(next.sort),
+        showCount: 10
+      }))
+      /* 主体筛选改变的是服务端匹配结果，保存后重新拉一次列表与隐藏条数 */
+      this.refresh()
+    } catch (err) {
+      /* 保存失败回滚选择，避免界面与云端偏好不一致 */
+      this.setData(prefView(before))
+      wx.showToast({ title: String((err && err.message) || '保存失败，请稍后重试'), icon: 'none' })
+    } finally {
+      this.subjectSaving = false
+    }
+  },
+
+  /* 查看发布者主页：匿名 / 未公开主体也允许进入，敏感字段由主页侧脱敏 */
+  openOwner(e) {
+    const ds = (e && e.currentTarget && e.currentTarget.dataset) || {}
+    const key = String(ds.key || '')
+    if (!key) return
+    const nick = String(ds.nick || '')
+    wx.navigateTo({
+      url: '/pages/userhome/userhome?key=' + encodeURIComponent(key) +
+        (nick ? '&nick=' + encodeURIComponent(nick) : '') + '&from=biz'
+    })
   },
 
   pickPrefDim(e) {
@@ -714,39 +900,66 @@ Page({
     const prefs = Object.assign({}, this.data.prefs)
     prefs[ds.dim] = ds.key
     prefs.level = 'custom'
-    this.setData({ prefs, prefDims: dimsWithValue(prefs) })
+    /* 型号选「同型号（不限品牌）」与品牌「只接指定品牌」互斥，自动让另一维度配合 */
+    if (ds.dim === 'model' && ds.key === 'same') prefs.brand = 'any'
+    if (ds.dim === 'brand' && ds.key === 'same' && prefs.model === 'same') prefs.model = 'core'
+    if (ds.dim === 'city' && !Array.isArray(prefs.cities)) prefs.cities = []
+    this.setData(prefView(prefs))
+  },
+
+  /* 指定城市多选：点一下加入或取消，最多 20 个；一个都不选时按不限地区匹配 */
+  togglePrefCity(e) {
+    const name = String(e.currentTarget.dataset.city || '')
+    if (!name) return
+    const cities = prefCitiesOf(this.data.prefs)
+    const idx = cities.indexOf(name)
+    if (idx >= 0) cities.splice(idx, 1)
+    else if (cities.length >= PREF_CITY_MAX) {
+      wx.showToast({ title: '最多选择 ' + PREF_CITY_MAX + ' 个城市', icon: 'none' })
+      return
+    } else cities.push(name)
+    const prefs = Object.assign({}, this.data.prefs, { city: 'pick', cities, level: 'custom' })
+    this.setData(prefView(prefs))
+  },
+
+  /* 清空已选城市：仍停在「指定城市」，未选城市时等同不限地区 */
+  clearPrefCities() {
+    const prefs = Object.assign({}, this.data.prefs, { city: 'pick', cities: [], level: 'custom' })
+    this.setData(prefView(prefs))
   },
 
   async savePref() {
     if (this.data.prefSaving) return
     this.setData({ prefSaving: true })
-    const payload = Object.assign({ save: true }, this.data.prefs)
+    const payload = Object.assign({ save: true }, this.data.prefs, {
+      /* 布尔字段显式下发，避免历史偏好缺少该字段时被服务端当成未设置 */
+      onlyOpenSubject: this.data.prefs.onlyOpenSubject === true
+    })
     try {
       if (this.remote || guard.boundToAccount()) {
         const res = await request('user', 'biz.prefs', payload, { silent: true })
-        const prefs = (res && res.prefs) || this.data.prefs
-        this.setData({
-          prefs,
-          prefLevelName: prefNameOf(prefs.level),
-          prefDims: dimsWithValue(prefs),
+        const saved = (res && res.prefs) || this.data.prefs
+        /* 服务端若尚未下发字段，沿用本次提交的值 */
+        const prefs = Object.assign({}, saved, {
+          onlyOpenSubject: saved.onlyOpenSubject === undefined ? payload.onlyOpenSubject : saved.onlyOpenSubject === true
+        })
+        this.setData(Object.assign(prefView(prefs), {
           dayLabel: dayLabelOf(prefs.days),
           sortLabel: sortLabelOf(prefs.sort),
           showCount: 10,
           prefOpen: false
-        })
+        }))
         wx.showToast({ title: '已保存，正在按新设置重新匹配', icon: 'none' })
         this.refresh()
         return
       }
       /* 未登录预览：只改本地展示，不落库 */
-      this.setData({
+      this.setData(Object.assign(prefView(this.data.prefs), {
         prefOpen: false,
-        prefLevelName: prefNameOf(this.data.prefs.level),
-        prefDims: dimsWithValue(this.data.prefs),
         dayLabel: dayLabelOf(this.data.prefs.days),
         sortLabel: sortLabelOf(this.data.prefs.sort),
         showCount: 10
-      })
+      }))
       wx.showToast({ title: '演示：提示力度已切换', icon: 'none' })
     } catch (err) {
       wx.showToast({ title: String((err && err.message) || '保存失败，请稍后重试'), icon: 'none' })
@@ -880,10 +1093,13 @@ Page({
     this.consulting = true
     this.setData({ consultingId: id })
     try {
-      /* 优先走后端 biz.consult；接口不可用（无 message）时才落到本地演示 */
+      /* biz.consult 会直接生成委托咨询工单并返回会话 threadId；
+         后续消息由客服领取后在该会话内跟进，前端不再重复建单 */
+      let threadId = ''
       if (this.remote || guard.boundToAccount()) {
         try {
-          await request('user', 'biz.consult', { agencyId: id }, { silent: true })
+          const res = await request('user', 'biz.consult', { agencyId: id }, { silent: true })
+          threadId = String((res && res.threadId) || '')
         } catch (err) {
           const msg = String((err && err.message) || '').trim()
           /* 服务端明确拒绝（自己发布 / 权限未开通 / 无匹配库存）时不能假装已提交 */
@@ -894,18 +1110,10 @@ Page({
         }
       }
       this.markConsulted(id)
-      /* 咨询统一进入与平台的客服会话，委托上下文随消息落库，工作台可按委托查看 */
-      try {
-        await request('user', 'msg.send', {
-          body: '我想咨询该委托：' + (opp.title || '') + '（委托编号 ' + id + '）',
-          targetType: 'agency',
-          targetId: id,
-          targetTitle: opp.title || ''
-        }, { silent: true })
-        wx.navigateTo({ url: '/pages/chat/chat' })
+      /* 进入该委托的专属客服会话，委托上下文由工单携带，工作台可按委托查看 */
+      if (threadId) {
+        wx.navigateTo({ url: '/pages/chat/chat?threadId=' + encodeURIComponent(threadId) })
         return
-      } catch (err) {
-        /* 对话建立失败不影响已提交的对接申请 */
       }
       wx.showToast({ title: '已提交对接申请，客服核实后推送采购方', icon: 'none', duration: 3000 })
     } finally {
@@ -969,6 +1177,43 @@ Page({
     wx.setClipboardData({
       data: String(phone).replace(/\s/g, ''),
       success: () => wx.showToast({ title: '电话已复制', icon: 'none' })
+    })
+  },
+
+  /**
+   * 7 天体验：先弹窗让用户确认，确认后由服务端开通（每个账号仅一次）。
+   * 体验期权益与付费会员一致，到期不自动续费。
+   */
+  startTrial() {
+    if (this.data.trialing || this.data.paying) return
+    if (!this.remote) {
+      wx.showToast({ title: '请先登录后再体验', icon: 'none' })
+      return
+    }
+    if (!this.data.trialAvailable) {
+      wx.showToast({ title: '7 天体验已使用过，请开通会员', icon: 'none' })
+      return
+    }
+    wx.showModal({
+      title: '开通 7 天体验',
+      content: '体验期内可使用商机会员全部权益：查看完整主体与联系方式、领取商机、承接平台委托。每个账号仅可体验一次，到期后需开通会员才能继续使用。',
+      confirmText: '确认开通',
+      cancelText: '再想想',
+      confirmColor: '#4F46E5',
+      success: async (res) => {
+        if (!res.confirm) return
+        this.setData({ trialing: true })
+        try {
+          await request('user', 'biz.trial', {})
+          this.setData({ sheetOpen: false })
+          await this.refresh()
+          wx.showToast({ title: '已开通 7 天体验', icon: 'none', duration: 2500 })
+        } catch (err) {
+          /* request 已按错误码提示，失败时保持引导页 */
+        } finally {
+          this.setData({ trialing: false })
+        }
+      }
     })
   },
 

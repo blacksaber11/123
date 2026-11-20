@@ -1,12 +1,12 @@
 <view class="detail" wx:if="{{demand}}">
 
   <!-- 分享落地提示：内容与平台内一致，只是再强调一次联系方式不对外 -->
-  <view wx:if="{{fromShare}}" class="share-tip">来自好友分享 · 满足必须条件后可与需求方直接对话</view>
+  <view wx:if="{{fromShare}}" class="share-tip">来自好友分享 · {{chatEnabled ? '满足必须条件后可与需求方直接对话' : '可在平台内查看完整需求信息'}}</view>
   <!-- 朋友圈单页模式：没有底部导航与登录入口，提示从右上角进入完整小程序 -->
   <view wx:if="{{singlePage}}" class="sp-inline">朋友圈预览 · 点右上角 ··· 选择「前往小程序」后可响应需求</view>
 
-  <!-- 私密发布＝匿名公开：内容照常展示，发布人完全匿名 -->
-  <view wx:if="{{privateShare}}" class="callout warn private-tip">匿名发布 · 内容公开展示，但不显示发布人，也无法从这里进入对方主页</view>
+  <!-- 私密发布仅自己与平台可见，不对外展示 -->
+  <view wx:if="{{privateShare}}" class="callout warn private-tip">私密发布 · 仅你与平台可见，不进入商机匹配</view>
 
   <!-- 参考图片与视频：与商品页同一套展示；没有图片时用文字占位展示型号 / 数量 / 预算 -->
   <view class="block media-sec">
@@ -41,7 +41,7 @@
         <text wx:if="{{demand.qty || demand.city}}" class="ms-empty-sub">{{demand.qty ? '需 ' + demand.qty + ' 台' : ''}}{{demand.qty && demand.city ? ' · ' : ''}}{{demand.city || ''}}</text>
         <text class="ms-empty-budget">{{demand.budgetText}}{{demand.budgetMode === 'nego' ? '' : ' 以内'}}</text>
         <text class="ms-empty-d">需求方暂未上传参考图片</text>
-        <text class="ms-empty-h">满足必须条件后可在对话中沟通细节</text>
+        <text wx:if="{{chatEnabled}}" class="ms-empty-h">满足必须条件后可在对话中沟通细节</text>
       </view>
     </view>
   </view>
@@ -90,17 +90,17 @@
     </view>
   </view>
 
-  <!-- 发布方：私密发布不展示该区域 -->
+  <!-- 发布方：未公开主体也可查看账号主页，仅主体与电话打码 -->
   <view wx:if="{{!privateShare}}" class="block">
     <view class="block-hd">
       <text class="bt">② 发布方</text>
       <text class="r">{{demand.ownerExposureLabel}}</text>
     </view>
-    <view class="owner">
-      <view class="av">{{contactHidden ? '匿' : '需'}}</view>
+    <view class="owner" bindtap="openPublisher">
+      <view class="av">需</view>
       <view class="owner-info">
-        <view class="nm">{{contactHidden ? '匿名发布' : (demand.ownerSubject || demand.contact)}}</view>
-        <view class="sb" wx:if="{{contactHidden}}">内容可正常浏览，主体与联系方式已隐藏；仍可在站内直接对话</view>
+        <view class="nm">{{contactHidden ? '主体未公开' : (demand.ownerSubject || demand.contact)}}<text wx:if="{{demand.ownerKey}}" class="owner-go">›</text></view>
+        <view class="sb" wx:if="{{contactHidden}}">不影响沟通；可查看账号主页公开在架内容</view>
         <view class="sb" wx:elif="{{demand.ownerSubject}}">{{demand.ownerContactName}} · {{demand.published}}</view>
         <view class="sb" wx:else>{{demand.publisher}} · {{demand.published}}</view>
         <!-- 需求方自愿公开联系电话：直接展示并可复制拨号 -->
@@ -118,8 +118,8 @@
       <view class="owner-r">浏览 {{demand.views}}<text wx:if="{{demand.favCount}}" class="muted">收藏 {{demand.favCount}}</text></view>
     </view>
     <view class="klist">
-      <view class="ki"><text class="kn">主体状态</text><text class="kv">{{contactHidden ? '匿名发布，主体已隐藏' : '主体信息公开'}}</text></view>
-      <view class="ki"><text class="kn">联系方式</text><text class="kv mut">{{contactHidden ? '已隐藏，满足条件后可直接对话' : (ownerPhone ? '需求方已公开该号码，可直接拨打' : (memberOnlyContact ? '需求方公开了号码，商机会员可查看' : '不对外展示，满足条件后可直接对话'))}}</text></view>
+      <view class="ki"><text class="kn">主体状态</text><text class="kv">{{contactHidden ? '主体未公开（不影响沟通）' : '主体信息公开'}}</text></view>
+      <view class="ki"><text class="kn">联系方式</text><text class="kv mut">{{contactHidden ? (chatEnabled ? '已隐藏，满足条件后可直接对话' : '已隐藏') : (ownerPhone ? '需求方已公开该号码，可直接拨打' : (memberOnlyContact ? '需求方公开了号码，商机会员可查看' : (chatEnabled ? '不对外展示，满足条件后可直接对话' : '不对外展示')))}}</text></view>
     </view>
   </view>
 
@@ -147,18 +147,18 @@
   <view class="block">
     <view class="block-hd">
       <text class="bt">④ {{demand.isRent ? '出租方必须条件' : '供给方必须条件'}}</text>
-      <text class="r">必须条件 {{must.length}} 项全部满足才能联系需求方</text>
+      <text class="r">必须条件 {{must.length}} 项{{chatEnabled ? '全部满足才能联系需求方' : ''}}</text>
     </view>
 
     <view wx:if="{{nego.length}}" class="cond-group">
-      <view class="cond-sub">可协商条件<text class="cs-note">不拦截对话，在会话中沟通</text></view>
+      <view class="cond-sub">可协商条件<text class="cs-note">{{chatEnabled ? '不拦截对话，在会话中沟通' : '可在后续对接时沟通'}}</text></view>
       <view class="chip-group cond-chips">
         <text wx:for="{{nego}}" wx:key="*this" class="chip">{{item}}</text>
       </view>
     </view>
 
     <view class="cond-group">
-      <view class="cond-sub">必须条件<text class="cs-note">逐项满足才能开始对话</text></view>
+      <view class="cond-sub">必须条件<text class="cs-note">{{chatEnabled ? '逐项满足才能开始对话' : '请对照自身情况逐项核对'}}</text></view>
       <view class="cond-list">
         <view wx:for="{{must}}" wx:key="*this" class="ci">
           <text class="ci-ico ok">✓</text>
@@ -181,7 +181,7 @@
         <text class="cp-v">{{ownerPhone}}</text>
         <text class="cp-act" bindtap="copyOwnerPhone">复制</text>
       </view>
-      <view wx:else class="contact-phone-none">未公开电话号码，请通过私信联系需求方</view>
+      <view wx:else class="contact-phone-none">{{chatEnabled ? '未公开电话号码，请通过私信联系需求方' : '未公开电话号码'}}</view>
     </view>
   </view>
 
@@ -192,7 +192,7 @@
       <text class="r">{{responses.length}} 人响应</text>
     </view>
     <view class="callout brand" style="margin-bottom: 20rpx">
-      仅向你展示响应人满足的必须条件、报价与数量；可直接在站内会话沟通，但主体、联系人与联系方式仍不可见。
+      仅向你展示响应人满足的必须条件、报价与数量；{{chatEnabled ? '可直接在站内会话沟通，' : ''}}但主体、联系人与联系方式仍不可见。
     </view>
 
     <view wx:for="{{responses}}" wx:key="id" class="resp-card">
@@ -238,14 +238,14 @@
       <button class="btn ghost share-btn" open-type="share">分享</button>
       <button class="btn ghost share-btn" catchtap="savePoster">海报</button>
       <button wx:if="{{isMine}}" class="btn primary lg grow" bindtap="back">返回</button>
-      <button wx:else class="btn primary lg grow" bindtap="respond">{{bizMode ? '领取商机' : '私信需求方'}}</button>
+      <button wx:elif="{{chatEnabled}}" class="btn primary lg grow" bindtap="respond">{{bizMode ? '领取商机' : '私信需求方'}}</button>
     </view>
-    <view class="hint">先确认必须条件，满足后直接与需求方对话</view>
+    <view class="hint">{{chatEnabled ? '先确认必须条件，满足后直接与需求方对话' : '平台暂未开放私信与对话，可先收藏或分享该需求'}}</view>
   </view>
 
   <!-- 必须条件确认弹层：确认完成后直接进入与需求方的会话 -->
-  <view wx:if="{{condSheet}}" class="cond-mask" catchtouchmove="noop" bindtap="closeCondSheet"></view>
-  <view wx:if="{{condSheet}}" class="cond-sheet">
+  <view wx:if="{{condSheet && chatEnabled}}" class="cond-mask" catchtouchmove="noop" bindtap="closeCondSheet"></view>
+  <view wx:if="{{condSheet && chatEnabled}}" class="cond-sheet">
     <view class="cs-hd">
       <view class="cs-tt">确认必须条件</view>
       <view class="cs-sub">已确认满足 {{condMet}} / {{condTotal}} 项</view>

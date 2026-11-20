@@ -17,12 +17,12 @@
     </view>
   </view>
 
-  <!-- 商机会员引导：只占一行，未开通时展示，开通后自动收起 -->
-  <view wx:if="{{bizLocked}}" class="biz-guide" bindtap="goBiz">
+  <!-- 商机会员引导：只占一行，未开通时展示，开通后自动收起；社交功能关闭时一并隐藏 -->
+  <view wx:if="{{bizLocked && socialOn}}" class="biz-guide" bindtap="goBiz">
     <text class="bg-ico">⚡</text>
     <view class="bg-body">
       <view class="bg-t">开通商机会员</view>
-      <view class="bg-d">按库存自动匹配商机，解锁领取与对接</view>
+      <view class="bg-d">全部匹配脱敏可见，会员可看联系方式并领取</view>
     </view>
     <text class="bg-go">去开通 ›</text>
   </view>
@@ -50,6 +50,11 @@
       <text class="mm-go">›</text>
     </view>
   </view>
+
+  <!-- 联系客服：放在最底部的小字链接，点击才发起咨询，避免常驻入口打扰 -->
+  <view class="me-kf">
+    <text class="me-kf-link" bindtap="goService">联系客服</text>
+  </view>
   </block>
 
   <view wx:else class="me-view">
@@ -71,12 +76,12 @@
         <view class="seg {{subTab === 'news' ? 'on' : ''}}" data-sub="news" bindtap="switchSub">
           资讯<text class="seg-em">{{myNews.length}}</text>
         </view>
-        <view class="seg {{subTab === 'comment' ? 'on' : ''}}" data-sub="comment" bindtap="switchSub">
+        <view wx:if="{{commentEnabled}}" class="seg {{subTab === 'comment' ? 'on' : ''}}" data-sub="comment" bindtap="switchSub">
           我的评论<text wx:if="{{commentUnread}}" class="seg-badge">{{commentUnread > 99 ? '99+' : commentUnread}}</text>
         </view>
       </view>
       <!-- 我的评论：我发出的评论 + 收到的回复；收到的回复未读时显示红色数字 -->
-      <block wx:if="{{subTab === 'comment'}}">
+      <block wx:if="{{commentEnabled && subTab === 'comment'}}">
         <view class="callout tip-callout">
           这里汇总你发出的评论和收到的回复。资讯被删除或下架后，原资讯标题会显示「资讯已失效」，不影响你查看历史评论。
         </view>
@@ -117,7 +122,8 @@
         <view wx:for="{{pubList}}" wx:key="id" class="mine-row">
           <view class="mr-top">
             <text class="st {{item.statusCls || 'ok'}}">{{item.status}}</text>
-            <text wx:if="{{item.isPrivate}}" class="mr-vis">匿名</text>
+            <text wx:if="{{item.isPrivate}}" class="mr-vis">私密</text>
+            <text wx:if="{{item.poolOnly}}" class="mr-vis">仅商机池</text>
             <text class="mr-time">{{item.published}} · 浏览 {{item.views}}</text>
           </view>
           <view class="mr-title">{{item.title}}</view>
@@ -153,32 +159,9 @@
       </block>
     </block>
 
-    <!-- 我的委托：列表只展示商品信息与截止时间，点击后看详情与流程 -->
-    <block wx:elif="{{view === 'agency'}}">
-      <view class="callout tip-callout">
-        代采 / 代售委托发布、审核、上架都不收费，成交后支付服务费。平台确认成交后你只会收到通知，按账单付款并上传凭证，财务确认到账、客服确认完成后本次委托结束。点击任意一条可查看流程节点、各节点时间与处理人。
-      </view>
-      <view wx:if="{{agencyList.length}}" class="mine-list">
-        <view wx:for="{{agencyList}}" wx:key="id" class="mine-row" data-id="{{item.id}}" bindtap="openAgencyDetail">
-          <view class="mr-top">
-            <text class="st {{item.statusCls}}">{{item.statusText}}</text>
-            <text wx:if="{{item.deadlineLabel}}" class="mr-time">{{item.deadlineLabel}}</text>
-          </view>
-          <view class="mr-title">{{item.title}}</view>
-          <view class="mr-meta">{{item.meta}}</view>
-          <view class="mr-meta"><text class="mr-price">{{item.priceText}}</text></view>
-        </view>
-      </view>
-      <view wx:else class="empty">
-        <image class="big-img" src="/assets/icons/empty-doc.png" mode="aspectFit" />
-        <view class="ttl">还没有提交过代采 / 代售委托</view>
-        <view class="ds">在发布页选择代采或代售，填写截止时间并提交；发布、审核、上架都不收费，成交后支付服务费。</view>
-        <view class="acts">
-          <button class="btn sm primary" bindtap="goPublish">去发布委托</button>
-        </view>
-      </view>
-
-      <!-- 委托详情：商品信息、截止时间、服务费状态与流程记录 -->
+    <!-- 我的委托已并入「我的订单」：这里只保留委托详情弹层，由订单列表点击打开 -->
+    <block>
+      <!-- 委托详情：从「我的订单 - 代采代售」点任意一条打开 -->
       <view wx:if="{{agencyDetailOpen}}" class="ag-edit-mask" bindtap="closeAgencyDetail"></view>
       <view wx:if="{{agencyDetailOpen}}" class="ag-edit-sheet" catchtap="noop">
         <view class="ag-edit-hd">
@@ -274,8 +257,8 @@
       </view>
     </block>
 
-    <!-- 我的订单：会员开通记录 + 代采 / 代售订单记录，只做历史查询 -->
-    <block wx:elif="{{view === 'pay'}}">
+    <!-- 我的订单：会员开通记录 + 代采 / 代售订单记录 -->
+    <block wx:if="{{view === 'pay'}}">
       <view class="segs mine-sub">
         <view class="seg {{orderTab === 'member' ? 'on' : ''}}" data-tab="member" bindtap="switchOrderTab">
           会员开通<text class="seg-em">{{payList.length}}</text>
@@ -312,10 +295,10 @@
 
       <block wx:else>
         <view class="callout tip-callout">
-          代采 / 代售订单仅作历史记录；审核通过后如需修改，请提交修改申请，审核通过后自动更新。
+          发布、审核、上架都不收费，成交后支付服务费。点击任意一条可查看流程节点、服务费账单与撤销入口。
         </view>
         <view wx:if="{{agencyList.length}}" class="mine-list">
-          <view wx:for="{{agencyList}}" wx:key="id" class="mine-row">
+          <view wx:for="{{agencyList}}" wx:key="id" class="mine-row" data-id="{{item.id}}" bindtap="openAgencyDetail">
             <view class="mr-top">
               <text class="st {{item.statusCls}}">{{item.status}}</text>
               <text wx:if="{{item.editPending}}" class="mr-vis">修改待审核</text>
@@ -543,6 +526,26 @@
       </view>
     </block>
 
+    <!-- 帮助与反馈：常见问题解答，点击问题展开答案 -->
+    <block wx:elif="{{view === 'help'}}">
+      <view class="block">
+        <view class="block-hd">
+          <text class="bt">常见问题</text>
+          <text class="r">点击问题查看解答</text>
+        </view>
+        <view class="faq-list">
+          <view wx:for="{{faqList}}" wx:key="q" class="faq-item" data-i="{{index}}" bindtap="toggleFaq">
+            <view class="faq-q">
+              <text class="faq-q-t">{{item.q}}</text>
+              <text class="faq-arrow {{openFaq === index ? 'open' : ''}}">›</text>
+            </view>
+            <view wx:if="{{openFaq === index}}" class="faq-a">{{item.a}}</view>
+          </view>
+        </view>
+        <view class="faq-more" bindtap="openFeedback">没有找到答案？提交问题反馈 ›</view>
+      </view>
+    </block>
+
     <!-- 设置 -->
     <block wx:elif="{{view === 'set'}}">
       <view class="block">
@@ -610,14 +613,21 @@
         <view class="block-hd">
           <text class="bt">隐私与安全</text>
         </view>
-        <view class="set-desc">公开范围与手机号是否展示，统一在「我的信息」里设置。</view>
+        <view class="set-desc">身份公开、手机号与资料范围在「我的信息」里设置：公开后展示主体与联系方式；不公开时别人仍能访问你的主页，但主体、电话等敏感信息打码，不影响发布与商机匹配。</view>
         <view class="set-list set-list-gap">
           <view class="set-row" bindtap="toggleWatermark">
             <view class="sr-main">
               <view class="sr-nm">水印保护</view>
-              <view class="sr-d">默认开启；关闭后聊天与作品图片、视频不再叠加水印</view>
+              <view class="sr-d">默认开启；水印跟随发送方（算力聚合 · ID · 昵称），保护你发出的图片、视频，关闭后不再叠加你的水印（别人发来的不受影响）</view>
             </view>
             <view class="tg {{wmOn ? 'on' : ''}}"></view>
+          </view>
+          <view class="set-row" bindtap="goBlocked">
+            <view class="sr-main">
+              <view class="sr-nm">黑名单管理</view>
+              <view class="sr-d">已拉黑的用户无法给你发私信，你也看不到对方发布的商品与资讯；可随时移出</view>
+            </view>
+            <text class="sr-go">›</text>
           </view>
           <view class="set-row" bindtap="goPrivacy">
             <view class="sr-main">
@@ -672,19 +682,19 @@
           <text class="bt">其他</text>
         </view>
         <view class="set-list">
-          <view class="set-row" bindtap="goService">
-            <view class="sr-main">
-              <view class="sr-nm">在线客服</view>
-              <view class="sr-d">在平台内给坐席留言，由管理端回复</view>
-            </view>
-            <text class="sr-go">›</text>
-          </view>
           <view class="set-row" bindtap="goAbout">
             <view class="sr-main">
               <view class="sr-nm">关于平台</view>
               <view class="sr-d">平台介绍与版本说明</view>
             </view>
             <text class="sr-val">算力聚合 v{{appVersion}}</text>
+            <text class="sr-go">›</text>
+          </view>
+          <view class="set-row" bindtap="openHelp">
+            <view class="sr-main">
+              <view class="sr-nm">帮助与反馈</view>
+              <view class="sr-d">常见问题解答，未解决可提交反馈</view>
+            </view>
             <text class="sr-go">›</text>
           </view>
         </view>

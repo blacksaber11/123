@@ -2,7 +2,7 @@
   <!-- 固定头部：Tab 切换 + 搜索栏 -->
   <view class="home-hd">
     <!-- 首页横幅：内容与滚动速度由管理端配置，点击弹窗展示详情 -->
-    <view wx:if="{{(tab === 'sell' || tab === 'buy') && bannerText}}" class="home-banner" bindtap="openBanner">
+    <view wx:if="{{socialOn && (tab === 'sell' || tab === 'buy') && bannerText}}" class="home-banner" bindtap="openBanner">
       <view class="hb-ico">公告</view>
       <view class="hb-view">
         <view class="hb-track" style="animation-duration:{{bannerDur}}s">
@@ -13,8 +13,8 @@
       <view class="hb-more">详情</view>
     </view>
 
-    <!-- 资讯视图不再显示「资讯圈」标签，头部直接是搜索栏 -->
-    <view wx:if="{{tab !== 'news'}}" class="seg-tabs">
+    <!-- 资讯视图不再显示「资讯圈」标签，头部直接是搜索栏；开关关闭时也不展示货源 / 求购切换 -->
+    <view wx:if="{{socialOn && tab !== 'news'}}" class="seg-tabs">
       <view class="seg {{tab === 'sell' ? 'on' : ''}}" data-tab="sell" bindtap="switchTab">在售货源</view>
       <view class="seg {{tab === 'buy' ? 'on' : ''}}" data-tab="buy" bindtap="switchTab">求购需求</view>
     </view>
@@ -29,8 +29,9 @@
     </view>
   </view>
 
-  <!-- 首页工具入口：测算 / 实时货盘 / 我的库存 / 商机 -->
-  <view wx:if="{{tab === 'sell' || tab === 'buy'}}" class="home-tools">
+  <!-- 首页工具入口：测算 / 实时货盘 / 我的库存 / 商机；
+       社交开关关闭时资讯页也保留工具栏，但商机属于匹配 / 联系能力，一并隐藏 -->
+  <view wx:if="{{!socialOn || tab === 'sell' || tab === 'buy'}}" class="home-tools">
     <view class="ht-item" bindtap="openTools">
       <view class="ht-ico"><image class="ht-img" src="/assets/icons/ht-calc.png" mode="aspectFit" /></view>
       <view class="ht-tt">算力工具</view>
@@ -46,7 +47,7 @@
       <view class="ht-tt">我的库存</view>
       <view class="ht-ds">自动匹配商机</view>
     </view>
-    <view class="ht-item" bindtap="goBiz">
+    <view wx:if="{{socialOn}}" class="ht-item" bindtap="goBiz">
       <view class="ht-ico"><image class="ht-img" src="/assets/icons/ht-biz.png" mode="aspectFit" /></view>
       <view class="ht-tt">商机</view>
       <view class="ht-ds">{{bizHint || '¥99 / 月 · 开通查看'}}</view>
@@ -90,13 +91,14 @@
         <view class="ns-chip {{newsScope === 'pick' ? 'on' : ''}}" data-scope="pick" bindtap="switchNewsScope">{{newsScope === 'pick' && newsCity ? newsCity : '选择城市'}} ▾</view>
       </view>
     </scroll-view>
-    <view class="ns-pub" bindtap="openNewsPub">＋ 发布资讯</view>
+    <!-- 发布资讯属于用户内容发布入口：社交开关关闭时一并隐藏 -->
+    <view wx:if="{{socialOn}}" class="ns-pub" bindtap="openNewsPub">＋ 发布资讯</view>
   </view>
   <view wx:if="{{tab === 'news'}}" class="news-stat">按发布地址筛选 · {{newsStats.city}} · 共 {{items.length}} 条</view>
 
   <!-- 列表 -->
   <view class="feed">
-    <block wx:if="{{tab === 'sell'}}">
+    <block wx:if="{{socialOn && tab === 'sell'}}">
       <view wx:for="{{items}}" wx:key="id" class="gcard" data-id="{{item.id}}" bindtap="openDetail">
         <view class="top">
           <text class="top-info">{{item.ownerText}} · {{item.city}} · {{item.published}}</text>
@@ -137,27 +139,70 @@
       </view>
     </block>
 
-    <!-- 资讯圈：官方资讯 + 用户发布，按发布地址筛选 -->
+    <!-- 资讯圈：朋友圈式信息流，点赞 / 评论 / 转发在卡片上直接完成 -->
     <block wx:elif="{{tab === 'news'}}">
-      <view wx:for="{{items}}" wx:key="id" class="n-card" data-id="{{item.id}}" bindtap="openNews">
-        <view class="n-top">
-          <view class="n-avatar {{item.official ? 'off' : ''}}" data-key="{{item.authorKey}}" data-nick="{{item.author}}" catchtap="openOwner">{{item.official ? '官' : '用'}}</view>
-          <view class="n-src">
-            <view class="n-author">{{item.official ? '官方资讯 · ' + (item.author || '平台运营') : (item.author || '用户发布')}}</view>
-            <view class="n-sub">{{item.city}} · {{item.published}}<text wx:if="{{item.selfStatus}}"> · {{item.selfStatus}}{{item.selfReason ? '：' + item.selfReason : ''}}</text></view>
+      <view wx:for="{{items}}" wx:key="id" class="mo-card" data-id="{{item.id}}" bindtap="openNews">
+        <view class="mo-hd">
+          <view class="mo-av {{item.official ? 'off' : ''}}" data-key="{{item.authorKey}}" data-nick="{{item.author}}" catchtap="openOwner">{{item.official ? '官' : '用'}}</view>
+          <view class="mo-src">
+            <view class="mo-name">{{item.official ? (item.author || '平台运营') : (item.author || '用户发布')}}</view>
+            <view class="mo-sub">{{item.city}} · {{item.published}}<text wx:if="{{item.selfStatus}}"> · {{item.selfStatus}}{{item.selfReason ? '：' + item.selfReason : ''}}</text></view>
           </view>
-          <view class="n-cat">{{item.cat}}</view>
+          <view class="mo-cat">{{item.cat}}</view>
         </view>
-        <view class="n-title">{{item.title}}</view>
-        <view class="n-sum">{{item.summary}}</view>
-        <view class="n-foot">
-          <text>{{item.views || 0}} 次浏览</text>
-          <text class="n-addr">发布地：{{item.city}}</text>
+
+        <view class="mo-title">{{item.title}}</view>
+        <view class="mo-text">
+          <text>{{item.summary}}</text>
+          <text wx:if="{{item.hasFull}}" class="mo-full">全文</text>
+        </view>
+
+        <!-- 媒体：单图大图 / 多图九宫格 / 视频 -->
+        <view wx:if="{{item.mediaCount}}" class="mo-media {{item.mediaCount === 1 ? 'single' : (item.mediaCount === 2 || item.mediaCount === 4 ? 'two' : '')}}">
+          <block wx:for="{{item.media}}" wx:for-item="m" wx:key="fileId">
+            <video wx:if="{{m.kind === 'video'}}" class="mo-video" src="{{m.fileId}}" object-fit="cover" controls show-center-play-btn catchtap="noop"></video>
+            <image wx:else class="mo-img" src="{{m.fileId}}" mode="aspectFill" lazy-load
+                   data-src="{{m.fileId}}" data-list="{{item.mediaUrls}}" catchtap="previewNewsImage"/>
+          </block>
+        </view>
+
+        <!-- 互动区：左侧浏览数 + 评论框（到卡片 2/3 处），赞 / 分享靠右；评论关闭时只留浏览数 -->
+        <view class="mo-acts">
+          <view class="mo-left">
+            <view class="mo-views">{{item.views || 0}} 次浏览</view>
+            <view wx:if="{{commentEnabled}}" class="mo-cmt-box" catchtap="noop">
+              <input class="mo-cmt-input" value="{{item.commentDraft}}" data-id="{{item.id}}"
+                     bindinput="onNewsCommentInput" bindfocus="onNewsCommentFocus"
+                     placeholder="{{item.commentCount ? item.commentCount + ' 条评论' : '说点什么…'}}"
+                     confirm-type="send" maxlength="300" bindconfirm="sendNewsComment"/>
+              <view wx:if="{{item.commentDraft}}" class="mo-cmt-send" data-id="{{item.id}}" catchtap="sendNewsComment">发送</view>
+            </view>
+          </view>
+          <view class="mo-ops">
+            <view class="mo-act {{item.liked ? 'on' : ''}}" data-id="{{item.id}}" catchtap="toggleNewsLike">
+              <text class="mo-ic">{{item.liked ? '♥' : '♡'}}</text><text class="mo-act-t">赞</text>
+              <text wx:if="{{item.likes}}" class="mo-act-n">{{item.likes}}</text>
+            </view>
+            <button class="mo-act mo-act-btn" open-type="share" data-id="{{item.id}}" data-title="{{item.title}}" catchtap="noop">
+              <text class="mo-ic">➦</text><text class="mo-act-t">分享</text>
+            </button>
+          </view>
+        </view>
+
+        <!-- 评论区：点评论框后展开，评论列表在下方；评论关闭时整块不渲染 -->
+        <view wx:if="{{commentEnabled && item.commentOpen}}" class="mo-cmts" catchtap="noop">
+          <view wx:if="{{item.commentLoading}}" class="mo-cmt-empty">评论加载中…</view>
+          <view wx:elif="{{!item.comments || !item.comments.length}}" class="mo-cmt-empty">还没有评论，来说两句</view>
+          <view wx:else class="mo-cmt-list">
+            <view wx:for="{{item.comments}}" wx:for-item="c" wx:key="id" class="mo-cmt">
+              <text class="mo-cmt-a">{{c.author}}：</text><text class="mo-cmt-t">{{c.content}}</text>
+            </view>
+          </view>
         </view>
       </view>
     </block>
 
-    <block wx:else>
+    <block wx:elif="{{socialOn}}">
       <view wx:for="{{items}}" wx:key="id" class="gcard demand" data-id="{{item.id}}" bindtap="openDetail">
         <view class="top">
           <text class="top-info">{{item.contact}} · {{item.city}} · {{item.published}}</text>
@@ -202,11 +247,11 @@
     <view wx:if="{{!loading && !(tab === 'news' && newsError) && items.length === 0}}" class="empty">
       <image class="big-img" src="/assets/icons/empty-inbox.png" mode="aspectFit" />
       <view class="ttl">{{tab === 'news' ? '这个范围内还没有资讯' : (tab === 'sell' ? '没有符合条件的货源' : '没有符合条件的求购需求')}}</view>
-      <view class="ds">{{tab === 'news' ? '可以切换到全国，或自己发布一条资讯。' : '可以放宽条件，或发布' + (tab === 'sell' ? '求购需求' : '商品') + '等待对方来找你。'}}</view>
+      <view class="ds">{{tab === 'news' ? (socialOn ? '可以切换到全国，或自己发布一条资讯。' : '可以切换到全国看看其他城市的资讯。') : '可以放宽条件，或发布' + (tab === 'sell' ? '求购需求' : '商品') + '等待对方来找你。'}}</view>
       <view class="acts">
         <button wx:if="{{tab !== 'news' && hasMore}}" class="btn sm" bindtap="loadMore">加载更多</button>
         <button wx:if="{{tab === 'sell' || tab === 'buy'}}" class="btn sm" bindtap="clearFilter">清空筛选条件</button>
-        <button wx:if="{{tab === 'news'}}" class="btn sm primary" bindtap="openNewsPub">发布资讯</button>
+        <button wx:if="{{tab === 'news' && socialOn}}" class="btn sm primary" bindtap="openNewsPub">发布资讯</button>
         <button wx:if="{{tab === 'sell' || tab === 'buy'}}" class="btn sm primary" bindtap="goPublish">{{tab === 'sell' ? '发布需求' : '发布商品'}}</button>
       </view>
     </view>
@@ -317,6 +362,20 @@
                   bindinput="onNewsPubInput" placeholder="写清数量、预算、交付时间等（可直接留联系方式）"></textarea>
       </view>
       <view class="dc-group">
+        <view class="dc-label">图片 / 视频（最多 9 图 + 1 视频）</view>
+        <view class="np-media">
+          <view wx:for="{{newsMedia}}" wx:key="key" class="np-m">
+            <image wx:if="{{item.kind === 'image'}}" class="np-m-img" src="{{item.fileId}}" mode="aspectFill"
+                   data-src="{{item.fileId}}" data-list="{{newsMediaUrls}}" catchtap="previewNewsImage"/>
+            <view wx:else class="np-m-vid">视频</view>
+            <view class="np-m-x" data-key="{{item.key}}" catchtap="removeNewsMedia">✕</view>
+          </view>
+          <view wx:if="{{newsMediaImgCount < 9}}" class="np-add" bindtap="chooseNewsImage">＋图片</view>
+          <view wx:if="{{newsMediaVideoCount < 1}}" class="np-add" bindtap="chooseNewsVideo">＋视频</view>
+        </view>
+        <view wx:if="{{newsUploading}}" class="pa-hint">媒体上传中，请稍候…</view>
+      </view>
+      <view class="dc-group">
         <view class="dc-label">发布城市（取自「我的」资料，不可修改）</view>
         <view class="dc-static">{{newsLocalCity ? newsLocalCity + ' · 账号所在城市' : '未设置城市 · 请先在「我的」填写所在城市'}}</view>
       </view>
@@ -332,7 +391,7 @@
     </scroll-view>
     <view class="fs-ft safe-bottom">
       <button class="btn" bindtap="closeNewsPub">取消</button>
-      <button class="btn primary" bindtap="submitNews" disabled="{{newsSubmitting}}">{{newsSubmitting ? '提交中…' : '发布'}}</button>
+      <button class="btn primary" bindtap="submitNews" disabled="{{newsSubmitting || newsUploading}}">{{newsUploading ? '媒体上传中…' : (newsSubmitting ? '提交中…' : '发布')}}</button>
     </view>
   </view>
   <!-- 首页横幅详情：逐条展示标题与正文 -->

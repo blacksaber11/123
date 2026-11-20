@@ -168,12 +168,10 @@ function fillProduct(doc) {
     mediaItems: mediaItemsOf(doc),
     images: mediaItemsOf(doc).filter((m) => m.kind === 'image').length,
     subText: [doc.brand, doc.model, doc.city].filter(Boolean).join(' · '),
-    /* 私密发布＝匿名公开：内容照常展示，发布者只显示「匿名发布」且不可进主页 */
-    anon: doc.privateShare === true,
-    ownerShort: doc.platformOnly ? '平' : (doc.privateShare === true ? '匿' : '货'),
-    ownerText: doc.privateShare === true
-      ? '匿名发布'
-      : (doc.ownerExposureLabel || doc.ownerLabel || '货主'),
+    /* 未公开主体只影响展示，不影响列表可见与主页访问 */
+    anon: false,
+    ownerShort: doc.platformOnly ? '平' : '货',
+    ownerText: doc.ownerExposureLabel || doc.ownerLabel || '货主',
     /* 平台代采 / 代售：只对用户展示「平台」，不暴露委托方主体 */
     platformOnly: doc.platformOnly === true,
     agencyId: doc.agencyId || '',
@@ -181,6 +179,8 @@ function fillProduct(doc) {
     ownerContactName: doc.ownerContactName || '',
     ownerPhoneMasked: doc.ownerPhoneMasked || '',
     ownerExposure: doc.ownerExposure || 'hidden',
+    /* 账号主页入口：未公开主体也下发，仅用于公开内容聚合 */
+    ownerKey: doc.ownerKey || '',
     owner: {
       short: doc.platformOnly ? '平' : '货',
       nick: doc.ownerExposureLabel || doc.ownerLabel || '货主',
@@ -240,15 +240,17 @@ function fillDemand(doc) {
     publishedAt: publishedAtOf(doc),
     cover: coverOf(doc),
     mediaItems: mediaItemsOf(doc),
-    /* 私密发布＝匿名公开：需求照常展示，发布方只显示「匿名发布」 */
-    anon: doc.privateShare === true,
-    contact: doc.privateShare === true ? '匿名发布' : (doc.publisherLabel || '企业'),
-    publisher: doc.privateShare === true ? '匿名发布' : (doc.publisherLabel || '企业'),
+    /* 未公开主体只影响展示，不影响需求可见与主页访问 */
+    anon: false,
+    contact: doc.publisherLabel || '企业',
+    publisher: doc.publisherLabel || '企业',
     ownerExposure: doc.ownerExposure || 'hidden',
+    /* 账号主页入口：未公开主体也下发，仅用于公开内容聚合 */
+    ownerKey: doc.ownerKey || '',
     /* 平台代采 / 代售：只展示「平台」，不暴露委托方 */
     platformOnly: doc.platformOnly === true,
     agencyId: doc.agencyId || '',
-    ownerExposureLabel: doc.privateShare === true ? '匿名发布' : (doc.ownerExposureLabel || '主体已隐藏'),
+    ownerExposureLabel: doc.ownerExposureLabel || '主体未公开',
     ownerSubject: doc.ownerSubject || '',
     ownerContactName: doc.ownerContactName || '',
     ownerPhoneMasked: doc.ownerPhoneMasked || ''

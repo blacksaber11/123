@@ -1,0 +1,17 @@
+<view class="bl-page">
+  <view class="bl-tip">拉黑后对方无法给你发私信，你也看不到对方发布的商品、资讯与主页。移出后立即恢复；若对方也拉黑了你，需要对方先移出。</view>
+
+  <view wx:if="{{loading}}" class="bl-empty">加载中…</view>
+  <view wx:elif="{{error}}" class="bl-empty" bindtap="retry">{{error}}，点击重试</view>
+  <block wx:elif="{{items.length}}">
+    <view wx:for="{{items}}" wx:key="uid" class="bl-row">
+      <view class="bl-av">{{item.short}}</view>
+      <view class="bl-main">
+        <view class="bl-nm">{{item.nick}}</view>
+        <view class="bl-d">{{item.meta}}</view>
+      </view>
+      <button class="bl-btn" data-uid="{{item.uid}}" data-nick="{{item.nick}}" bindtap="remove">移出</button>
+    </view>
+  </block>
+  <view wx:else class="bl-empty">黑名单为空</view>
+</view>

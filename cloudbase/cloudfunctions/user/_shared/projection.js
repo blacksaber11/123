@@ -181,6 +181,9 @@ function projectLeadForStaff(lead) {
 /** 求购 / 商品在管理端的摘要（仍然不带手机号） */
 function projectProductForStaff(product) {
   const out = projectProduct(product)
+  /* 历史兼容字段：新规则以 visibility 判断发布方式，bizPool / channel 仅保留给旧数据 */
+  out.bizPool = product.bizPool === true
+  out.channel = product.channel || ''
   out.hasOwnerPhone = !!product.ownerPhoneCipher
   out.checklist = Array.isArray(product.checklist)
     ? product.checklist.map((c) => ({ n: c.n, ok: !!c.ok }))
